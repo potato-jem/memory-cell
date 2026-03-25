@@ -1,0 +1,113 @@
+Memory Cell — Implementation Plan Top level
+
+Guiding Principles For Build
+Prototype the fun first. The core question to answer as early as possible: is routing signals under uncertainty actually fun turn-to-turn? Everything else is superstructure. Don't build the campaign wrapper before you know the core loop works.
+Defer art and polish ruthlessly. This game's depth is mechanical and emotional, not visual. Placeholder everything until the design is proven.
+Build in layers. Each layer should be a playable, evaluable game before the next layer is added. Never be in a state where nothing is playable.
+Use AI assistance aggressively for implementation. Your role is design direction and playtest feedback. Claude Code handles boilerplate, generates threat content, writes signal flavour text, and iterates on balance. Your scarce resource is design attention, not code.
+
+The Five Build Layers
+
+Layer 1: The Core Loop Prototype
+Goal: prove the signal routing mechanic is fun
+A single contained situation. No campaign, no chapters, no scars, no meta-progression. Just the turn-by-turn experience of receiving signals, making routing decisions, deploying cells, and watching the situation develop.
+What gets built:
+
+Body map — simplified lymphatic network, maybe 8-12 nodes
+Signal queue — signals arrive each turn with source, confidence, delay, blast radius
+Routing console — forward, suppress, amplify, quarantine
+Cell deployment — dendritic cells, neutrophils, one responder type
+Ground truth layer — hidden, drifting, the thing your signals are approximating
+Coherence readout — visible gap indicator between your working model and ground truth
+One threat type — simple bacterial infection, behaves predictably
+Win/lose condition — threat cleared before coherence collapses
+
+What gets explicitly excluded:
+
+Multiple threat types
+Memory cells
+Scars or upgrades
+Campaign structure
+Art beyond functional placeholder
+
+Playtest question: Does making routing decisions feel meaningfully strategic? Does the gap between signal and reality create genuine tension?
+Done when: You can play a 10-minute session and feel the core tension working.
+
+Layer 2: Threat Variety & The Signal Language
+Goal: make the information space rich and readable
+Expand the threat library and establish the full signal vocabulary. This is where the game's primary content — the things you're trying to read and respond to — gets built out.
+What gets built:
+
+Full cellular cast — all cell types implemented with distinct mechanical behaviour
+4-6 threat types — bacterial, viral, cancer (benign), autoimmune trigger, novel/ambiguous pathogen, molecular mimic
+Signal differentiation — each threat type generates recognisably different signal patterns once you know what to look for
+False alarm signals — benign situations that generate alarming signals
+Concurrent situations — two things happening simultaneously
+Memory cell mechanic — previously encountered threats arrive pre-classified
+
+Playtest question: Does learning the signal language feel rewarding? Can you tell the difference between threat types through signals alone after repeated play?
+Done when: A player can describe the difference between a bacterial and viral signal pattern without being told.
+
+Layer 3: The Scar & Upgrade System
+Goal: make individual situation outcomes feel consequential
+Introduce persistent state within a single run. Situations now leave marks — positive and negative — that affect subsequent situations in the same session.
+What gets built:
+
+Scar system — temporary and permanent scars implemented, each with specific mechanical effect
+Upgrade system — temporary and permanent upgrades, each with specific mechanical benefit
+Scar/upgrade interactions — the pairings that convert scars into playstyle identities
+Scar repair — specific situation types that can remove specific scars
+Inter-situation continuity — signals and states carry across situation boundaries within a session
+Triage pressure — enough concurrent situations that resource allocation becomes genuinely hard
+
+Playtest question: Do scars feel interesting rather than just punishing? Do upgrades feel earned rather than arbitrary?
+Done when: A player can describe their current body's "character" — its specific strengths and vulnerabilities — and feel that character is the result of their decisions.
+
+Layer 4: The Campaign Structure
+Goal: make the full life arc feel coherent and emotionally resonant
+Wrap the situation layer in the four-chapter campaign. Introduce the seeded timeline, the chapter transitions, and the body review screen.
+What gets built:
+
+Four chapters implemented with distinct mechanical profiles
+Chapter 1 sequential structure, Chapters 2-4 concurrent with increasing complexity
+Seeded timeline — authored threat arcs per chapter with procedural texture
+Immunosenescence — mechanical degradation across chapters
+Chapter transition screen — body review, strategic allocation decision
+Age progression — mechanical consequences of ageing on cell populations and signal speeds
+Win condition — reaching 80 with coherence intact
+Death condition — coherence collapse or critical scar threshold
+
+Playtest question: Does the chapter 4 experience feel meaningfully different from chapter 2? Does reaching 80 feel earned?
+Done when: A complete run from birth to 80 (or death) is playable end to end.
+
+Layer 5: Meta-Progression & The Full Roguelite Loop
+Goal: make starting a new body feel motivated rather than punishing
+Add everything that persists between bodies and creates the long-term roguelite arc.
+What gets built:
+
+Knowledge layer — persistent threat taxonomies, unlocked cell variants, scar resistance
+Inherited memory cell — one carried-forward classification per new body
+Voluntary retirement — mechanic and inheritance bonus differentiation from death
+Diminishing returns on serial restarts
+New body initialisation — starting state shaped by inherited knowledge
+Run history — visible record of previous bodies, their ages, their causes of death
+Balance pass — ensure continuing a scarred body always feels worthwhile vs restarting
+
+Playtest question: After losing a body at age 52, do you immediately want to start another? Does the new body feel connected to the previous one?
+Done when: A player voluntarily plays three or more complete body attempts and describes their strategic evolution across them.
+
+Technical Approach
+Stack: Browser-based, React front end, all game state in memory. No backend required for prototype through Layer 4. Layer 5 may want localStorage for run history persistence.
+AI-assisted content generation: Threat types, signal flavour text, situation seeds, and scar/upgrade descriptions are all good candidates for LLM generation during development — generating variety without hand-authoring every instance.
+State architecture: Ground truth state and perceived state are separate data structures from day one. The gap between them is computed, not approximated. This is load-bearing for the core mechanic and must be correct from Layer 1.
+Playtesting: Each layer ends with a structured playtest before proceeding. The specific playtest question for each layer is the gate.
+
+What We Are Explicitly Not Building Yet
+
+Art, animation, sound
+Mobile version
+Multiplayer or any shared state
+Procedural map generation (lymphatic network is authored for now)
+Full narrative text beyond functional signal descriptions
+Tutorial or onboarding flow
+Settings, accessibility options, save states
