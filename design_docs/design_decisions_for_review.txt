@@ -1,0 +1,106 @@
+Design Decisions For Review — Memory Cell
+Last updated: Layer 1 implementation
+
+NOTE: The design_docs folder was inadvertently deleted during Vite scaffolding (vite create
+chose "Remove existing files" when the directory was non-empty). The original design docs
+were recreated from context. Going forward the scaffold approach should use a temp dir and
+move files rather than scaffolding in place. This is noted so it doesn't happen again.
+
+─────────────────────────────────────────────────────────────────
+LAYER 1 DECISIONS
+─────────────────────────────────────────────────────────────────
+
+1. TAILWIND v3 (not v4)
+   Decision: Used Tailwind CSS v3 rather than v4 (latest).
+   Why: Vite v5 + Tailwind v4 requires a different config approach (no tailwind.config.js);
+   v3 is stable and the config approach is well understood. This can be upgraded later.
+
+2. COHERENCE CALIBRATION — Gap multiplier = 10
+   Decision: A total gap score of 10 reduces coherence to 0.
+   Why: Starting point for playtesting. The spec says "5 tokens is a starting point, not a
+   final number" — same principle applies here. If coherence collapses too fast or too slow,
+   adjust this multiplier in coherence.js.
+   Where: engine/coherence.js — `Math.max(0, Math.min(100, 100 - totalGap * 10))`
+
+3. DENDRITIC CELL TRANSIT — 3 turns to return
+   Decision: Dendritic cells take 3 turns total (2 in transit + 1 sampling), not 2 as
+   sometimes implied. The spec says "2 turns to return" — interpreted as 3 turns total
+   (dispatched on turn N, samples on turn N+2, results available turn N+3).
+   Why: This makes the scout-before-respond loop meaningful without being punishing.
+   Where: engine/cells.js — DENDRITIC_TRANSIT_TURNS = 3
+
+4. SPREAD LOGIC — Ordered preference list
+   Decision: The situation definition provides a spreadNodes array listing preferred spread
+   targets in order. The pathogen spreads to the first available uninfected adjacent node.
+   Why: This allows authored situations to have predictable spread patterns while still
+   respecting the network topology constraint (only spreads to connected nodes).
+   Alternative considered: Pure probabilistic spread to all adjacent nodes. Rejected for Layer 1
+   because it makes the situation less legible for design/testing.
+
+5. RESPONDER EFFECTIVENESS — 60% without dendritic confirmation
+   Decision: Responders deployed without prior dendritic confirmation have 60% effectiveness
+   (clearance rate multiplied).
+   Why: Makes dendritic cells genuinely valuable without making unconfirmed response useless.
+   The 60% figure is a starting point — could increase to 70% or decrease to 50% in playtesting.
+   Where: engine/cells.js — `effectiveness = hasDendriticConfirmation ? 1.0 : 0.6`
+
+6. INFLAMMATION — Clean node responders cause 15% inflammation per turn
+   Decision: Deploying a responder to a clean node (no pathogen) causes 15 inflammation per turn.
+   Infected node responders cause only 5.
+   Why: This is what creates the over-response failure mode mechanically. If you respond to
+   a false alarm, you generate collateral damage signals which further confuse the picture.
+
+7. ROUTING COSTS — Spec values used unchanged
+   Decision: Forward=1, Amplify=2, Suppress=1, Quarantine=1. These are spec values.
+   Why: The spec explicitly notes these need playtesting. Implemented as specified, flag for
+   first playtest review.
+
+8. SIGNAL ID COUNTER — Module-level counter
+   Decision: Signal IDs use a module-level incrementing counter (sig_1, sig_2...).
+   Why: Simple and sufficient for Layer 1. Will reset on page refresh which is fine for
+   prototype. If persistence is added in Layer 5, this will need to change.
+
+9. PERCEIVED STATE UPDATE ON SIGNAL ARRIVAL — Optimistic escalation
+   Decision: Signals automatically escalate the perceived threat level for a node when they
+   arrive (before routing). Routing decisions then adjust this assessment.
+   Why: This means the player always has a "working picture" even for unrouted signals. The
+   alternative (only update on explicit routing) would make unrouted signals invisible to the
+   working model, which breaks the "unrouted signals age but are still informative" design.
+   Note: This means suppressing a signal actively downgrades your working model, which is
+   the intended mechanic.
+
+10. NO UNIT TEST HARNESS — Manual verification only for Layer 1
+    Decision: No formal unit test setup (no Vitest/Jest config). Engine functions are tested
+    via build success and manual play.
+    Why: The spec says "build to be evaluable before next step" but doesn't mandate automated
+    tests. Adding a test harness adds setup time. This should be added in Layer 2 if the
+    engine functions need iteration.
+
+11. APP.CSS — Deleted
+    Decision: Removed default Vite App.css styles, replaced with clean Tailwind base.
+    The default Vite styles conflict with the dark game UI.
+
+12. SILENCE NOTICES — Informational only, not routable
+    Decision: Silence notices ("no signal received from X this turn") are displayed in the
+    signal console below active signals but cannot be routed — they are informational.
+    Why: Silence is information, but it doesn't require a resource spend to acknowledge.
+    The spec says "silence is information" and the UI should make it legible — satisfied
+    by the informational notice.
+
+13. SPLEEN STRESS — Routing pressure drives HQ stress
+    Decision: Amplify decisions contribute 0.3 pressure, Forward decisions 0.1, capped at 1.0.
+    This drives spleen stress in ground truth.
+    Why: The spec says "over-routing causes cascading inflammatory response". Amplify is the
+    highest-pressure action (cost 2, represents the most aggressive routing).
+
+─────────────────────────────────────────────────────────────────
+KNOWN ISSUES / DEFERRED FOR PLAYTESTING
+─────────────────────────────────────────────────────────────────
+
+- Attention token count (5/turn) needs playtesting. May be too generous or too tight.
+- Coherence gap multiplier (10) may need adjustment after first playtest.
+- Dendritic transit time (3 turns) could be 2 turns if gameplay feels too slow.
+- Responder effectiveness without backing (60%) could be tuned.
+- False alarm rate (15%) may generate too much noise in a short session.
+- Signal accuracy rate (70%) means 30% of real threats emit no signal — could be too high
+  for first-time players to find the infection. Consider starting at 80%.
