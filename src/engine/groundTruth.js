@@ -1,12 +1,13 @@
 // Ground truth engine — the hidden simulation.
 // Pure functions. No React, no UI.
-// Ground truth and perceived state never merge — this is load-bearing.
+// Layer 2: multi-situation support, new pathogen types.
 
 import { NODE_IDS } from '../data/nodes.js';
 import { advancePathogen, initPathogen, isPathodgenCleared } from './pathogen.js';
+import { THREAT_TYPES } from '../data/signals.js';
 
 /**
- * Initialise the ground truth state from a situation definition.
+ * Initialise ground truth for one situation.
  */
 export function initGroundTruth(situationDef) {
   const nodeStates = {};
@@ -14,12 +15,11 @@ export function initGroundTruth(situationDef) {
     nodeStates[nodeId] = {
       pathogenStrength: 0,
       pathogenType: null,
-      inflammation: 0,    // 0-100: caused by responder activity
+      inflammation: 0,
       isClean: true,
     };
   }
 
-  // Place starting pathogen
   const startingNode = situationDef.pathogen.startingNode;
   nodeStates[startingNode] = {
     pathogenStrength: situationDef.pathogen.startingStrength,
@@ -31,40 +31,41 @@ export function initGroundTruth(situationDef) {
   return {
     nodeStates,
     pathogenState: initPathogen(situationDef),
-    spleenStress: 0,        // 0-100: accumulated HQ stress from signal volume
-    totalCollateral: 0,     // cumulative collateral damage score
+    spleenStress: 0,
+    totalCollateral: 0,
     isResolved: false,
-    resolutionType: null,   // 'win' | 'coherence_collapse' | 'turn_limit'
-    spreadHistory: [],      // [{turn, from, to}] for post-mortem
+    resolutionType: null,
+    spreadHistory: [],
+    turn: 0,
   };
 }
 
 /**
- * Advance ground truth by one turn.
+ * Advance ground truth one turn.
  * Returns { newGroundTruth, events }
- * events: things that happened this turn (spread, etc.) for signal generation
  */
 export function advanceGroundTruth(groundTruth, situationDef, deployedCells, turn, routingPressure) {
   const events = [];
 
-  // Advance pathogen
   const prevPathogenState = { ...groundTruth.pathogenState };
   const newPathogenState = advancePathogen(
     groundTruth.pathogenState,
     situationDef,
     deployedCells,
-    turn
+    turn,
+    groundTruth
   );
 
-  // Detect spreads
+  // Detect new spreads
+  const spreadHistory = [...(groundTruth.spreadHistory ?? [])];
   for (const [nodeId, p] of Object.entries(newPathogenState)) {
     if (!prevPathogenState[nodeId] && p.strength > 0) {
       events.push({ type: 'spread', to: nodeId, strength: p.strength });
-      groundTruth.spreadHistory = [...(groundTruth.spreadHistory ?? []), { turn, to: nodeId }];
+      spreadHistory.push({ turn, to: nodeId });
     }
   }
 
-  // Update node states from pathogen state
+  // Update node states
   const newNodeStates = { ...groundTruth.nodeStates };
   for (const nodeId of NODE_IDS) {
     const pathogenHere = newPathogenState[nodeId];
@@ -77,18 +78,13 @@ export function advanceGroundTruth(groundTruth, situationDef, deployedCells, tur
   }
 
   // Apply responder inflammation
-  // Responders cause inflammation at their node — especially without dendritic confirmation
-  const updatedNodeStates = applyInflammation(newNodeStates, deployedCells);
+  const updatedNodeStates = applyInflammation(newNodeStates, deployedCells, situationDef.pathogen.type);
 
-  // Update spleen stress from routing pressure
-  // routingPressure is a 0-1 value computed by the state layer from recent routing
+  // Spleen stress from routing pressure
   const newSpleenStress = Math.min(100, groundTruth.spleenStress + routingPressure * 8);
-  const decayedSpleenStress = Math.max(0, newSpleenStress - 3); // slight decay each turn
+  const decayedSpleenStress = Math.max(0, newSpleenStress - 3);
 
-  // Check resolution
   const pathogenCleared = isPathodgenCleared(newPathogenState);
-  const isResolved = pathogenCleared;
-  const resolutionType = pathogenCleared ? 'win' : null;
 
   return {
     newGroundTruth: {
@@ -96,35 +92,48 @@ export function advanceGroundTruth(groundTruth, situationDef, deployedCells, tur
       nodeStates: updatedNodeStates,
       pathogenState: newPathogenState,
       spleenStress: decayedSpleenStress,
-      spreadHistory: groundTruth.spreadHistory ?? [],
-      isResolved,
-      resolutionType,
+      spreadHistory,
+      isResolved: pathogenCleared,
+      resolutionType: pathogenCleared ? 'win' : null,
+      turn,
     },
     events,
   };
 }
 
-function applyInflammation(nodeStates, deployedCells) {
+function applyInflammation(nodeStates, deployedCells, pathogenType) {
   const result = { ...nodeStates };
 
+  // Autoimmune situation: NK cells, Killer T, responders all cause MORE inflammation
+  const isAutoimmune = pathogenType === THREAT_TYPES.AUTOIMMUNE;
+
   for (const cell of Object.values(deployedCells)) {
-    if (cell.type === 'responder' && !cell.inTransit) {
-      const nodeId = cell.nodeId;
-      if (!result[nodeId]) continue;
+    const isResponder = ['responder', 'killer_t', 'b_cell', 'nk_cell'].includes(cell.type);
+    if (!isResponder || cell.inTransit) continue;
 
-      // Responders at clean nodes cause high inflammation (friendly fire)
-      // Responders at infected nodes cause low inflammation (appropriate)
-      const isClean = result[nodeId].isClean;
-      const inflammationIncrease = isClean ? 15 : 5;
+    const nodeId = cell.nodeId;
+    if (!result[nodeId]) continue;
 
-      result[nodeId] = {
-        ...result[nodeId],
-        inflammation: Math.min(100, (result[nodeId].inflammation ?? 0) + inflammationIncrease),
-      };
+    const isClean = result[nodeId].isClean;
+
+    let inflammationIncrease;
+    if (cell.type === 'killer_t' && isClean) {
+      inflammationIncrease = 25; // T-cells attacking self = crisis
+    } else if (cell.type === 'nk_cell' && isClean) {
+      inflammationIncrease = 15; // NK hitting healthy tissue
+    } else if (isClean) {
+      inflammationIncrease = 15;
+    } else {
+      inflammationIncrease = isAutoimmune ? 10 : 5; // autoimmune situation: responders hurt more
     }
+
+    result[nodeId] = {
+      ...result[nodeId],
+      inflammation: Math.min(100, (result[nodeId].inflammation ?? 0) + inflammationIncrease),
+    };
   }
 
-  // Decay inflammation slightly each turn
+  // Decay
   for (const nodeId of Object.keys(result)) {
     result[nodeId] = {
       ...result[nodeId],
@@ -135,9 +144,6 @@ function applyInflammation(nodeStates, deployedCells) {
   return result;
 }
 
-/**
- * Get a snapshot of ground truth for post-mortem (safe to expose after game ends).
- */
 export function getGroundTruthSnapshot(groundTruth) {
   return {
     nodeStates: { ...groundTruth.nodeStates },

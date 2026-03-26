@@ -1,0 +1,187 @@
+Memory Cell — Layer 2 Implementation Plan
+
+Goal: Threat Variety & The Signal Language
+Make the information space rich and readable. Expand the threat library, add all cell types,
+introduce concurrent situations, and build the memory cell mechanic.
+
+What Gets Built
+- Full cellular cast: Killer T-Cells, B-Cells/Antibodies, Natural Killer Cells, Macrophages
+- 4 additional threat types: viral, cancer (benign/early), autoimmune trigger, molecular mimic
+- Signal differentiation: each threat type has a distinct signal vocabulary players can learn
+- False alarm situations: benign events that produce alarming signals
+- Concurrent situations: two situations running simultaneously (one per half of body)
+- Memory cell mechanic: previously encountered threat types pre-classified in new situations
+- Situation selector: simple menu to choose which situation to run
+
+Playtest Question
+Does learning the signal language feel rewarding? Can the player distinguish bacterial from
+viral signals without being told?
+
+Done When
+A player who has run the bacterial situation once can recognise a viral situation's signal
+pattern and describe the difference.
+
+─────────────────────────────────────────────────────────────────
+BUILD ORDER
+─────────────────────────────────────────────────────────────────
+
+1. Expand data/signals.js with threat-type-specific signal vocabulary
+   - Bacterial: heavy, blunt signals; activation of neutrophils
+   - Viral: intracellular signals; interferon-like language; cellular "alarm" quality
+   - Cancer: quiet, gradual, low-confidence signals; self-like markers
+   - Autoimmune: confused signals (self vs non-self ambiguity)
+   - Molecular mimic: initially clean signals that escalate unexpectedly
+
+2. Add new cell types to engine/cells.js
+   - Killer T-Cell: requires dendritic confirmation, high clearance, autoimmune risk
+   - B-Cell: tags threats for other cells, slower clearance, lower collateral
+   - NK Cell: no confirmation required, moderate clearance, hits stressed healthy tissue
+   - Macrophage: ambient sensing, area coverage, patrolling node + adjacent nodes
+
+3. Add new pathogen types to engine/pathogen.js
+   - Viral: spreads faster, lower strength floor, grows inside cells (different signal pattern)
+   - Cancer: very slow growth, very slow signals, high mimicry (low signal accuracy)
+   - Autoimmune: "pathogen" is the player's own responders; triggered by over-response
+   - Molecular Mimic: bacterial but delays threat signals until late; early signals look clean
+
+4. New situations in data/situations/
+   - silentInvader.js — viral infection. Faster spread, harder to detect early
+   - shadowGrowth.js — early cancer. Very slow, mimics clean, long detection window
+   - friendlyFire.js — autoimmune trigger. Player's prior over-response triggers it
+   - impersonator.js — molecular mimic. Clean early signals, sudden reveal
+
+5. Update engine/signalGenerator.js
+   - Route signal generation through pathogen type for type-specific vocabulary
+   - Viral: "cellular stress" and "interferon signal" language
+   - Cancer: rare, low-confidence "growth marker" signals
+   - Autoimmune: "self-marker conflict" signals
+   - Mimic: initially clean patrol signals that transition to threat signals
+
+6. Concurrent situation support in state/gameState.js and state/actions.js
+   - Game state holds array of active situations (1 or 2 for Layer 2)
+   - Each situation has its own ground truth + signal stream
+   - Signals in console tagged with situation ID
+   - Coherence computed across all active situations
+
+7. Memory cell mechanic in new engine/memory.js
+   - MemoryBank: { [threatType]: { recognized: bool, classificationBonus: 0-1 } }
+   - After a situation resolves cleanly, add memory entry for that threat type
+   - In subsequent situations: threat-type signals arrive with +1 confidence level if recognized
+   - Memory cells displayed in WorkingModel panel as "Immunological Memory" section
+
+8. Situation selector UI (new component SituationSelector.jsx)
+   - Shown on game start / after post-mortem instead of immediately loading uninvitedGuest
+   - Lists available situations with brief description
+   - Shows memory bank entries (what you've encountered before)
+   - "Concurrent mode" toggle to run two situations simultaneously (for Layer 2 testing)
+
+9. Update UI components for new cell types and concurrent situations
+   - BodyMap: show new cell type indicators
+   - WorkingModel: memory bank section, situation tabs if concurrent
+   - SignalConsole: situation tag on each signal card in concurrent mode
+
+─────────────────────────────────────────────────────────────────
+SIGNAL VOCABULARY DESIGN
+─────────────────────────────────────────────────────────────────
+
+The signal language is the primary content of the game. Each threat type should feel distinct:
+
+Bacterial (already implemented):
+  - Blunt activation language: "foreign marker", "bacterial signature", "cell wall detected"
+  - Strong neutrophil signals
+  - High-confidence escalation at moderate strength
+
+Viral (new):
+  - Intracellular language: "cellular distress", "replication signal", "interferon marker"
+  - Signals come from INSIDE cells — source reads as "infected cell" not neutrophil
+  - Moderate early signals that go QUIET during active replication (virus hiding inside cells)
+  - Sudden escalation signal when viral load crosses threshold
+
+Cancer (new):
+  - Extremely quiet: most turns produce NO signal even at moderate strength
+  - When signals appear: "anomalous growth marker", "metabolic irregularity"
+  - Early signals indistinguishable from normal cell turnover noise
+  - Dendritic cell return is the key diagnostic tool — high value here
+
+Autoimmune (new):
+  - Source reads as your own cells: "NK activation cascade", "T-cell proliferation"
+  - Signals look like successful clearance initially
+  - Coherence gap comes from over-response, not undetected threat
+  - Suppressing and recalling cells is the correct response
+
+Molecular Mimic (new):
+  - Turns 1-8: patrol clear signals from infected nodes (pathogen hiding)
+  - Turns 9+: sudden threat signals as mimic drops cover
+  - The pattern break is the tell — experienced players recognize it
+
+─────────────────────────────────────────────────────────────────
+MEMORY CELL MECHANIC DETAILS
+─────────────────────────────────────────────────────────────────
+
+MemoryBank structure:
+{
+  bacterial: { recognized: true, bonus: 0.2 },  // 0.2 = confidence bump
+  viral: { recognized: false, bonus: 0 },
+  ...
+}
+
+Effect on signal generation:
+- If threat type is recognized: confidence level bumps up one band (low→medium, medium→high)
+- This is the only mechanical effect in Layer 2 — no other bonuses yet
+- Memory cells display in UI as "Prior exposure: [threat name] — signals enhanced"
+
+Persistence: memory bank persists across situations within a session (Layer 2)
+Cross-session persistence deferred to Layer 5.
+
+─────────────────────────────────────────────────────────────────
+CONCURRENT SITUATION DESIGN
+─────────────────────────────────────────────────────────────────
+
+Layer 2 concurrent mode: exactly two situations run simultaneously.
+Each situation has its own ground truth and generates its own signal stream.
+Signals in the console are tagged: [GUT INFECTION] vs [LUNG EVENT].
+Attention tokens are shared — routing for situation A costs tokens that aren't available for B.
+This is the resource allocation pressure the design calls for.
+Coherence is computed jointly — undetected threat in either situation hurts coherence.
+
+Implementation: situations array in game state. Index 0 = primary, index 1 = concurrent.
+Signal cards show a situation badge. WorkingModel has situation tabs.
+Body map shows both situations simultaneously — nodes can have threats from different sources.
+
+─────────────────────────────────────────────────────────────────
+FILES CHANGED / CREATED
+─────────────────────────────────────────────────────────────────
+
+Modified:
+  src/data/signals.js                — new vocabulary per threat type
+  src/engine/pathogen.js             — new pathogen types
+  src/engine/cells.js                — new cell types
+  src/engine/signalGenerator.js      — type-specific signal routing
+  src/engine/groundTruth.js          — multi-situation support
+  src/engine/coherence.js            — multi-situation coherence
+  src/state/gameState.js             — situations array, memory bank
+  src/state/actions.js               — new cell deploy actions, concurrent turns
+  src/components/BodyMap.jsx         — new cell type indicators
+  src/components/SignalConsole.jsx   — situation tags on signal cards
+  src/components/WorkingModel.jsx    — memory bank section, situation tabs
+  src/components/GameShell.jsx       — wire new actions, situation selector
+
+Created:
+  src/engine/memory.js               — memory cell mechanic
+  src/data/situations/silentInvader.js
+  src/data/situations/shadowGrowth.js
+  src/data/situations/friendlyFire.js
+  src/data/situations/impersonator.js
+  src/components/SituationSelector.jsx
+
+─────────────────────────────────────────────────────────────────
+DEFINITION OF DONE FOR LAYER 2
+─────────────────────────────────────────────────────────────────
+
+- All 5 threat types playable (bacterial + 4 new)
+- Signal vocabulary distinguishably different per threat type (readable in post-mortem)
+- All cell types deployed and mechanically distinct
+- Concurrent situation mode runs two simultaneous situations
+- Memory cell mechanic improves signal readability on repeat encounters
+- Situation selector navigable
+- Build passes clean

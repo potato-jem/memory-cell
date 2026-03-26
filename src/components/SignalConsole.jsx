@@ -1,5 +1,5 @@
 // SignalConsole — the primary interaction surface.
-// Shows active signal queue with routing buttons, signal history below.
+// Layer 2: situation tags in concurrent mode, memory bonus indicator.
 
 import { ROUTING_COSTS, ROUTING_DECISIONS } from '../data/signals.js';
 
@@ -54,6 +54,7 @@ export default function SignalConsole({
   onRouteSignal,
   onEndTurn,
   isPlaying,
+  isConcurrent,
 }) {
   const pendingSignals = activeSignals.filter(s => !s.routed);
   const routedThisTurn = activeSignals.filter(s => s.routed);
@@ -167,6 +168,20 @@ function SignalCard({ signal, attentionTokens, onRoute }) {
           {/* Dendritic return label */}
           {isDendriticReturn && (
             <span className="text-xs text-purple-400 font-mono">[SCOUT RETURN]</span>
+          )}
+
+          {/* Situation tag (concurrent mode) */}
+          {signal.situationId && signal.situationId !== 'primary' && (
+            <span className="text-xs text-yellow-700 font-mono border border-yellow-900 px-0.5">
+              {signal.situationId.slice(0, 8)}
+            </span>
+          )}
+
+          {/* Memory bonus indicator */}
+          {signal.hasMemoryBonus && (
+            <span className="text-xs text-purple-600 font-mono" title={signal.memoryBonusNote}>
+              ✦ mem
+            </span>
           )}
         </div>
 
