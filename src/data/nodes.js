@@ -125,5 +125,31 @@ export const NODES = {
 };
 
 export const NODE_IDS = Object.keys(NODES);
+export const HQ_NODE_ID = 'SPLEEN'; // all cells deploy from here
 export const getNode = (id) => NODES[id];
 export const getConnectedNodes = (id) => NODES[id]?.connections.map(cid => NODES[cid]) ?? [];
+
+// BFS shortest-path hop distances between all node pairs — computed once at load.
+function computeAllHopDistances() {
+  const distances = {};
+  for (const startId of Object.keys(NODES)) {
+    distances[startId] = { [startId]: 0 };
+    const queue = [startId];
+    while (queue.length > 0) {
+      const nodeId = queue.shift();
+      for (const connId of NODES[nodeId].connections) {
+        if (distances[startId][connId] === undefined) {
+          distances[startId][connId] = distances[startId][nodeId] + 1;
+          queue.push(connId);
+        }
+      }
+    }
+  }
+  return distances;
+}
+
+const HOP_DISTANCES = computeAllHopDistances();
+
+export function getHopDistance(fromId, toId) {
+  return HOP_DISTANCES[fromId]?.[toId] ?? 99;
+}

@@ -1,5 +1,5 @@
 // Signal Generator — translates ground truth into signals each turn.
-// Layer 2: threat-type-specific vocabularies, memory bonus, new cell type sources.
+// Real-time: signals carry expiresAtTick; collateral_damage gated on patrol coverage.
 
 import { NODES, NODE_IDS } from '../data/nodes.js';
 import {
@@ -9,23 +9,29 @@ import {
   getSignalText,
   THREAT_TYPES,
 } from '../data/signals.js';
+import {
+  WARNING_SIGNAL_TIMEOUT,
+  ALERT_SIGNAL_TIMEOUT,
+  INFO_SIGNAL_TIMEOUT,
+  INFLAMMATION_REQUIRES_VISIBILITY,
+} from '../data/gameConfig.js';
 import { getSignalAccuracyForType } from './pathogen.js';
 import { applyMemoryBonus } from './memory.js';
 
 let _signalIdCounter = 1;
-function nextSignalId() {
-  return `sig_${_signalIdCounter++}`;
-}
+function nextSignalId() { return `sig_${_signalIdCounter++}`; }
 
 /**
  * Generate signals for the current turn.
  * @param {Object} groundTruth
  * @param {Object} deployedCells
  * @param {Object} situationDef
- * @param {number} turn
+ * @param {number} turn        - simulation turn (used for situation logic)
  * @param {Object[]} seededEventsThisTurn
- * @param {Object} memoryBank - player's immune memory
- * @param {string} situationId - for concurrent mode tagging
+ * @param {Object} memoryBank
+ * @param {string} situationId
+ * @param {number} tick        - current real tick (for expiresAtTick)
+ * @param {Object} patrolCoverage - from getPatrolCoverage(deployedCells)
  */
 export function generateSignals(
   groundTruth,
@@ -34,7 +40,9 @@ export function generateSignals(
   turn,
   seededEventsThisTurn,
   memoryBank = null,
-  situationId = 'primary'
+  situationId = 'primary',
+  tick = 0,
+  patrolCoverage = {}
 ) {
   const signals = [];
   const usedNodes = new Set();
@@ -52,10 +60,10 @@ export function generateSignals(
       type: event.signalType,
       confidence: event.confidence,
       source: SIGNAL_SOURCES.NEUTROPHIL,
-      delay: Math.floor(node.signalSpeed),
       isFalseAlarm: event.isFalseAlarm ?? false,
       isSeeded: true,
       turn,
+      tick,
       threatType: event.isFalseAlarm ? null : pathogenType,
       situationId,
     });
@@ -73,21 +81,13 @@ export function generateSignals(
     const node = NODES[nodeId];
     if (!node) continue;
 
-    // Type-specific signal accuracy (cancer is quiet, mimic is silent early)
-    const accuracy = getSignalAccuracyForType(
-      pathogenType,
-      pathogenData.strength,
-      turn,
-      situationDef
-    );
-
+    const accuracy = getSignalAccuracyForType(pathogenType, pathogenData.strength, turn, situationDef);
     if (Math.random() > accuracy) continue;
 
     const strength = pathogenData.strength;
     const confidence = strengthToConfidence(strength);
     const signalType = strengthToSignalType(strength, situationDef.pathogen.spreadThreshold, pathogenType, turn);
 
-    // Autoimmune signals come from NK/responder cells, not neutrophils
     const source = pathogenType === THREAT_TYPES.AUTOIMMUNE
       ? SIGNAL_SOURCES.NK_CELL
       : pathogenType === THREAT_TYPES.VIRAL
@@ -95,17 +95,8 @@ export function generateSignals(
       : SIGNAL_SOURCES.NEUTROPHIL;
 
     let signal = makeSignal({
-      nodeId,
-      nodeLabel: node.label,
-      type: signalType,
-      confidence,
-      source,
-      delay: node.signalSpeed,
-      isFalseAlarm: false,
-      isSeeded: false,
-      turn,
-      threatType: pathogenType,
-      situationId,
+      nodeId, nodeLabel: node.label, type: signalType, confidence, source,
+      isFalseAlarm: false, isSeeded: false, turn, tick, threatType: pathogenType, situationId,
     });
 
     signal = maybeApplyMemoryBonus(signal, memoryBank, pathogenType);
@@ -113,72 +104,35 @@ export function generateSignals(
     usedNodes.add(nodeId);
   }
 
-  // 3. Dendritic cell returns
-  for (const [cellId, cell] of Object.entries(deployedCells)) {
-    if (cell.type !== 'dendritic') continue;
-    if (cell.returnsOnTurn !== turn) continue;
+  // 3. Scout (dendritic) returns — triggered by 'scout_arrived' events in actions.js
+  //    (handled directly in the TICK handler, not here)
 
-    const node = NODES[cell.nodeId];
-    const pathogenHere = groundTruth.pathogenState[cell.nodeId];
-    const hasPathogen = pathogenHere && pathogenHere.strength > 0;
-
-    const signalType = hasPathogen
-      ? (pathogenHere.strength >= situationDef.pathogen.spreadThreshold
-          ? SIGNAL_TYPES.THREAT_EXPANDING
-          : SIGNAL_TYPES.THREAT_CONFIRMED)
-      : SIGNAL_TYPES.FALSE_ALARM;
-
-    const signal = makeSignal({
-      nodeId: cell.nodeId,
-      nodeLabel: node.label,
-      type: signalType,
-      confidence: CONFIDENCE_LEVELS.HIGH,
-      source: SIGNAL_SOURCES.DENDRITIC,
-      delay: 0,
-      isFalseAlarm: !hasPathogen,
-      isSeeded: false,
-      turn,
-      isDendriticReturn: true,
-      cellId,
-      threatType: hasPathogen ? pathogenType : null,
-      situationId,
-    });
-
-    signals.push(signal);
-    usedNodes.add(cell.nodeId);
-  }
-
-  // 4. Collateral damage signals
+  // 4. Collateral damage — only visible if patrol/macrophage covers the node
   for (const nodeId of NODE_IDS) {
     if (usedNodes.has(nodeId)) continue;
     const nodeState = groundTruth.nodeStates[nodeId];
     if (!nodeState || nodeState.inflammation < 40) continue;
 
+    // Visibility gate: must have patrol or macrophage coverage
+    if (INFLAMMATION_REQUIRES_VISIBILITY && !patrolCoverage[nodeId]) continue;
+
     const node = NODES[nodeId];
     const confidence = nodeState.inflammation > 70 ? CONFIDENCE_LEVELS.HIGH : CONFIDENCE_LEVELS.MEDIUM;
 
-    const signal = makeSignal({
-      nodeId,
-      nodeLabel: node.label,
-      type: SIGNAL_TYPES.COLLATERAL_DAMAGE,
-      confidence,
+    signals.push(makeSignal({
+      nodeId, nodeLabel: node.label,
+      type: SIGNAL_TYPES.COLLATERAL_DAMAGE, confidence,
       source: SIGNAL_SOURCES.MACROPHAGE,
-      delay: node.signalSpeed,
-      isFalseAlarm: false,
-      isSeeded: false,
-      turn,
-      threatType: pathogenType, // collateral is threat-type aware
-      situationId,
-    });
-
-    signals.push(signal);
+      isFalseAlarm: false, isSeeded: false, turn, tick,
+      threatType: pathogenType, situationId,
+    }));
     usedNodes.add(nodeId);
   }
 
-  // 5. False alarms from patrolled clean nodes
-  for (const [cellId, cell] of Object.entries(deployedCells)) {
+  // 5. False alarms and patrol-clear from patrol cells at their current node
+  for (const cell of Object.values(deployedCells)) {
     if (!['neutrophil', 'macrophage'].includes(cell.type)) continue;
-    if (cell.inTransit) continue;
+    if (cell.phase !== 'arrived') continue;
 
     const nodeId = cell.nodeId;
     if (usedNodes.has(nodeId)) continue;
@@ -189,38 +143,22 @@ export function generateSignals(
     if (isClean) {
       if (Math.random() < (situationDef.falseAlarmRate ?? 0.15)) {
         const node = NODES[nodeId];
-        const signal = makeSignal({
-          nodeId,
-          nodeLabel: node.label,
-          type: SIGNAL_TYPES.ANOMALY_DETECTED,
-          confidence: CONFIDENCE_LEVELS.LOW,
+        signals.push(makeSignal({
+          nodeId, nodeLabel: node.label,
+          type: SIGNAL_TYPES.ANOMALY_DETECTED, confidence: CONFIDENCE_LEVELS.LOW,
           source: SIGNAL_SOURCES.NEUTROPHIL,
-          delay: node.signalSpeed,
-          isFalseAlarm: true,
-          isSeeded: false,
-          turn,
-          situationId,
-        });
-        signals.push(signal);
+          isFalseAlarm: true, isSeeded: false, turn, tick, situationId,
+        }));
         usedNodes.add(nodeId);
       } else if (Math.random() < 0.4) {
         const node = NODES[nodeId];
-        if (!usedNodes.has(nodeId)) {
-          const signal = makeSignal({
-            nodeId,
-            nodeLabel: node.label,
-            type: SIGNAL_TYPES.PATROL_CLEAR,
-            confidence: CONFIDENCE_LEVELS.MEDIUM,
-            source: SIGNAL_SOURCES.NEUTROPHIL,
-            delay: node.signalSpeed,
-            isFalseAlarm: false,
-            isSeeded: false,
-            turn,
-            situationId,
-          });
-          signals.push(signal);
-          usedNodes.add(nodeId);
-        }
+        signals.push(makeSignal({
+          nodeId, nodeLabel: node.label,
+          type: SIGNAL_TYPES.PATROL_CLEAR, confidence: CONFIDENCE_LEVELS.MEDIUM,
+          source: SIGNAL_SOURCES.NEUTROPHIL,
+          isFalseAlarm: false, isSeeded: false, turn, tick, situationId,
+        }));
+        usedNodes.add(nodeId);
       }
     }
   }
@@ -233,9 +171,22 @@ function maybeApplyMemoryBonus(signal, memoryBank, threatType) {
   return applyMemoryBonus(signal, memoryBank, threatType);
 }
 
+function signalExpiry(type, tick) {
+  switch (type) {
+    case SIGNAL_TYPES.THREAT_CONFIRMED:
+    case SIGNAL_TYPES.THREAT_EXPANDING:
+      return ALERT_SIGNAL_TIMEOUT == null ? null : tick + ALERT_SIGNAL_TIMEOUT;
+    case SIGNAL_TYPES.ANOMALY_DETECTED:
+    case SIGNAL_TYPES.COLLATERAL_DAMAGE:
+      return tick + WARNING_SIGNAL_TIMEOUT;
+    default: // patrol_clear, false_alarm, resolution
+      return INFO_SIGNAL_TIMEOUT == null ? null : tick + INFO_SIGNAL_TIMEOUT;
+  }
+}
+
 function makeSignal({
-  nodeId, nodeLabel, type, confidence, source, delay,
-  isFalseAlarm, isSeeded, turn, isDendriticReturn = false,
+  nodeId, nodeLabel, type, confidence, source,
+  isFalseAlarm, isSeeded, turn, tick, isDendriticReturn = false,
   cellId = null, threatType = null, situationId = 'primary',
 }) {
   return {
@@ -245,7 +196,6 @@ function makeSignal({
     type,
     confidence,
     source,
-    delay: Math.round(delay),
     isFalseAlarm,
     isSeeded,
     isDendriticReturn,
@@ -253,6 +203,8 @@ function makeSignal({
     threatType,
     situationId,
     arrivedOnTurn: turn,
+    arrivedAtTick: tick,
+    expiresAtTick: signalExpiry(type, tick),
     routed: false,
     routingDecision: null,
     hasMemoryBonus: false,
@@ -268,45 +220,66 @@ function strengthToConfidence(strength) {
 }
 
 function strengthToSignalType(strength, spreadThreshold, pathogenType, turn) {
-  // Cancer: always quiet signals
   if (pathogenType === THREAT_TYPES.CANCER) {
     if (strength < 30) return SIGNAL_TYPES.ANOMALY_DETECTED;
     if (strength < 60) return SIGNAL_TYPES.THREAT_CONFIRMED;
     return SIGNAL_TYPES.THREAT_EXPANDING;
   }
-
-  // Mimic: quiet early, sudden reveal late
   if (pathogenType === THREAT_TYPES.MIMIC) {
-    if (strength < 40) return SIGNAL_TYPES.ANOMALY_DETECTED; // "something changed"
+    if (strength < 40) return SIGNAL_TYPES.ANOMALY_DETECTED;
     return SIGNAL_TYPES.THREAT_CONFIRMED;
   }
-
   if (strength >= spreadThreshold) return SIGNAL_TYPES.THREAT_EXPANDING;
   if (strength >= 25) return SIGNAL_TYPES.THREAT_CONFIRMED;
   return SIGNAL_TYPES.ANOMALY_DETECTED;
 }
 
+// Build a dendritic-return signal directly (called from TICK handler on scout_arrived event)
+export function makeDendriticReturnSignal(cell, groundTruth, situationDef, tick, turn, situationId) {
+  const node = NODES[cell.nodeId];
+  const pathogenHere = groundTruth.pathogenState[cell.nodeId];
+  const hasPathogen = pathogenHere && pathogenHere.strength > 0;
+  const pathogenType = situationDef.pathogen.type;
+
+  const signalType = hasPathogen
+    ? (pathogenHere.strength >= situationDef.pathogen.spreadThreshold
+        ? SIGNAL_TYPES.THREAT_EXPANDING
+        : SIGNAL_TYPES.THREAT_CONFIRMED)
+    : SIGNAL_TYPES.FALSE_ALARM;
+
+  return makeSignal({
+    nodeId: cell.nodeId,
+    nodeLabel: node.label,
+    type: signalType,
+    confidence: CONFIDENCE_LEVELS.HIGH,
+    source: SIGNAL_SOURCES.DENDRITIC,
+    isFalseAlarm: !hasPathogen,
+    isSeeded: false,
+    turn,
+    tick,
+    isDendriticReturn: true,
+    cellId: cell.id,
+    threatType: hasPathogen ? pathogenType : null,
+    situationId,
+  });
+}
+
 export function generateSilenceNotices(groundTruth, deployedCells, turn) {
   const notices = [];
-
   for (const cell of Object.values(deployedCells)) {
-    if (cell.type !== 'neutrophil' || cell.inTransit) continue;
-
+    if (cell.type !== 'neutrophil' || cell.phase !== 'arrived') continue;
     const nodeId = cell.nodeId;
     const node = NODES[nodeId];
     const pathogenHere = groundTruth.pathogenState[nodeId];
-    const hasPathogen = pathogenHere && pathogenHere.strength > 0;
-
-    if (hasPathogen) {
+    if (pathogenHere && pathogenHere.strength > 0) {
       notices.push({
         nodeId,
         nodeLabel: node.label,
-        message: `No signal received from ${node.label} this turn — but the node is patrolled.`,
+        message: `No signal from ${node.label} — node is patrolled.`,
         turn,
         _groundTruthHasThreat: true,
       });
     }
   }
-
   return notices;
 }

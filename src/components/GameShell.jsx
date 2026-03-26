@@ -1,8 +1,9 @@
 // GameShell — new layout: large body map + node detail panel on right.
 // Header: system health, turn, tokens. No separate signal console.
 
-import { useReducer, useCallback, useState } from 'react';
-import { initGameState, GAME_PHASES } from '../state/gameState.js';
+import { useReducer, useCallback, useState, useEffect, useRef } from 'react';
+import { initGameState, GAME_PHASES, TOTAL_TOKENS } from '../state/gameState.js';
+import { TICK_RATE_MS } from '../data/gameConfig.js';
 import { gameReducer, ACTION_TYPES } from '../state/actions.js';
 import { initMemoryBank, getMemoryBankSummary } from '../engine/memory.js';
 import { UNINVITED_GUEST } from '../data/situations/uninvitedGuest.js';
@@ -69,8 +70,21 @@ export default function GameShell() {
     dispatch({ type: ACTION_TYPES.RECALL_UNIT, cellId });
   }, []);
 
-  const handleEndTurn = useCallback(() => {
-    dispatch({ type: ACTION_TYPES.END_TURN });
+  const handlePause = useCallback(() => {
+    dispatch({ type: ACTION_TYPES.PAUSE });
+  }, []);
+
+  const handleResume = useCallback(() => {
+    dispatch({ type: ACTION_TYPES.RESUME });
+  }, []);
+
+  // ── Real-time game loop ────────────────────────────────────────────────────
+  // Dispatches TICK every second. The reducer ignores ticks when paused/ended.
+  useEffect(() => {
+    const id = setInterval(() => {
+      dispatch({ type: ACTION_TYPES.TICK });
+    }, TICK_RATE_MS);
+    return () => clearInterval(id);
   }, []);
 
   if (showSelector) {
@@ -110,14 +124,10 @@ export default function GameShell() {
         </div>
 
         <div className="flex items-center gap-5 shrink-0">
-          {/* Turn */}
+          {/* Timer */}
           <div className="flex items-center gap-1.5">
-            <span className="text-xs text-gray-600">Turn</span>
-            <span className="text-sm font-mono text-gray-200">{state.turn}</span>
-            <span className="text-gray-800">/</span>
-            <span className="text-sm font-mono text-gray-600">
-              {Math.min(...state.situationStates.map(s => s.situationDef.turnLimit))}
-            </span>
+            <span className="text-xs text-gray-600">T</span>
+            <span className="text-sm font-mono text-gray-400">{state.turn}</span>
           </div>
 
           {/* System health */}
@@ -126,10 +136,10 @@ export default function GameShell() {
             <HealthBar score={state.healthScore ?? state.coherenceScore} />
           </div>
 
-          {/* Tokens */}
+          {/* Token pool */}
           <div className="flex items-center gap-2">
             <span className="text-xs text-gray-600">Tokens</span>
-            <TokenPips current={state.attentionTokens} max={5} />
+            <TokenPool available={state.attentionTokens} total={TOTAL_TOKENS} />
           </div>
 
           {/* Pending signal count */}
@@ -149,12 +159,21 @@ export default function GameShell() {
             ← Menu
           </button>
           {isPlaying && (
-            <button
-              onClick={handleEndTurn}
-              className="px-4 py-1.5 bg-blue-900 hover:bg-blue-800 text-blue-200 text-xs font-mono uppercase tracking-wider border border-blue-700 transition-colors"
-            >
-              End Turn →
-            </button>
+            state.paused ? (
+              <button
+                onClick={handleResume}
+                className="px-4 py-1.5 bg-green-900 hover:bg-green-800 text-green-200 text-xs font-mono uppercase tracking-wider border border-green-700 transition-colors"
+              >
+                ▶ Resume
+              </button>
+            ) : (
+              <button
+                onClick={handlePause}
+                className="px-4 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-400 text-xs font-mono uppercase tracking-wider border border-gray-700 transition-colors"
+              >
+                ‖ Pause
+              </button>
+            )
           )}
         </div>
       </header>
@@ -204,6 +223,7 @@ export default function GameShell() {
               deployedCells={state.deployedCells}
               activeSignals={state.activeSignals}
               attentionTokens={state.attentionTokens}
+              currentTick={state.tick}
               onDismissSignal={handleDismissSignal}
               onHoldSignal={handleHoldSignal}
               onDeploy={handleDeploy}
@@ -328,7 +348,7 @@ function OverviewPanel({ situationStates, activeSignals, deployedCells, healthSc
 
         {alertNodes.length === 0 && warningNodes.length === 0 && (
           <div className="px-3 py-3 text-xs text-gray-800 italic border-b border-gray-800">
-            No pending signals. End turn to advance.
+            No active signals.
           </div>
         )}
 
@@ -351,7 +371,8 @@ function OverviewPanel({ situationStates, activeSignals, deployedCells, healthSc
                   >
                     <span className="text-gray-600 font-mono w-16 truncate">{cell.type}</span>
                     <span className="text-gray-700">→ {nodeName}</span>
-                    {cell.inTransit && <span className="text-blue-900 ml-auto">T{cell.returnsOnTurn}</span>}
+                    {cell.phase === 'outbound' && <span className="text-blue-900 ml-auto font-mono">→{cell.arrivalTick}s</span>}
+                    {cell.phase === 'returning' && <span className="text-gray-700 ml-auto font-mono">↩</span>}
                   </button>
                 );
               })}
@@ -411,12 +432,13 @@ function NodeSummaryRow({ nodeId, signals, level, onSelect }) {
 
 // ── Header sub-components ──────────────────────────────────────────────────────
 
-function TokenPips({ current, max }) {
+function TokenPool({ available, total }) {
+  const pct = total > 0 ? (available / total) * 100 : 0;
+  const color = available === 0 ? 'text-red-500' : available <= 3 ? 'text-yellow-500' : 'text-cyan-400';
   return (
-    <div className="flex gap-0.5">
-      {Array.from({ length: max }).map((_, i) => (
-        <div key={i} className={`w-3 h-3 rounded-sm ${i < current ? 'bg-cyan-500' : 'bg-gray-700'}`} />
-      ))}
+    <div className="flex items-center gap-1.5">
+      <span className={`text-sm font-mono tabular-nums ${color}`}>{available}</span>
+      <span className="text-gray-700 text-xs">/{total}</span>
     </div>
   );
 }

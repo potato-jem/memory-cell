@@ -1,12 +1,13 @@
 // Game state shape and initialisation.
-// Layer 2: multiple situations support, memory bank.
+// Real-time: tick-based, token pool (no per-turn regen), paused flag.
 
 import { initGroundTruth } from '../engine/groundTruth.js';
 import { initPerceivedState } from './perceivedState.js';
 import { initMemoryBank } from '../engine/memory.js';
 import { NODE_IDS } from '../data/nodes.js';
+import { TOTAL_TOKENS, TICKS_PER_TURN } from '../data/gameConfig.js';
 
-export const TOKENS_PER_TURN = 5;
+export { TOTAL_TOKENS, TICKS_PER_TURN };
 
 export const GAME_PHASES = {
   PLAYING: 'playing',
@@ -26,10 +27,8 @@ export const LOSS_REASONS = {
  * @param {Object} existingMemoryBank - carry forward from previous situation
  */
 export function initGameState(situationDefs, existingMemoryBank = null) {
-  // Normalise to array
   const situations = Array.isArray(situationDefs) ? situationDefs : [situationDefs];
 
-  // Build per-situation ground truth and perceived state
   const situationStates = situations.map(def => ({
     id: def.id,
     situationDef: def,
@@ -42,55 +41,49 @@ export function initGameState(situationDefs, existingMemoryBank = null) {
 
   return {
     situationStates,
-    activeSituationId: situations[0].id,  // which situation is shown in main view
+    activeSituationId: situations[0].id,
 
-    // Shared cell deployment across all situations
+    // Shared cell deployment
     deployedCells: {},
 
-    // Turn and resource tracking
-    turn: 1,
-    attentionTokens: TOKENS_PER_TURN,
-    tokensSpentThisTurn: 0,
+    // Time tracking
+    tick: 0,
+    turn: 0,
 
-    // Coherence (combined across all active situations)
+    // Token pool — no regen, tokens returned when cells come back
+    attentionTokens: TOTAL_TOKENS,  // = TOTAL_TOKENS - tokensInUse (kept for UI compat)
+    tokensInUse: 0,
+
+    // Health
+    healthScore: 100,
     coherenceScore: 100,
     coherenceHistory: [{ turn: 0, score: 100 }],
 
-    // Signals (combined from all situations, tagged by situationId)
+    // Signals
     activeSignals: [],
     signalHistory: [],
     silenceNotices: [],
-    routingDecisionsThisTurn: [],
 
     // Memory bank
     memoryBank: existingMemoryBank ?? initMemoryBank(),
 
     // Phase
     phase: GAME_PHASES.PLAYING,
+    paused: false,
     lossReason: null,
     postMortem: null,
-
-    // Convenience accessors
-    get primarySituation() {
-      return this.situationStates[0];
-    },
-    get situationDef() {
-      return this.situationStates[0].situationDef;
-    },
+    selectedNodeId: null,
   };
 }
 
-// Helper: get situation state by ID
 export function getSituationState(gameState, situationId) {
   return gameState.situationStates.find(s => s.id === situationId) ?? gameState.situationStates[0];
 }
 
-// Helper: get ground truth for primary situation
 export function getPrimaryGroundTruth(gameState) {
   return gameState.situationStates[0].groundTruth;
 }
 
-// Helper: get perceived state for primary situation
 export function getPrimaryPerceivedState(gameState) {
   return gameState.situationStates[0].perceivedState;
 }

@@ -19,21 +19,25 @@ const STATUS_STYLES = {
   [NODE_STATUSES.RESOLVED]:     { fill: '#021a0a', stroke: '#16a34a', glow: '#16a34a' },
 };
 
-// Badge levels from signals
-function getNodeAlertLevel(signals) {
-  if (!signals || signals.length === 0) return null;
-  const pending = signals.filter(s => !s.routed);
-  if (pending.length === 0) return null;
-  const hasAlert = pending.some(s => s.confidence === 'high' || s.type === 'threat_expanding' || s.type === 'threat_confirmed');
-  const hasWarning = pending.some(s => s.confidence === 'medium' || s.type === 'anomaly_detected' || s.type === 'collateral_damage');
-  if (hasAlert) return { level: 'alert', count: pending.length, color: '#ef4444', bg: '#450a0a' };
-  if (hasWarning) return { level: 'warning', count: pending.length, color: '#f59e0b', bg: '#2d1800' };
-  return { level: 'info', count: pending.length, color: '#60a5fa', bg: '#0c1a35' };
+// Two badge counts per node:
+//   knownCount  — threat_confirmed / threat_expanding (red badge, right)
+//   unknownCount — anomaly_detected / collateral_damage (blue/yellow badge, left)
+// Info signals (patrol_clear, false_alarm) do NOT appear in badges.
+function getNodeBadges(signals) {
+  if (!signals || signals.length === 0) return { knownCount: 0, unknownCount: 0 };
+  const active = signals.filter(s => !s.routed);
+  const knownCount = active.filter(s =>
+    s.type === 'threat_confirmed' || s.type === 'threat_expanding'
+  ).length;
+  const unknownCount = active.filter(s =>
+    s.type === 'anomaly_detected' || s.type === 'collateral_damage'
+  ).length;
+  return { knownCount, unknownCount };
 }
 
 function getCellIndicators(nodeId, deployedCells) {
-  const here = Object.values(deployedCells).filter(c => c.nodeId === nodeId && !c.inTransit);
-  const enRoute = Object.values(deployedCells).filter(c => c.nodeId === nodeId && c.inTransit);
+  const here = Object.values(deployedCells).filter(c => c.nodeId === nodeId && c.phase === 'arrived');
+  const enRoute = Object.values(deployedCells).filter(c => c.nodeId === nodeId && c.phase === 'outbound');
   return { here, enRoute };
 }
 
@@ -105,7 +109,7 @@ export default function BodyMap({ perceivedState, deployedCells, selectedNodeId,
           const status = psNode?.status ?? NODE_STATUSES.CLEAN;
           const style = STATUS_STYLES[status] ?? STATUS_STYLES[NODE_STATUSES.CLEAN];
           const isSelected = node.id === selectedNodeId;
-          const badge = getNodeAlertLevel(signalsByNode[node.id]);
+          const { knownCount, unknownCount } = getNodeBadges(signalsByNode[node.id]);
           const { here, enRoute } = getCellIndicators(node.id, deployedCells);
           const hasCells = here.length > 0 || enRoute.length > 0;
 
@@ -219,28 +223,38 @@ export default function BodyMap({ perceivedState, deployedCells, selectedNodeId,
                 </g>
               )}
 
-              {/* Alert badge (top-right of node) */}
-              {badge && (
+              {/* Known problems badge — top-right (red) */}
+              {knownCount > 0 && (
                 <g>
                   <circle
                     cx={node.position.x + NODE_R - 2}
                     cy={node.position.y - NODE_R + 2}
-                    r={7}
-                    fill={badge.bg}
-                    stroke={badge.color}
-                    strokeWidth="1"
+                    r={7} fill="#450a0a" stroke="#ef4444" strokeWidth="1"
                   />
                   <text
-                    x={node.position.x + NODE_R - 2}
-                    y={node.position.y - NODE_R + 2}
-                    textAnchor="middle"
-                    dominantBaseline="middle"
-                    fontSize="6"
-                    fill={badge.color}
-                    fontFamily="monospace"
-                    fontWeight="bold"
+                    x={node.position.x + NODE_R - 2} y={node.position.y - NODE_R + 2}
+                    textAnchor="middle" dominantBaseline="middle"
+                    fontSize="6" fill="#ef4444" fontFamily="monospace" fontWeight="bold"
                   >
-                    {badge.count > 9 ? '9+' : badge.count}
+                    {knownCount > 9 ? '9+' : knownCount}
+                  </text>
+                </g>
+              )}
+
+              {/* Unknown signals badge — top-left (yellow) */}
+              {unknownCount > 0 && (
+                <g>
+                  <circle
+                    cx={node.position.x - NODE_R + 2}
+                    cy={node.position.y - NODE_R + 2}
+                    r={7} fill="#2d1800" stroke="#f59e0b" strokeWidth="1"
+                  />
+                  <text
+                    x={node.position.x - NODE_R + 2} y={node.position.y - NODE_R + 2}
+                    textAnchor="middle" dominantBaseline="middle"
+                    fontSize="6" fill="#f59e0b" fontFamily="monospace" fontWeight="bold"
+                  >
+                    {unknownCount > 9 ? '9+' : unknownCount}
                   </text>
                 </g>
               )}
