@@ -48,7 +48,7 @@ export function generateSignals(
 
     const nodeState = groundTruth.nodeStates?.[nodeId] ?? {};
     const pathogenHere = groundTruth.pathogenState?.[nodeId];
-    const actualThreatType = (pathogenHere?.strength > 0) ? pathogenType : null;
+    const actualThreatType = (pathogenHere?.strength > 0) ? pathogenHere.type : null;
     const threatStrength = pathogenHere?.strength ?? 0;
     const inflammation = nodeState.inflammation ?? 0;
 
