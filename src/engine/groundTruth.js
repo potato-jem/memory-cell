@@ -109,7 +109,7 @@ function applyInflammation(nodeStates, deployedCells, pathogenType) {
 
   for (const cell of Object.values(deployedCells)) {
     const isResponder = ['responder', 'killer_t', 'b_cell', 'nk_cell'].includes(cell.type);
-    if (!isResponder || cell.inTransit) continue;
+    if (!isResponder || cell.phase !== 'arrived') continue;
 
     const nodeId = cell.nodeId;
     if (!result[nodeId]) continue;

@@ -108,16 +108,18 @@ function handleTick(state) {
       const sit = updatedSituationStates[i];
       if (sit.isResolved) continue;
 
-      const pathogenHere = sit.groundTruth.pathogenState[event.nodeId];
-      const foundThreat = pathogenHere && pathogenHere.strength > 0;
-      const threatType = foundThreat ? sit.situationDef.pathogen.type : null;
-
+      // makeDendriticReturnSignal does the detection roll internally
       const returnSignal = makeDendriticReturnSignal(
         cell, sit.groundTruth, sit.situationDef, newTick, newTurn, sit.id
       );
+      if (!returnSignal) continue;
       scoutReturnSignals.push(returnSignal);
 
-      const newPS = applyDendriticReturn(sit.perceivedState, event.nodeId, foundThreat, threatType);
+      // What the scout *perceived* (may be wrong — WRONG_ID outcome)
+      const perceivedThreat = returnSignal.type === 'threat_confirmed';
+      const reportedType = returnSignal.reportedThreatType ?? null;
+
+      const newPS = applyDendriticReturn(sit.perceivedState, event.nodeId, perceivedThreat, reportedType);
       updatedSituationStates = updatedSituationStates.map((s, idx) =>
         idx === i ? { ...s, perceivedState: newPS } : s
       );
