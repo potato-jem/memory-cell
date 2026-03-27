@@ -16,7 +16,7 @@ export const UNINVITED_GUEST = {
     growthRatePerTurn: 4,       // strength added per turn at active node if unchecked
     spreadThreshold: 45,        // strength at which spread to adjacent node triggers
     clearanceRatePerResponder: 12, // strength removed per turn per responder present
-    spreadNodes: ['LIVER', 'BLOOD', 'SPLEEN'], // adjacent nodes it can spread to (in order of preference)
+    spreadNodes: ['LIVER', 'HEART_BLOOD'], // adjacent nodes it can spread to (in order of preference)
   },
 
   // Signal accuracy: probability a real threat generates a signal this turn

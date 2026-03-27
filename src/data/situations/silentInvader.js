@@ -10,12 +10,12 @@ export const SILENT_INVADER = {
 
   pathogen: {
     type: 'viral',
-    startingNode: 'THROAT',
+    startingNode: 'HEAD_THROAT',
     startingStrength: 6,
     growthRatePerTurn: 5,        // faster than bacterial
     spreadThreshold: 35,          // lower threshold — viral spreads earlier
     clearanceRatePerResponder: 12, // standard clearance
-    spreadNodes: ['LUNGS', 'LEFT_LYMPH', 'RIGHT_LYMPH'],
+    spreadNodes: ['CHEST_LUNGS', 'SPLEEN', 'HEART_BLOOD'],
   },
 
   signalAccuracyRate: 0.65,      // generally moderate
@@ -29,7 +29,7 @@ export const SILENT_INVADER = {
     {
       turn: 2,
       type: 'signal',
-      nodeId: 'THROAT',
+      nodeId: 'HEAD_THROAT',
       signalType: 'anomaly_detected',
       confidence: 'low',
       description: 'First cellular stress signal — faint, intracellular character',
@@ -37,7 +37,7 @@ export const SILENT_INVADER = {
     {
       turn: 3,
       type: 'signal',
-      nodeId: 'THROAT',
+      nodeId: 'HEAD_THROAT',
       signalType: 'anomaly_detected',
       confidence: 'medium',
       description: 'Interferon marker — classic viral early signal',
@@ -46,7 +46,7 @@ export const SILENT_INVADER = {
     {
       turn: 8,
       type: 'signal',
-      nodeId: 'LUNGS',
+      nodeId: 'CHEST_LUNGS',
       signalType: 'patrol_clear',
       confidence: 'medium',
       description: 'Lungs appear clear — but virus may already be there',
@@ -55,7 +55,7 @@ export const SILENT_INVADER = {
     {
       turn: 13,
       type: 'signal',
-      nodeId: 'THROAT',
+      nodeId: 'HEAD_THROAT',
       signalType: 'threat_expanding',
       confidence: 'high',
       description: 'Viral load threshold crossed — cells now screaming',
@@ -68,7 +68,7 @@ export const SILENT_INVADER = {
     {
       turn: 22,
       type: 'signal',
-      nodeId: 'LUNGS',
+      nodeId: 'CHEST_LUNGS',
       signalType: 'threat_confirmed',
       confidence: 'medium',
       description: 'Lungs now infected if spread occurred',

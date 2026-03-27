@@ -7,16 +7,16 @@
 export const IMPERSONATOR = {
   id: 'impersonator',
   name: 'The Impersonator',
-  description: 'Peripheral patrol returning clean. All clear. All clear. All— wait.',
+  description: 'Periphery patrol returning clean. All clear. All clear. All— wait.',
 
   pathogen: {
     type: 'mimic',
-    startingNode: 'PERIPHERAL',
+    startingNode: 'PERIPHERY',
     startingStrength: 10,
     growthRatePerTurn: 4,
     spreadThreshold: 50,
     clearanceRatePerResponder: 12,
-    spreadNodes: ['BLOOD', 'LEFT_LYMPH', 'RIGHT_LYMPH'],
+    spreadNodes: ['HEART_BLOOD'],
     mimicRevealThreshold: 40,   // strength at which mimic drops cover
   },
 
@@ -32,7 +32,7 @@ export const IMPERSONATOR = {
     {
       turn: 2,
       type: 'signal',
-      nodeId: 'PERIPHERAL',
+      nodeId: 'PERIPHERY',
       signalType: 'patrol_clear',
       confidence: 'medium',
       description: 'Patrol returns clean — mimic is hiding',
@@ -40,7 +40,7 @@ export const IMPERSONATOR = {
     {
       turn: 4,
       type: 'signal',
-      nodeId: 'PERIPHERAL',
+      nodeId: 'PERIPHERY',
       signalType: 'patrol_clear',
       confidence: 'high',
       description: 'Another clean sweep — all self-markers verified',
@@ -48,7 +48,7 @@ export const IMPERSONATOR = {
     {
       turn: 7,
       type: 'signal',
-      nodeId: 'PERIPHERAL',
+      nodeId: 'PERIPHERY',
       signalType: 'patrol_clear',
       confidence: 'medium',
       description: 'Third clean return — pattern seems safe',
@@ -56,7 +56,7 @@ export const IMPERSONATOR = {
     {
       turn: 11,
       type: 'signal',
-      nodeId: 'PERIPHERAL',
+      nodeId: 'PERIPHERY',
       signalType: 'anomaly_detected',
       confidence: 'medium',
       description: 'Something changed — prior clean signals now suspect',
@@ -64,7 +64,7 @@ export const IMPERSONATOR = {
     {
       turn: 12,
       type: 'signal',
-      nodeId: 'PERIPHERAL',
+      nodeId: 'PERIPHERY',
       signalType: 'threat_confirmed',
       confidence: 'high',
       description: 'Mimic cover blown — real pathogen signature now readable',
@@ -77,7 +77,7 @@ export const IMPERSONATOR = {
     {
       turn: 20,
       type: 'signal',
-      nodeId: 'BLOOD',
+      nodeId: 'HEART_BLOOD',
       signalType: 'anomaly_detected',
       confidence: 'low',
       description: 'Systemic signal if spread has occurred',

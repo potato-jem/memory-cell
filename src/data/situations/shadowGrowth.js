@@ -15,7 +15,7 @@ export const SHADOW_GROWTH = {
     growthRatePerTurn: 2,        // very slow — this is what makes it dangerous
     spreadThreshold: 70,          // high threshold — cancer spreads late but catastrophically
     clearanceRatePerResponder: 8, // lower — cancer hides from immune cells
-    spreadNodes: ['LIVER', 'BLOOD', 'SPLEEN'],
+    spreadNodes: ['LIVER'],
   },
 
   signalAccuracyRate: 0.30,      // cancer barely signals

@@ -6,16 +6,16 @@
 export const FRIENDLY_FIRE = {
   id: 'friendlyFire',
   name: 'Friendly Fire',
-  description: 'Something is activating your own cells at the left lymph cluster. The signals look like clearance. They\'re not.',
+  description: 'Something is activating your own cells in the head and throat. The signals look like clearance. They\'re not.',
 
   pathogen: {
     type: 'autoimmune',
-    startingNode: 'LEFT_LYMPH',
+    startingNode: 'HEAD_THROAT',
     startingStrength: 15,        // starts higher — autoimmune is already active
     growthRatePerTurn: 3,        // grows with each responder deployed
     spreadThreshold: 60,
     clearanceRatePerResponder: 0, // "pathogen" cannot be cleared by responders — only by recalling them
-    spreadNodes: ['THROAT', 'LUNGS', 'SPLEEN'],
+    spreadNodes: ['CHEST_LUNGS', 'SPLEEN'],
     // Special: autoimmune strength INCREASES when responders are deployed
     respondsToDeployment: true,
   },
@@ -31,7 +31,7 @@ export const FRIENDLY_FIRE = {
     {
       turn: 1,
       type: 'signal',
-      nodeId: 'LEFT_LYMPH',
+      nodeId: 'HEAD_THROAT',
       signalType: 'anomaly_detected',
       confidence: 'medium',
       description: 'NK cell activation signal — looks like a real threat initially',
@@ -39,7 +39,7 @@ export const FRIENDLY_FIRE = {
     {
       turn: 2,
       type: 'signal',
-      nodeId: 'LEFT_LYMPH',
+      nodeId: 'HEAD_THROAT',
       signalType: 'collateral_damage',
       confidence: 'low',
       description: 'First self-damage signal — could be normal response residue',
@@ -47,7 +47,7 @@ export const FRIENDLY_FIRE = {
     {
       turn: 4,
       type: 'signal',
-      nodeId: 'LEFT_LYMPH',
+      nodeId: 'HEAD_THROAT',
       signalType: 'collateral_damage',
       confidence: 'medium',
       description: 'Self-damage increasing — the pattern is becoming clear',
@@ -55,7 +55,7 @@ export const FRIENDLY_FIRE = {
     {
       turn: 6,
       type: 'signal',
-      nodeId: 'LEFT_LYMPH',
+      nodeId: 'HEAD_THROAT',
       signalType: 'anomaly_detected',
       confidence: 'high',
       description: 'Self-antigen conflict signal — your cells are the problem',
@@ -63,7 +63,7 @@ export const FRIENDLY_FIRE = {
     {
       turn: 10,
       type: 'signal',
-      nodeId: 'THROAT',
+      nodeId: 'HEAD_THROAT',
       signalType: 'collateral_damage',
       confidence: 'medium',
       description: 'Autoimmune cascade spreading if not suppressed',
