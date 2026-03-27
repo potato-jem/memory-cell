@@ -8,7 +8,7 @@ export const NODES = {
   THYMUS: {
     id: 'THYMUS',
     label: 'Thymus',
-    position: { x: 65, y: 70 },
+    position: { x: 60, y: 200 },
     connections: ['SPLEEN'],
     signalSpeed: 2,
     damageWeight: 1.8,
@@ -20,7 +20,7 @@ export const NODES = {
   BONE_MARROW: {
     id: 'BONE_MARROW',
     label: 'Bone Marrow',
-    position: { x: 255, y: 70 },
+    position: { x: 60, y: 395 },
     connections: ['SPLEEN'],
     signalSpeed: 3,
     damageWeight: 2.5,
@@ -34,8 +34,8 @@ export const NODES = {
   SPLEEN: {
     id: 'SPLEEN',
     label: 'Spleen',
-    position: { x: 160, y: 165 },
-    connections: ['THYMUS', 'BONE_MARROW', 'HEAD_THROAT', 'CHEST_LUNGS', 'LIVER', 'HEART_BLOOD'],
+    position: { x: 60, y: 295 },
+    connections: ['THYMUS', 'BONE_MARROW', 'CHEST_LUNGS', 'LIVER', 'HEART_BLOOD'],
     signalSpeed: 1,
     damageWeight: 2.0,
     isBottleneck: false,
@@ -48,8 +48,8 @@ export const NODES = {
   HEAD_THROAT: {
     id: 'HEAD_THROAT',
     label: 'Head & Throat',
-    position: { x: 65, y: 255 },
-    connections: ['SPLEEN', 'CHEST_LUNGS', 'HEART_BLOOD'],
+    position: { x: 160, y: 50 },
+    connections: ['CHEST_LUNGS', 'HEART_BLOOD'],
     signalSpeed: 1,
     damageWeight: 1.2,
     isBottleneck: false,
@@ -60,7 +60,7 @@ export const NODES = {
   CHEST_LUNGS: {
     id: 'CHEST_LUNGS',
     label: 'Chest & Lungs',
-    position: { x: 255, y: 255 },
+    position: { x: 160, y: 135 },
     connections: ['SPLEEN', 'HEAD_THROAT', 'HEART_BLOOD'],
     signalSpeed: 1,
     damageWeight: 1.5,
@@ -72,7 +72,7 @@ export const NODES = {
   LIVER: {
     id: 'LIVER',
     label: 'Liver',
-    position: { x: 65, y: 355 },
+    position: { x: 160, y: 340 },
     connections: ['GUT', 'SPLEEN', 'HEART_BLOOD'],
     signalSpeed: 2,
     damageWeight: 1.8,
@@ -84,7 +84,7 @@ export const NODES = {
   HEART_BLOOD: {
     id: 'HEART_BLOOD',
     label: 'Heart & Blood',
-    position: { x: 160, y: 340 },
+    position: { x: 255, y: 215 },
     connections: ['SPLEEN', 'HEAD_THROAT', 'CHEST_LUNGS', 'LIVER', 'PERIPHERY'],
     signalSpeed: 1,
     damageWeight: 2.0,
@@ -96,7 +96,7 @@ export const NODES = {
   GUT: {
     id: 'GUT',
     label: 'Gut',
-    position: { x: 65, y: 445 },
+    position: { x: 60, y: 480 },
     connections: ['LIVER'],
     signalSpeed: 2,
     damageWeight: 1.3,
@@ -108,7 +108,7 @@ export const NODES = {
   PERIPHERY: {
     id: 'PERIPHERY',
     label: 'Periphery',
-    position: { x: 255, y: 445 },
+    position: { x: 255, y: 480 },
     connections: ['HEART_BLOOD'],
     signalSpeed: 2,
     damageWeight: 0.8,
