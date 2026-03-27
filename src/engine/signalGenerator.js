@@ -13,53 +13,30 @@ function nextSignalId() { return `sig_${_signalIdCounter++}`; }
 
 /**
  * Generate signals for one simulation turn.
+ * Signals come only from cells actively present at nodes (phase === 'arrived').
+ * Ground truth mutations (seeded events) are applied upstream in advanceGroundTruth.
  *
  * @param {Object} groundTruth
  * @param {Object} deployedCells
  * @param {Object} situationDef
  * @param {number} turn
- * @param {Object[]} seededEventsThisTurn  - authored events; bypass detection roll
  * @param {Object|null} memoryBank
  * @param {string} situationId
- * @param {number} tick                    - for expiresAtTick
- * @param {Object} _patrolCoverage         - unused here now; kept for API compat
+ * @param {number} tick
  */
 export function generateSignals(
   groundTruth,
   deployedCells,
   situationDef,
   turn,
-  seededEventsThisTurn,
   memoryBank = null,
   situationId = 'primary',
-  tick = 0,
-  _patrolCoverage = {}
+  tick = 0
 ) {
   const signals = [];
   const usedNodes = new Set();
-  const pathogenType = situationDef.pathogen.type;
 
-  // ── 1. Seeded events (authored; always fire, bypass detection) ─────────────
-  for (const event of seededEventsThisTurn) {
-    if (event.type !== 'signal') continue;
-    const node = NODES[event.nodeId];
-    if (!node) continue;
-
-    let sig = makeSignal({
-      nodeId: event.nodeId, nodeLabel: node.label,
-      type: event.signalType, confidence: event.confidence,
-      source: SIGNAL_SOURCES.NEUTROPHIL,
-      isFalseAlarm: event.isFalseAlarm ?? false,
-      reportedThreatType: event.isFalseAlarm ? null : pathogenType,
-      detectionOutcome: event.isFalseAlarm ? DETECTION_OUTCOMES.FALSE_ALARM : DETECTION_OUTCOMES.CORRECT_ID,
-      isSeeded: true, turn, tick, situationId,
-    });
-    sig = maybeApplyMemoryBonus(sig, memoryBank, event.isFalseAlarm ? null : pathogenType);
-    signals.push(sig);
-    usedNodes.add(event.nodeId);
-  }
-
-  // ── 2. Per-cell detection rolls (patrol + macrophage) ─────────────────────
+  // ── 1. Per-cell detection rolls (patrol + macrophage) ─────────────────────
   // Each cell at a node rolls independently against the detection matrix.
   // One signal per node per turn (first roll that produces a non-MISS wins).
   for (const cell of Object.values(deployedCells)) {
@@ -109,7 +86,7 @@ export function generateSignals(
       source: SIGNAL_SOURCES.MACROPHAGE,
       isFalseAlarm: false, reportedThreatType: null,
       detectionOutcome: DETECTION_OUTCOMES.ANOMALY,
-      isSeeded: false, turn, tick, situationId,
+      turn, tick, situationId,
     }));
     usedNodes.add(nodeId);
   }
@@ -217,7 +194,7 @@ function detectionOutcomeToSignal({
     isFalseAlarm, reportedThreatType: reportedType,
     detectionOutcome: outcome,
     isDendriticReturn, cellId,
-    isSeeded: false, turn, tick, situationId,
+    turn, tick, situationId,
   });
 
   if (memoryBank && reportedType) {
@@ -246,7 +223,7 @@ function makeSignal({
   nodeId, nodeLabel, type, confidence, source,
   isFalseAlarm, reportedThreatType = null, detectionOutcome = null,
   isDendriticReturn = false, cellId = null,
-  isSeeded, turn, tick, situationId = 'primary',
+  turn, tick, situationId = 'primary',
 }) {
   return {
     id: nextSignalId(),
@@ -261,7 +238,6 @@ function makeSignal({
     detectionOutcome,       // raw outcome for debugging / post-mortem
     isDendriticReturn,
     cellId,
-    isSeeded,
     situationId,
     arrivedOnTurn: turn,
     arrivedAtTick: tick,
@@ -271,6 +247,7 @@ function makeSignal({
     hasMemoryBonus: false,
   };
 }
+
 
 function buildSignalText(type, confidence, nodeLabel, reportedThreatType, detectionOutcome) {
   const loc = nodeLabel ?? 'Unknown';

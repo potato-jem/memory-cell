@@ -36,62 +36,26 @@ export const UNINVITED_GUEST = {
   //   - coherence drops to 0 (catastrophic system failure)
   //   - turn limit reached with active pathogen (slow collapse)
 
-  // Seeded events — fire at specific turns regardless of player action
-  // These give the situation narrative shape
+  // Seeded events — mutate ground truth at specific turns to shape the narrative arc.
+  // Signals emerge naturally when cells visit and roll detection against this ground truth.
+  //
+  // Types:
+  //   strengthen_pathogen  — add `amount` strength to an existing infected node
+  //   spawn_pathogen       — create a new infection site (only if node is currently clean)
   seededEvents: [
     {
-      turn: 2,
-      type: 'signal',
-      nodeId: 'GUT',
-      signalType: 'anomaly_detected',
-      confidence: 'low',
-      description: 'First weak signal from gut — something is off',
-    },
-    {
-      turn: 4,
-      type: 'signal',
-      nodeId: 'PERIPHERAL',
-      signalType: 'anomaly_detected',
-      confidence: 'low',
-      description: 'Red herring: peripheral patrol noise. Not related to the infection.',
-      isFalseAlarm: true,
-    },
-    {
       turn: 6,
-      type: 'signal',
+      type: 'strengthen_pathogen',
       nodeId: 'GUT',
-      signalType: 'anomaly_detected',
-      confidence: 'medium',
-      description: 'Gut signal intensifying — the infection is growing',
-    },
-    {
-      turn: 10,
-      type: 'signal',
-      nodeId: 'GUT',
-      signalType: 'threat_confirmed',
-      confidence: 'medium',
-      description: 'Clearer signal now — bacterial markers present in gut',
+      amount: 15,
+      description: 'Infection accelerates — gut bacteria overwhelm initial defences',
     },
     {
       turn: 14,
-      type: 'spread_check',
-      description: 'Infection spreads to liver if gut strength >= spreadThreshold',
-    },
-    {
-      turn: 20,
-      type: 'signal',
-      nodeId: 'BLOOD',
-      signalType: 'anomaly_detected',
-      confidence: 'low',
-      description: 'Faint systemic signal — infection reaching blood if unchecked',
-    },
-    {
-      turn: 28,
-      type: 'signal',
-      nodeId: 'SPLEEN',
-      signalType: 'collateral_damage',
-      confidence: 'medium',
-      description: 'HQ stress signal — if you\'ve been over-routing, the spleen is feeling it',
+      type: 'spawn_pathogen',
+      nodeId: 'LIVER',
+      strength: 12,
+      description: 'Infection breaches gut lining and seeds the liver',
     },
   ],
 

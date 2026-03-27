@@ -43,18 +43,44 @@ export function initGroundTruth(situationDef) {
 /**
  * Advance ground truth one turn.
  * Returns { newGroundTruth, events }
+ *
+ * @param {Object[]} seededEventsThisTurn - authored ground truth mutations for this turn
  */
-export function advanceGroundTruth(groundTruth, situationDef, deployedCells, turn, routingPressure) {
+export function advanceGroundTruth(groundTruth, situationDef, deployedCells, turn, routingPressure, seededEventsThisTurn = []) {
   const events = [];
 
   const prevPathogenState = { ...groundTruth.pathogenState };
-  const newPathogenState = advancePathogen(
+  let newPathogenState = advancePathogen(
     groundTruth.pathogenState,
     situationDef,
     deployedCells,
     turn,
     groundTruth
   );
+
+  // Apply authored ground truth mutations (seeded events)
+  for (const event of seededEventsThisTurn) {
+    if (event.type === 'strengthen_pathogen') {
+      const existing = newPathogenState[event.nodeId];
+      if (existing && existing.strength > 0) {
+        newPathogenState = {
+          ...newPathogenState,
+          [event.nodeId]: { ...existing, strength: Math.min(100, existing.strength + (event.amount ?? 10)) },
+        };
+      }
+    } else if (event.type === 'spawn_pathogen') {
+      const existing = newPathogenState[event.nodeId];
+      if (!existing || existing.strength <= 0) {
+        newPathogenState = {
+          ...newPathogenState,
+          [event.nodeId]: {
+            strength: event.strength ?? 10,
+            type: event.pathogenType ?? situationDef.pathogen.type,
+          },
+        };
+      }
+    }
+  }
 
   // Detect new spreads
   const spreadHistory = [...(groundTruth.spreadHistory ?? [])];

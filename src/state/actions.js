@@ -145,17 +145,17 @@ function handleTick(state) {
     updatedSituationStates = updatedSituationStates.map(sit => {
       if (sit.isResolved) return sit;
 
+      const seededEventsThisTurn = (sit.situationDef.seededEvents ?? []).filter(e => e.turn === newTurn);
       const { newGroundTruth } = advanceGroundTruth(
-        sit.groundTruth, sit.situationDef, updatedCells, newTurn, routingPressure
+        sit.groundTruth, sit.situationDef, updatedCells, newTurn, routingPressure, seededEventsThisTurn
       );
 
       // Auto-return attack cells from cleared nodes
       updatedCells = startReturnForClearedNodes(updatedCells, newGroundTruth.pathogenState, newTick);
 
-      const seededEventsThisTurn = (sit.situationDef.seededEvents ?? []).filter(e => e.turn === newTurn);
       const newSignals = generateSignals(
         newGroundTruth, updatedCells, sit.situationDef,
-        newTurn, seededEventsThisTurn, state.memoryBank, sit.id, newTick, patrolCoverage
+        newTurn, state.memoryBank, sit.id, newTick
       );
 
       let perceivedState = sit.perceivedState;
