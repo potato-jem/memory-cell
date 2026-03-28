@@ -1,17 +1,13 @@
 // All state mutations as pure functions.
-// Real-time: TICK replaces END_TURN. Token pool managed by cell lifecycle.
+// Turn-based: END_TURN advances TICKS_PER_TURN ticks and always runs the turn boundary.
 
 import { advanceGroundTruth } from '../engine/groundTruth.js';
 import { generateSignals, makeDendriticReturnSignal, generateSilenceNotices } from '../engine/signalGenerator.js';
 import { computeCoherence, isCoherenceCollapsed, identifyFailureMode } from '../engine/coherence.js';
 import {
-  deployDendriticCell,
-  deployNeutrophilPatrol,
-  deployResponder,
-  deployKillerT,
-  deployBCell,
-  deployNKCell,
-  deployMacrophage,
+  trainCell,
+  deployFromRoster,
+  decommissionCell,
   recallUnit,
   advanceCells,
   startReturnForClearedNodes,
@@ -28,27 +24,22 @@ import {
   applyNeutrophilDeployed,
   dismissEntity,
 } from './perceivedState.js';
-import { TOTAL_TOKENS, TICKS_PER_TURN, GAME_PHASES, LOSS_REASONS } from './gameState.js';
+import { TICKS_PER_TURN, GAME_PHASES, LOSS_REASONS } from './gameState.js';
+import { TOKEN_CAPACITY_MAX, TOKEN_CAPACITY_REGEN_INTERVAL } from '../data/gameConfig.js';
 import { isPathodgenCleared } from '../engine/pathogen.js';
 import { recordEncounter } from '../engine/memory.js';
 
 export const ACTION_TYPES = {
-  TICK: 'TICK',
-  PAUSE: 'PAUSE',
-  RESUME: 'RESUME',
-  DISMISS_SIGNAL: 'DISMISS_SIGNAL',
-  HOLD_SIGNAL: 'HOLD_SIGNAL',
-  DISMISS_ENTITY: 'DISMISS_ENTITY',
-  DEPLOY_DENDRITIC: 'DEPLOY_DENDRITIC',
-  DEPLOY_NEUTROPHIL: 'DEPLOY_NEUTROPHIL',
-  DEPLOY_RESPONDER: 'DEPLOY_RESPONDER',
-  DEPLOY_KILLER_T: 'DEPLOY_KILLER_T',
-  DEPLOY_B_CELL: 'DEPLOY_B_CELL',
-  DEPLOY_NK_CELL: 'DEPLOY_NK_CELL',
-  DEPLOY_MACROPHAGE: 'DEPLOY_MACROPHAGE',
-  RECALL_UNIT: 'RECALL_UNIT',
-  RESTART: 'RESTART',
-  SELECT_NODE: 'SELECT_NODE',
+  END_TURN:         'END_TURN',
+  DISMISS_SIGNAL:   'DISMISS_SIGNAL',
+  HOLD_SIGNAL:      'HOLD_SIGNAL',
+  DISMISS_ENTITY:   'DISMISS_ENTITY',
+  TRAIN_CELL:       'TRAIN_CELL',         // start manufacturing a cell type
+  DEPLOY_FROM_ROSTER: 'DEPLOY_FROM_ROSTER', // send a ready cell to a node
+  DECOMMISSION_CELL:  'DECOMMISSION_CELL',  // remove a training/ready cell, free tokens
+  RECALL_UNIT:      'RECALL_UNIT',
+  RESTART:          'RESTART',
+  SELECT_NODE:      'SELECT_NODE',
   SELECT_SITUATION: 'SELECT_SITUATION',
 };
 
@@ -61,64 +52,61 @@ export function gameReducer(state, action) {
   }
 
   switch (action.type) {
-    case ACTION_TYPES.TICK:           return handleTick(state);
-    case ACTION_TYPES.PAUSE:          return { ...state, paused: true };
-    case ACTION_TYPES.RESUME:         return { ...state, paused: false };
-    case ACTION_TYPES.DISMISS_SIGNAL: return handleSignalDecision(state, action.signalId, 'dismiss');
-    case ACTION_TYPES.HOLD_SIGNAL:    return handleSignalDecision(state, action.signalId, 'hold');
-    case ACTION_TYPES.DISMISS_ENTITY: return handleDismissEntity(state, action.nodeId, action.entityId);
-    case ACTION_TYPES.DEPLOY_DENDRITIC:  return handleDeploy(state, action.nodeId, (n, dc, ta, t) => deployDendriticCell(n, dc, ta, t));
-    case ACTION_TYPES.DEPLOY_NEUTROPHIL: return handleDeployNeutrophil(state, action.nodeId);
-    case ACTION_TYPES.DEPLOY_RESPONDER:  return handleDeployResponder(state, action.nodeId);
-    case ACTION_TYPES.DEPLOY_KILLER_T:   return handleDeployKillerT(state, action.nodeId);
-    case ACTION_TYPES.DEPLOY_B_CELL:     return handleDeployBCell(state, action.nodeId);
-    case ACTION_TYPES.DEPLOY_NK_CELL:    return handleDeploy(state, action.nodeId, (n, dc, ta, t) => deployNKCell(n, dc, ta, t));
-    case ACTION_TYPES.DEPLOY_MACROPHAGE: return handleDeployMacrophage(state, action.nodeId);
-    case ACTION_TYPES.RECALL_UNIT:    return handleRecallUnit(state, action.cellId);
-    case ACTION_TYPES.RESTART:        return action.initialState;
-    case ACTION_TYPES.SELECT_NODE:    return { ...state, selectedNodeId: action.nodeId };
-    case ACTION_TYPES.SELECT_SITUATION: return { ...state, activeSituationId: action.situationId };
+    case ACTION_TYPES.END_TURN:           return handleEndTurn(state);
+    case ACTION_TYPES.DISMISS_SIGNAL:     return handleSignalDecision(state, action.signalId, 'dismiss');
+    case ACTION_TYPES.HOLD_SIGNAL:        return handleSignalDecision(state, action.signalId, 'hold');
+    case ACTION_TYPES.DISMISS_ENTITY:     return handleDismissEntity(state, action.nodeId, action.entityId);
+    case ACTION_TYPES.TRAIN_CELL:         return handleTrainCell(state, action.cellType);
+    case ACTION_TYPES.DEPLOY_FROM_ROSTER: return handleDeployFromRoster(state, action.cellId, action.nodeId);
+    case ACTION_TYPES.DECOMMISSION_CELL:  return handleDecommissionCell(state, action.cellId);
+    case ACTION_TYPES.RECALL_UNIT:        return handleRecallUnit(state, action.cellId);
+    case ACTION_TYPES.RESTART:            return action.initialState;
+    case ACTION_TYPES.SELECT_NODE:        return { ...state, selectedNodeId: action.nodeId };
+    case ACTION_TYPES.SELECT_SITUATION:   return { ...state, activeSituationId: action.situationId };
     default: return state;
   }
 }
 
-// ── Tick ──────────────────────────────────────────────────────────────────────
+// ── End Turn ───────────────────────────────────────────────────────────────────
+// Advances exactly one turn (TICKS_PER_TURN ticks). Always runs the full turn
+// boundary: ground truth, signal generation, coherence, win/lose checks.
 
-function handleTick(state) {
-  if (state.paused) return state;
+function handleEndTurn(state) {
+  const prevTick = state.tick;
+  const newTick = state.tick + TICKS_PER_TURN;
+  const newTurn = state.turn + 1;
 
-  const newTick = state.tick + 1;
-  const prevTurn = state.turn;
-  const newTurn = Math.floor(newTick / TICKS_PER_TURN);
-  const turnAdvanced = newTurn > prevTurn;
+  // 1. Token capacity regen (check if we crossed a regen boundary)
+  let tokenCapacity = state.tokenCapacity;
+  if (Math.floor(newTick / TOKEN_CAPACITY_REGEN_INTERVAL) > Math.floor(prevTick / TOKEN_CAPACITY_REGEN_INTERVAL)
+      && tokenCapacity < TOKEN_CAPACITY_MAX) {
+    tokenCapacity = Math.min(TOKEN_CAPACITY_MAX, tokenCapacity + 1);
+  }
 
-  // 1. Advance cells (tick-level: transit, patrol movement, arrivals, returns)
+  // 2. Advance cells (training, transit, patrol, returns)
   let { updatedCells, events } = advanceCells(state.deployedCells, newTick);
 
-  // 2. Handle scout arrivals — emit dendritic return signals + update perceived state
+  // 3. Handle scout arrivals
   let updatedSituationStates = state.situationStates;
   const scoutReturnSignals = [];
 
   for (const event of events) {
     if (event.type !== 'scout_arrived') continue;
-    const cell = state.deployedCells[event.cellId]; // use original cell before update
+    const cell = state.deployedCells[event.cellId];
     if (!cell) continue;
 
     for (let i = 0; i < updatedSituationStates.length; i++) {
       const sit = updatedSituationStates[i];
       if (sit.isResolved) continue;
 
-      // makeDendriticReturnSignal does the detection roll internally
       const returnSignal = makeDendriticReturnSignal(
         cell, sit.groundTruth, sit.situationDef, newTick, newTurn, sit.id
       );
       if (!returnSignal) continue;
       scoutReturnSignals.push(returnSignal);
 
-      // What the scout *perceived* (may be wrong — WRONG_ID outcome)
       const perceivedThreat = returnSignal.type === 'threat_confirmed';
       const reportedType = returnSignal.reportedThreatType ?? null;
-
       const newPS = applyDendriticReturn(sit.perceivedState, event.nodeId, perceivedThreat, reportedType);
       updatedSituationStates = updatedSituationStates.map((s, idx) =>
         idx === i ? { ...s, perceivedState: newPS } : s
@@ -126,7 +114,7 @@ function handleTick(state) {
     }
   }
 
-  // 3. Turn-boundary simulation (every TICKS_PER_TURN seconds)
+  // 4. Turn boundary: ground truth, signals, coherence
   let activeSignals = state.activeSignals.filter(s =>
     s.expiresAtTick == null || newTick < s.expiresAtTick
   );
@@ -136,72 +124,65 @@ function handleTick(state) {
   let coherenceHistory = state.coherenceHistory;
   let silenceNotices = state.silenceNotices;
 
-  if (turnAdvanced) {
-    const activeCellCount = Object.keys(updatedCells).length;
-    const routingPressure = Math.min(1, activeCellCount * 0.05);
-    const patrolCoverage = getPatrolCoverage(updatedCells);
-    const allNewSignals = [];
+  const activeCellCount = Object.values(updatedCells).filter(c =>
+    c.phase === 'outbound' || c.phase === 'arrived' || c.phase === 'returning'
+  ).length;
+  const routingPressure = Math.min(1, activeCellCount * 0.05);
+  const allNewSignals = [];
 
-    updatedSituationStates = updatedSituationStates.map(sit => {
-      if (sit.isResolved) return sit;
+  updatedSituationStates = updatedSituationStates.map(sit => {
+    if (sit.isResolved) return sit;
 
-      const seededEventsThisTurn = (sit.situationDef.seededEvents ?? []).filter(e => e.turn === newTurn);
-      const { newGroundTruth } = advanceGroundTruth(
-        sit.groundTruth, sit.situationDef, updatedCells, newTurn, routingPressure, seededEventsThisTurn
-      );
+    const seededEventsThisTurn = (sit.situationDef.seededEvents ?? []).filter(e => e.turn === newTurn);
+    const { newGroundTruth } = advanceGroundTruth(
+      sit.groundTruth, sit.situationDef, updatedCells, newTurn, routingPressure, seededEventsThisTurn
+    );
 
-      // Auto-return attack cells from cleared nodes
-      updatedCells = startReturnForClearedNodes(updatedCells, newGroundTruth.pathogenState, newTick);
+    updatedCells = startReturnForClearedNodes(updatedCells, newGroundTruth.pathogenState, newTick);
 
-      const newSignals = generateSignals(
-        newGroundTruth, updatedCells, sit.situationDef,
-        newTurn, state.memoryBank, sit.id, newTick
-      );
+    const newSignals = generateSignals(
+      newGroundTruth, updatedCells, sit.situationDef,
+      newTurn, state.memoryBank, sit.id, newTick
+    );
 
-      let perceivedState = sit.perceivedState;
-      for (const signal of newSignals) {
-        perceivedState = applySignalToPerceivedState(perceivedState, signal);
-      }
-      allNewSignals.push(...newSignals);
-
-      const pathogenCleared = isPathodgenCleared(newGroundTruth.pathogenState);
-
-      if (pathogenCleared && !sit.isResolved) {
-        memoryBank = recordEncounter(memoryBank, sit.situationDef.pathogen.type, true);
-      }
-
-      return {
-        ...sit,
-        groundTruth: newGroundTruth,
-        perceivedState,
-        isResolved: pathogenCleared,
-        resolvedOnTurn: pathogenCleared && !sit.isResolved ? newTurn : sit.resolvedOnTurn,
-        resolvedCleanly: pathogenCleared,
-      };
-    });
-
-    activeSignals = [...activeSignals, ...allNewSignals];
-    signalHistory = [...signalHistory, ...allNewSignals];
-    silenceNotices = generateSilenceNotices(updatedSituationStates[0].groundTruth, updatedCells, newTurn);
-
-    // Health / coherence
-    let totalGap = 0;
-    const combinedBreakdown = [];
-    for (const sit of updatedSituationStates) {
-      if (sit.isResolved) continue;
-      const { score, breakdown } = computeCoherence(sit.groundTruth, sit.perceivedState);
-      totalGap += (100 - score);
-      combinedBreakdown.push(...breakdown);
+    let perceivedState = sit.perceivedState;
+    for (const signal of newSignals) {
+      perceivedState = applySignalToPerceivedState(perceivedState, signal);
     }
-    healthScore = Math.max(0, Math.round(100 - totalGap));
-    coherenceHistory = [...coherenceHistory, { turn: newTurn, score: healthScore }];
-  }
+    allNewSignals.push(...newSignals);
 
-  // Add scout return signals to active signals (happen at tick level, not turn level)
+    const pathogenCleared = isPathodgenCleared(newGroundTruth.pathogenState);
+    if (pathogenCleared && !sit.isResolved) {
+      memoryBank = recordEncounter(memoryBank, sit.situationDef.pathogen.type, true);
+    }
+
+    return {
+      ...sit,
+      groundTruth: newGroundTruth,
+      perceivedState,
+      isResolved: pathogenCleared,
+      resolvedOnTurn: pathogenCleared && !sit.isResolved ? newTurn : sit.resolvedOnTurn,
+      resolvedCleanly: pathogenCleared,
+    };
+  });
+
+  activeSignals = [...activeSignals, ...allNewSignals];
+  signalHistory = [...signalHistory, ...allNewSignals];
+  silenceNotices = generateSilenceNotices(updatedSituationStates[0].groundTruth, updatedCells, newTurn);
+
+  let totalGap = 0;
+  for (const sit of updatedSituationStates) {
+    if (sit.isResolved) continue;
+    const { score } = computeCoherence(sit.groundTruth, sit.perceivedState);
+    totalGap += (100 - score);
+  }
+  healthScore = Math.max(0, Math.round(100 - totalGap));
+  coherenceHistory = [...coherenceHistory, { turn: newTurn, score: healthScore }];
+
+  // Scout return signals
   if (scoutReturnSignals.length > 0) {
     activeSignals = [...activeSignals, ...scoutReturnSignals];
     signalHistory = [...signalHistory, ...scoutReturnSignals];
-    // Apply scout signals to perceived state
     for (const sig of scoutReturnSignals) {
       updatedSituationStates = updatedSituationStates.map(sit => {
         if (sit.id !== sig.situationId) return sit;
@@ -210,11 +191,11 @@ function handleTick(state) {
     }
   }
 
-  // 4. Token pool
+  // 5. Token pool
   const tokensInUse = computeTokensInUse(updatedCells);
-  const tokensAvailable = TOTAL_TOKENS - tokensInUse;
+  const attentionTokens = tokenCapacity - tokensInUse;
 
-  // 5. Win/lose
+  // 6. Win/lose
   const allResolved = updatedSituationStates.every(s => s.isResolved);
   const healthCollapsed = isCoherenceCollapsed(healthScore);
   const turnLimitReached = newTurn >= Math.min(...updatedSituationStates.map(s => s.situationDef.turnLimit));
@@ -240,9 +221,10 @@ function handleTick(state) {
     ...state,
     tick: newTick,
     turn: newTurn,
+    tokenCapacity,
     situationStates: updatedSituationStates,
     deployedCells: updatedCells,
-    attentionTokens: tokensAvailable,
+    attentionTokens,
     tokensInUse,
     activeSignals,
     signalHistory,
@@ -257,7 +239,7 @@ function handleTick(state) {
   };
 }
 
-// ── Signal decisions (free — no token cost) ───────────────────────────────────
+// ── Signal decisions ───────────────────────────────────────────────────────────
 
 function handleSignalDecision(state, signalId, decision) {
   const signal = state.activeSignals.find(s => s.id === signalId);
@@ -284,115 +266,66 @@ function handleDismissEntity(state, nodeId, entityId) {
   return { ...state, situationStates: updatedSituationStates };
 }
 
-// ── Cell deployment ───────────────────────────────────────────────────────────
+// ── Cell manufacturing ────────────────────────────────────────────────────────
 
-function handleDeploy(state, nodeId, deployFn) {
-  const tokensAvailable = getTokensAvailable(state.deployedCells);
-  const result = deployFn(nodeId, state.deployedCells, tokensAvailable, state.tick);
+function handleTrainCell(state, cellType) {
+  const result = trainCell(cellType, state.deployedCells, state.tokenCapacity, state.tick);
   if (!result.success) return state;
 
   const tokensInUse = computeTokensInUse(result.newDeployedCells);
   return {
     ...state,
     deployedCells: result.newDeployedCells,
-    attentionTokens: TOTAL_TOKENS - tokensInUse,
     tokensInUse,
+    attentionTokens: state.tokenCapacity - tokensInUse,
   };
 }
 
-function handleDeployNeutrophil(state, nodeId) {
-  const tokensAvailable = getTokensAvailable(state.deployedCells);
-  const result = deployNeutrophilPatrol(nodeId, state.deployedCells, tokensAvailable, state.tick);
+function handleDeployFromRoster(state, cellId, nodeId) {
+  const primarySit = state.situationStates[0];
+  const result = deployFromRoster(
+    cellId, nodeId, state.deployedCells, state.tick, primarySit.perceivedState
+  );
   if (!result.success) return state;
 
-  const updatedSituationStates = updatePerceivedStateForSituation(
-    state.situationStates, state.situationStates[0].id,
-    ps => applyNeutrophilDeployed(ps, nodeId)
-  );
+  // Update perceived state for neutrophil / attack cells
+  const cell = state.deployedCells[cellId];
+  let updatedSituationStates = state.situationStates;
+  if (cell) {
+    const type = cell.type;
+    if (type === 'neutrophil') {
+      updatedSituationStates = updatePerceivedStateForSituation(
+        state.situationStates, primarySit.id,
+        ps => applyNeutrophilDeployed(ps, nodeId)
+      );
+    } else if (['responder', 'killer_t', 'b_cell', 'nk_cell'].includes(type)) {
+      updatedSituationStates = updatePerceivedStateForSituation(
+        state.situationStates, primarySit.id,
+        ps => applyResponderDeployed(ps, nodeId)
+      );
+    }
+  }
+
   const tokensInUse = computeTokensInUse(result.newDeployedCells);
   return {
     ...state,
     deployedCells: result.newDeployedCells,
     situationStates: updatedSituationStates,
-    attentionTokens: TOTAL_TOKENS - tokensInUse,
     tokensInUse,
+    attentionTokens: state.tokenCapacity - tokensInUse,
   };
 }
 
-function handleDeployMacrophage(state, nodeId) {
-  const tokensAvailable = getTokensAvailable(state.deployedCells);
-  const result = deployMacrophage(nodeId, state.deployedCells, tokensAvailable, state.tick);
+function handleDecommissionCell(state, cellId) {
+  const result = decommissionCell(cellId, state.deployedCells);
   if (!result.success) return state;
 
   const tokensInUse = computeTokensInUse(result.newDeployedCells);
   return {
     ...state,
     deployedCells: result.newDeployedCells,
-    attentionTokens: TOTAL_TOKENS - tokensInUse,
     tokensInUse,
-  };
-}
-
-function handleDeployResponder(state, nodeId) {
-  const ps = state.situationStates[0].perceivedState;
-  const dc = hasDendriticConfirmation(nodeId, ps);
-  const tokensAvailable = getTokensAvailable(state.deployedCells);
-  const result = deployResponder(nodeId, state.deployedCells, tokensAvailable, state.tick, dc);
-  if (!result.success) return state;
-
-  const updatedSituationStates = updatePerceivedStateForSituation(
-    state.situationStates, state.situationStates[0].id,
-    p => applyResponderDeployed(p, nodeId)
-  );
-  const tokensInUse = computeTokensInUse(result.newDeployedCells);
-  return {
-    ...state,
-    deployedCells: result.newDeployedCells,
-    situationStates: updatedSituationStates,
-    attentionTokens: TOTAL_TOKENS - tokensInUse,
-    tokensInUse,
-  };
-}
-
-function handleDeployKillerT(state, nodeId) {
-  const ps = state.situationStates[0].perceivedState;
-  const dc = hasDendriticConfirmation(nodeId, ps);
-  const tokensAvailable = getTokensAvailable(state.deployedCells);
-  const result = deployKillerT(nodeId, state.deployedCells, tokensAvailable, state.tick, dc);
-  if (!result.success) return state;
-
-  const updatedSituationStates = updatePerceivedStateForSituation(
-    state.situationStates, state.situationStates[0].id,
-    p => applyResponderDeployed(p, nodeId)
-  );
-  const tokensInUse = computeTokensInUse(result.newDeployedCells);
-  return {
-    ...state,
-    deployedCells: result.newDeployedCells,
-    situationStates: updatedSituationStates,
-    attentionTokens: TOTAL_TOKENS - tokensInUse,
-    tokensInUse,
-  };
-}
-
-function handleDeployBCell(state, nodeId) {
-  const ps = state.situationStates[0].perceivedState;
-  const dc = hasDendriticConfirmation(nodeId, ps);
-  const tokensAvailable = getTokensAvailable(state.deployedCells);
-  const result = deployBCell(nodeId, state.deployedCells, tokensAvailable, state.tick, dc);
-  if (!result.success) return state;
-
-  const updatedSituationStates = updatePerceivedStateForSituation(
-    state.situationStates, state.situationStates[0].id,
-    p => applyResponderDeployed(p, nodeId)
-  );
-  const tokensInUse = computeTokensInUse(result.newDeployedCells);
-  return {
-    ...state,
-    deployedCells: result.newDeployedCells,
-    situationStates: updatedSituationStates,
-    attentionTokens: TOTAL_TOKENS - tokensInUse,
-    tokensInUse,
+    attentionTokens: state.tokenCapacity - tokensInUse,
   };
 }
 
@@ -403,8 +336,8 @@ function handleRecallUnit(state, cellId) {
   return {
     ...state,
     deployedCells: result.newDeployedCells,
-    attentionTokens: TOTAL_TOKENS - tokensInUse,
     tokensInUse,
+    attentionTokens: state.tokenCapacity - tokensInUse,
   };
 }
 

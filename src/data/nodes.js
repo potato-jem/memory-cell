@@ -5,22 +5,22 @@
 export const NODES = {
 
   // ── Production nodes (leaves) ─────────────────────────────────────────────
-  THYMUS: {
-    id: 'THYMUS',
-    label: 'Thymus',
-    position: { x: 60, y: 200 },
-    connections: ['SPLEEN'],
-    signalSpeed: 2,
-    damageWeight: 1.8,
-    isBottleneck: false,
-    isCellSource: true,
-    isHQ: false,
-    isSystemic: false,
-  },
+  // THYMUS: {
+  //   id: 'THYMUS',
+  //   label: 'Thymus',
+  //   position: { x: 60, y: 100 },
+  //   connections: ['SPLEEN'],
+  //   signalSpeed: 2,
+  //   damageWeight: 1.8,
+  //   isBottleneck: false,
+  //   isCellSource: true,
+  //   isHQ: false,
+  //   isSystemic: false,
+  // },
   BONE_MARROW: {
     id: 'BONE_MARROW',
     label: 'Bone Marrow',
-    position: { x: 60, y: 395 },
+    position: { x: 0, y: 200 },
     connections: ['SPLEEN'],
     signalSpeed: 3,
     damageWeight: 2.5,
@@ -34,8 +34,8 @@ export const NODES = {
   SPLEEN: {
     id: 'SPLEEN',
     label: 'Spleen',
-    position: { x: 60, y: 295 },
-    connections: ['THYMUS', 'BONE_MARROW', 'CHEST_LUNGS', 'LIVER', 'HEART_BLOOD'],
+    position: { x: 60, y: 200 },
+    connections: ['BONE_MARROW', 'CHEST', 'LIVER', 'BLOOD'],
     signalSpeed: 1,
     damageWeight: 2.0,
     isBottleneck: false,
@@ -45,11 +45,11 @@ export const NODES = {
   },
 
   // ── Body regions ──────────────────────────────────────────────────────────
-  HEAD_THROAT: {
-    id: 'HEAD_THROAT',
-    label: 'Head & Throat',
-    position: { x: 160, y: 50 },
-    connections: ['CHEST_LUNGS', 'HEART_BLOOD'],
+  THROAT: {
+    id: 'THROAT',
+    label: 'Throat',
+    position: { x: 255, y: 135 },
+    connections: ['CHEST'],
     signalSpeed: 1,
     damageWeight: 1.2,
     isBottleneck: false,
@@ -57,11 +57,11 @@ export const NODES = {
     isHQ: false,
     isSystemic: false,
   },
-  CHEST_LUNGS: {
-    id: 'CHEST_LUNGS',
-    label: 'Chest & Lungs',
+  CHEST: {
+    id: 'CHEST',
+    label: 'Chest',
     position: { x: 160, y: 135 },
-    connections: ['SPLEEN', 'HEAD_THROAT', 'HEART_BLOOD'],
+    connections: ['SPLEEN', 'THROAT', 'BLOOD'],
     signalSpeed: 1,
     damageWeight: 1.5,
     isBottleneck: false,
@@ -72,8 +72,8 @@ export const NODES = {
   LIVER: {
     id: 'LIVER',
     label: 'Liver',
-    position: { x: 160, y: 340 },
-    connections: ['GUT', 'SPLEEN', 'HEART_BLOOD'],
+    position: { x: 160, y: 270 },
+    connections: ['GUT', 'SPLEEN', 'BLOOD'],
     signalSpeed: 2,
     damageWeight: 1.8,
     isBottleneck: false,
@@ -81,11 +81,11 @@ export const NODES = {
     isHQ: false,
     isSystemic: false,
   },
-  HEART_BLOOD: {
-    id: 'HEART_BLOOD',
-    label: 'Heart & Blood',
-    position: { x: 255, y: 215 },
-    connections: ['SPLEEN', 'HEAD_THROAT', 'CHEST_LUNGS', 'LIVER', 'PERIPHERY'],
+  BLOOD: {
+    id: 'BLOOD',
+    label: 'Blood',
+    position: { x: 160, y: 200 },
+    connections: ['SPLEEN', 'CHEST', 'LIVER', 'PERIPHERY'],
     signalSpeed: 1,
     damageWeight: 2.0,
     isBottleneck: false,
@@ -96,7 +96,7 @@ export const NODES = {
   GUT: {
     id: 'GUT',
     label: 'Gut',
-    position: { x: 60, y: 480 },
+    position: { x: 255, y: 270 },
     connections: ['LIVER'],
     signalSpeed: 2,
     damageWeight: 1.3,
@@ -108,8 +108,8 @@ export const NODES = {
   PERIPHERY: {
     id: 'PERIPHERY',
     label: 'Periphery',
-    position: { x: 255, y: 480 },
-    connections: ['HEART_BLOOD'],
+    position: { x: 255, y: 200 },
+    connections: ['BLOOD'],
     signalSpeed: 2,
     damageWeight: 0.8,
     isBottleneck: false,

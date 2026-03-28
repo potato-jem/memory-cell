@@ -5,9 +5,9 @@ import { initGroundTruth } from '../engine/groundTruth.js';
 import { initPerceivedState } from './perceivedState.js';
 import { initMemoryBank } from '../engine/memory.js';
 import { NODE_IDS } from '../data/nodes.js';
-import { TOTAL_TOKENS, TICKS_PER_TURN } from '../data/gameConfig.js';
+import { INITIAL_TOKEN_CAPACITY, TICKS_PER_TURN } from '../data/gameConfig.js';
 
-export { TOTAL_TOKENS, TICKS_PER_TURN };
+export { TICKS_PER_TURN };
 
 export const GAME_PHASES = {
   PLAYING: 'playing',
@@ -50,8 +50,9 @@ export function initGameState(situationDefs, existingMemoryBank = null) {
     tick: 0,
     turn: 0,
 
-    // Token pool — no regen, tokens returned when cells come back
-    attentionTokens: TOTAL_TOKENS,  // = TOTAL_TOKENS - tokensInUse (kept for UI compat)
+    // Token capacity grows slowly via regen. Each roster cell holds its cost permanently.
+    tokenCapacity: INITIAL_TOKEN_CAPACITY,
+    attentionTokens: INITIAL_TOKEN_CAPACITY,  // = tokenCapacity - tokensInUse (UI compat)
     tokensInUse: 0,
 
     // Health

@@ -3,7 +3,6 @@
 
 import { NODES } from '../data/nodes.js';
 import { NODE_STATUSES, ENTITY_CLASS, entityDisplayLabel } from '../state/perceivedState.js';
-import { DEPLOY_COSTS, CELL_TYPES } from '../engine/cells.js';
 
 const SIGNAL_TYPE_CONFIG = {
   patrol_clear:     { label: 'CLEAR',      color: 'text-gray-500', icon: '○' },
@@ -40,25 +39,6 @@ const CELL_CONFIG = {
   nk_cell:    { label: 'NK Cell',     color: 'text-orange-400', dot: 'bg-orange-600' },
 };
 
-const DEPLOY_BUTTONS = [
-  { type: CELL_TYPES.DENDRITIC,  label: 'Scout',    sublabel: 'DC',  detail: 'Round trip ~20s · high-confidence intel',  action: 'DEPLOY_DENDRITIC',  color: 'purple' },
-  { type: CELL_TYPES.NEUTROPHIL, label: 'Patrol',   sublabel: 'NΦ',  detail: 'Circuits nodes · reveals inflammation',    action: 'DEPLOY_NEUTROPHIL', color: 'blue' },
-  { type: CELL_TYPES.MACROPHAGE, label: 'Macrophage',sublabel: 'MΦ', detail: 'Static · sees this + adjacent nodes',      action: 'DEPLOY_MACROPHAGE', color: 'amber' },
-  { type: CELL_TYPES.NK_CELL,    label: 'NK Cell',  sublabel: 'NK',  detail: 'No scout needed · calculated risk',        action: 'DEPLOY_NK_CELL',    color: 'orange' },
-  { type: CELL_TYPES.B_CELL,     label: 'B-Cell',   sublabel: 'BC',  detail: 'Tags threats · safe · slower clearance',   action: 'DEPLOY_B_CELL',     color: 'green' },
-  { type: CELL_TYPES.RESPONDER,  label: 'Responder',sublabel: 'Rsp', detail: 'General attack · risks collateral',        action: 'DEPLOY_RESPONDER',  color: 'red' },
-  { type: CELL_TYPES.KILLER_T,   label: 'Killer T', sublabel: 'KT',  detail: 'Requires scout · high clearance',          action: 'DEPLOY_KILLER_T',   color: 'crimson' },
-];
-
-const BTN_COLOR = {
-  purple:  'border-purple-800 text-purple-400 hover:bg-purple-950',
-  blue:    'border-blue-800 text-blue-400 hover:bg-blue-950',
-  amber:   'border-amber-800 text-amber-400 hover:bg-amber-950',
-  orange:  'border-orange-800 text-orange-400 hover:bg-orange-950',
-  green:   'border-green-800 text-green-400 hover:bg-green-950',
-  red:     'border-red-800 text-red-400 hover:bg-red-950',
-  crimson: 'border-red-700 text-red-300 hover:bg-red-950',
-};
 
 function timeAgo(tick, currentTick) {
   if (tick == null || currentTick == null) return '';
@@ -72,11 +52,9 @@ export default function NodeDetail({
   perceivedState,
   deployedCells,
   activeSignals,
-  attentionTokens,
   currentTick,
   onDismissSignal,
   onHoldSignal,
-  onDeploy,
   onRecall,
   onDismissEntity,
   onClose,
@@ -332,39 +310,13 @@ export default function NodeDetail({
           )}
         </section>
 
-        {/* ── Deploy section ── */}
+        {/* ── Deploy hint ── */}
         <section className="pb-4">
-          <div className="px-4 py-2 text-xs text-gray-600 uppercase tracking-wider">
+          <div className="px-4 py-2 text-xs text-gray-700 uppercase tracking-wider">
             Deploy to {node.label}
           </div>
-          <div className="px-3 space-y-1">
-            {DEPLOY_BUTTONS.map(btn => {
-              const cost = DEPLOY_COSTS[btn.type] ?? 1;
-              const canAfford = attentionTokens >= cost;
-              const btnStyle = BTN_COLOR[btn.color] ?? BTN_COLOR.red;
-
-              return (
-                <button
-                  key={btn.type}
-                  onClick={() => onDeploy(btn.action, nodeId)}
-                  disabled={!canAfford}
-                  className={`w-full text-left px-3 py-1.5 text-xs font-mono border transition-colors ${
-                    canAfford ? btnStyle : 'border-gray-800 text-gray-700 cursor-not-allowed'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span>
-                      {btn.label}
-                      <span className="text-gray-600 ml-1">{btn.sublabel}</span>
-                    </span>
-                    <span className={canAfford ? '' : 'text-gray-800'}>{cost}t</span>
-                  </div>
-                  <div className={`text-xs mt-0.5 ${canAfford ? 'text-gray-600' : 'text-gray-800'}`}>
-                    {btn.detail}
-                  </div>
-                </button>
-              );
-            })}
+          <div className="px-4 text-xs text-gray-700 italic">
+            Select a unit from the Cell Roster, then right-click this node to deploy.
           </div>
         </section>
 

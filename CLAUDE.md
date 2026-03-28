@@ -1,0 +1,1 @@
+Always use git -C <path> instead of cd <path> && git

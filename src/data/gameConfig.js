@@ -1,6 +1,5 @@
 // Central game configuration — all tunable constants in one place.
 
-export const TOTAL_TOKENS = 12;              // total token pool (never regenerates — returned by cells)
 export const TICKS_PER_TURN = 5;             // real seconds per simulation "turn" (ground truth / signal cadence)
 export const TICK_RATE_MS = 1000;            // game loop interval in ms
 
@@ -16,3 +15,23 @@ export const INFO_SIGNAL_TIMEOUT = null;    // patrol_clear / false_alarm: keep 
 
 // Visibility: collateral_damage signals only generated when patrol/macrophage covers the node
 export const INFLAMMATION_REQUIRES_VISIBILITY = true;
+
+// ── Cell manufacturing ────────────────────────────────────────────────────────
+// tokenCapacity starts at INITIAL_TOKEN_CAPACITY and grows by 1 every
+// TOKEN_CAPACITY_REGEN_INTERVAL ticks, capped at TOKEN_CAPACITY_MAX.
+// Each cell in the roster holds its DEPLOY_COST permanently until decommissioned.
+
+export const INITIAL_TOKEN_CAPACITY = 12;
+export const TOKEN_CAPACITY_MAX = 20;
+export const TOKEN_CAPACITY_REGEN_INTERVAL = 60; // ticks between +1 capacity (~1 per minute)
+
+// Bone-marrow production time per cell type (ticks = seconds)
+export const TRAINING_TICKS = {
+  dendritic:  20,
+  neutrophil: 10,
+  responder:  15,
+  killer_t:   25,
+  b_cell:     20,
+  nk_cell:    20,
+  macrophage: 10,
+};

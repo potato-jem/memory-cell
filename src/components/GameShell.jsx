@@ -1,14 +1,14 @@
 // GameShell — new layout: large body map + node detail panel on right.
 // Header: system health, turn, tokens. No separate signal console.
 
-import { useReducer, useCallback, useState, useEffect, useRef } from 'react';
-import { initGameState, GAME_PHASES, TOTAL_TOKENS } from '../state/gameState.js';
-import { TICK_RATE_MS } from '../data/gameConfig.js';
+import { useReducer, useCallback, useState } from 'react';
+import { initGameState, GAME_PHASES } from '../state/gameState.js';
 import { gameReducer, ACTION_TYPES } from '../state/actions.js';
 import { initMemoryBank, getMemoryBankSummary } from '../engine/memory.js';
 import { UNINVITED_GUEST } from '../data/situations/uninvitedGuest.js';
 import { NODES } from '../data/nodes.js';
 import BodyMap from './BodyMap.jsx';
+import CellRoster from './CellRoster.jsx';
 import NodeDetail from './NodeDetail.jsx';
 import PostMortem from './PostMortem.jsx';
 import SituationSelector from './SituationSelector.jsx';
@@ -61,30 +61,33 @@ export default function GameShell() {
     dispatch({ type: ACTION_TYPES.DISMISS_ENTITY, nodeId, entityId });
   }, []);
 
-  // ── Cell deployment (costs tokens) ───────────────────────────────────────
-  const handleDeploy = useCallback((actionType, nodeId) => {
-    dispatch({ type: ACTION_TYPES[actionType] ?? actionType, nodeId });
-  }, []);
-
   const handleRecall = useCallback((cellId) => {
     dispatch({ type: ACTION_TYPES.RECALL_UNIT, cellId });
   }, []);
 
-  const handlePause = useCallback(() => {
-    dispatch({ type: ACTION_TYPES.PAUSE });
+  // ── Cell roster / manufacturing ───────────────────────────────────────────
+  const [selectedCellId, setSelectedCellId] = useState(null);
+
+  const handleTrainCell = useCallback((cellType) => {
+    dispatch({ type: ACTION_TYPES.TRAIN_CELL, cellType });
   }, []);
 
-  const handleResume = useCallback(() => {
-    dispatch({ type: ACTION_TYPES.RESUME });
+  const handleDecommission = useCallback((cellId) => {
+    dispatch({ type: ACTION_TYPES.DECOMMISSION_CELL, cellId });
   }, []);
 
-  // ── Real-time game loop ────────────────────────────────────────────────────
-  // Dispatches TICK every second. The reducer ignores ticks when paused/ended.
-  useEffect(() => {
-    const id = setInterval(() => {
-      dispatch({ type: ACTION_TYPES.TICK });
-    }, TICK_RATE_MS);
-    return () => clearInterval(id);
+  const handleSelectCell = useCallback((cellId) => {
+    setSelectedCellId(cellId);
+  }, []);
+
+  const handleNodeContextMenu = useCallback((nodeId) => {
+    if (!selectedCellId) return;
+    dispatch({ type: ACTION_TYPES.DEPLOY_FROM_ROSTER, cellId: selectedCellId, nodeId });
+    setSelectedCellId(null);
+  }, [selectedCellId]);
+
+  const handleEndTurn = useCallback(() => {
+    dispatch({ type: ACTION_TYPES.END_TURN });
   }, []);
 
   if (showSelector) {
@@ -139,7 +142,7 @@ export default function GameShell() {
           {/* Token pool */}
           <div className="flex items-center gap-2">
             <span className="text-xs text-gray-600">Tokens</span>
-            <TokenPool available={state.attentionTokens} total={TOTAL_TOKENS} />
+            <TokenPool used={state.tokensInUse} capacity={state.tokenCapacity} />
           </div>
 
           {/* Pending signal count */}
@@ -159,21 +162,12 @@ export default function GameShell() {
             ← Menu
           </button>
           {isPlaying && (
-            state.paused ? (
-              <button
-                onClick={handleResume}
-                className="px-4 py-1.5 bg-green-900 hover:bg-green-800 text-green-200 text-xs font-mono uppercase tracking-wider border border-green-700 transition-colors"
-              >
-                ▶ Resume
-              </button>
-            ) : (
-              <button
-                onClick={handlePause}
-                className="px-4 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-400 text-xs font-mono uppercase tracking-wider border border-gray-700 transition-colors"
-              >
-                ‖ Pause
-              </button>
-            )
+            <button
+              onClick={handleEndTurn}
+              className="px-4 py-1.5 bg-green-900 hover:bg-green-800 text-green-200 text-xs font-mono uppercase tracking-wider border border-green-700 transition-colors"
+            >
+              End Turn →
+            </button>
           )}
         </div>
       </header>
@@ -200,6 +194,22 @@ export default function GameShell() {
       {/* ── Main area ── */}
       <div className="flex flex-1 overflow-hidden">
 
+        {/* Cell roster — left sidebar */}
+        <div className="w-48 shrink-0 border-r border-gray-800 overflow-hidden">
+          <CellRoster
+            deployedCells={state.deployedCells}
+            tokenCapacity={state.tokenCapacity}
+            tokensInUse={state.tokensInUse}
+            currentTick={state.tick}
+            selectedCellId={selectedCellId}
+            situationDef={primarySit.situationDef}
+            onTrainCell={handleTrainCell}
+            onSelectCell={handleSelectCell}
+            onDecommission={handleDecommission}
+            onRecall={handleRecall}
+          />
+        </div>
+
         {/* Body map — main event */}
         <div
           className="flex-1 min-w-0 overflow-hidden cursor-default"
@@ -210,6 +220,7 @@ export default function GameShell() {
             deployedCells={state.deployedCells}
             selectedNodeId={selectedNodeId}
             onSelectNode={handleSelectNode}
+            onNodeContextMenu={handleNodeContextMenu}
             activeSignals={state.activeSignals}
           />
         </div>
@@ -222,11 +233,9 @@ export default function GameShell() {
               perceivedState={primarySit.perceivedState}
               deployedCells={state.deployedCells}
               activeSignals={state.activeSignals}
-              attentionTokens={state.attentionTokens}
               currentTick={state.tick}
               onDismissSignal={handleDismissSignal}
               onHoldSignal={handleHoldSignal}
-              onDeploy={handleDeploy}
               onRecall={handleRecall}
               onDismissEntity={handleDismissEntity}
               onClose={() => handleSelectNode(null)}
@@ -432,13 +441,13 @@ function NodeSummaryRow({ nodeId, signals, level, onSelect }) {
 
 // ── Header sub-components ──────────────────────────────────────────────────────
 
-function TokenPool({ available, total }) {
-  const pct = total > 0 ? (available / total) * 100 : 0;
+function TokenPool({ used, capacity }) {
+  const available = capacity - used;
   const color = available === 0 ? 'text-red-500' : available <= 3 ? 'text-yellow-500' : 'text-cyan-400';
   return (
     <div className="flex items-center gap-1.5">
-      <span className={`text-sm font-mono tabular-nums ${color}`}>{available}</span>
-      <span className="text-gray-700 text-xs">/{total}</span>
+      <span className={`text-sm font-mono tabular-nums ${color}`}>{used}</span>
+      <span className="text-gray-700 text-xs">/{capacity}</span>
     </div>
   );
 }

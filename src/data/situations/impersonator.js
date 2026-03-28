@@ -16,7 +16,7 @@ export const IMPERSONATOR = {
     growthRatePerTurn: 4,
     spreadThreshold: 50,
     clearanceRatePerResponder: 12,
-    spreadNodes: ['HEART_BLOOD'],
+    spreadNodes: ['BLOOD'],
     mimicRevealThreshold: 40,   // strength at which mimic drops cover
   },
 
@@ -77,7 +77,7 @@ export const IMPERSONATOR = {
     {
       turn: 20,
       type: 'signal',
-      nodeId: 'HEART_BLOOD',
+      nodeId: 'BLOOD',
       signalType: 'anomaly_detected',
       confidence: 'low',
       description: 'Systemic signal if spread has occurred',

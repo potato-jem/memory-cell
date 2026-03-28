@@ -41,7 +41,7 @@ function getCellIndicators(nodeId, deployedCells) {
   return { here, enRoute };
 }
 
-export default function BodyMap({ perceivedState, deployedCells, selectedNodeId, onSelectNode, activeSignals }) {
+export default function BodyMap({ perceivedState, deployedCells, selectedNodeId, onSelectNode, onNodeContextMenu, activeSignals }) {
   const nodeList = Object.values(NODES);
 
   // Deduplicated connections
@@ -85,19 +85,19 @@ export default function BodyMap({ perceivedState, deployedCells, selectedNodeId,
         </defs>
 
         {/* Body silhouette */}
-        <BodySilhouette />
+        {/* <BodySilhouette /> */}
 
         {/* Connection lines */}
         {connections.map(({ from, to }) => {
-          const isSystemic = from.isSystemic || to.isSystemic;
+          
           return (
             <line
               key={`${from.id}-${to.id}`}
               x1={from.position.x} y1={from.position.y}
               x2={to.position.x} y2={to.position.y}
-              stroke={isSystemic ? '#1e3a5f' : '#1e293b'}
-              strokeWidth={isSystemic ? 1.5 : 1}
-              strokeDasharray={isSystemic ? '4,3' : 'none'}
+              stroke={'#1e293b'}
+              strokeWidth={1}
+              strokeDasharray={ 'none'}
               opacity="0.6"
             />
           );
@@ -117,6 +117,7 @@ export default function BodyMap({ perceivedState, deployedCells, selectedNodeId,
             <g
               key={node.id}
               onClick={() => onSelectNode(node.id === selectedNodeId ? null : node.id)}
+              onContextMenu={e => { e.preventDefault(); onNodeContextMenu?.(node.id); }}
               className="cursor-pointer"
             >
               {/* Glow ring for active nodes */}

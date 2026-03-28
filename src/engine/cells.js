@@ -1,32 +1,38 @@
-// Cell deployment mechanics — pure functions.
-// Real-time rewrite: tick-based transit, token pool (tokens held while deployed, returned on return).
+// Cell manufacturing + deployment — pure functions.
+//
+// Lifecycle:  training → ready → outbound → arrived → returning → ready  (loops)
+//
+// Tokens are held by every cell in the roster regardless of phase.
+// Tokens are freed only when a cell is explicitly decommissioned.
+// tokenCapacity (from game state) grows slowly over time via regen.
 
 import { NODES, HQ_NODE_ID, getHopDistance } from '../data/nodes.js';
 import {
-  TOTAL_TOKENS,
   ATTACK_TRANSIT_PER_HOP,
   SCOUT_TRANSIT_PER_HOP,
   PATROL_DWELL_TICKS,
+  TRAINING_TICKS,
 } from '../data/gameConfig.js';
 
 export const CELL_TYPES = {
-  DENDRITIC: 'dendritic',
+  DENDRITIC:  'dendritic',
   NEUTROPHIL: 'neutrophil',   // patrol — circuits through connected nodes
-  RESPONDER: 'responder',
-  KILLER_T: 'killer_t',
-  B_CELL: 'b_cell',
-  NK_CELL: 'nk_cell',
+  RESPONDER:  'responder',
+  KILLER_T:   'killer_t',
+  B_CELL:     'b_cell',
+  NK_CELL:    'nk_cell',
   MACROPHAGE: 'macrophage',   // static coverage — sees own node + adjacent
 };
 
+// Token cost to manufacture each cell type (held for the cell's lifetime)
 export const DEPLOY_COSTS = {
   [CELL_TYPES.DENDRITIC]:  2,
   [CELL_TYPES.NEUTROPHIL]: 1,
   [CELL_TYPES.RESPONDER]:  3,
-  [CELL_TYPES.KILLER_T]:   4,  // expensive — requires scout confirmation
+  [CELL_TYPES.KILLER_T]:   4,
   [CELL_TYPES.B_CELL]:     2,
-  [CELL_TYPES.NK_CELL]:    3,  // no confirmation needed — calculated risk
-  [CELL_TYPES.MACROPHAGE]: 1,  // ambient sensing + coverage
+  [CELL_TYPES.NK_CELL]:    3,
+  [CELL_TYPES.MACROPHAGE]: 1,
 };
 
 export const CLEARANCE_RATES = {
@@ -45,11 +51,16 @@ export const AUTOIMMUNE_RISK = {
   [CELL_TYPES.MACROPHAGE]:0.0,
 };
 
-// Cell phases:
-//   outbound   — travelling from HQ to destination
-//   arrived    — at destination node, working
-//   returning  — travelling back to HQ (tokens still held)
-// Cells are removed from deployedCells when returnTick is reached.
+// Human-readable display names for UI
+export const CELL_DISPLAY_NAMES = {
+  [CELL_TYPES.DENDRITIC]:  'Scout',
+  [CELL_TYPES.NEUTROPHIL]: 'Patrol',
+  [CELL_TYPES.RESPONDER]:  'Responder',
+  [CELL_TYPES.KILLER_T]:   'Killer T',
+  [CELL_TYPES.B_CELL]:     'B-Cell',
+  [CELL_TYPES.NK_CELL]:    'NK Cell',
+  [CELL_TYPES.MACROPHAGE]: 'Macrophage',
+};
 
 let _cellIdCounter = 1;
 function nextCellId() { return `cell_${_cellIdCounter++}`; }
@@ -62,7 +73,8 @@ export function getTransitTicks(targetNodeId, cellType) {
   return hops * ATTACK_TRANSIT_PER_HOP;
 }
 
-// ── Token pool ────────────────────────────────────────────────────────────────
+// ── Token accounting ──────────────────────────────────────────────────────────
+// Counts ALL cells in roster (any phase). tokenCapacity comes from game state.
 
 export function computeTokensInUse(deployedCells) {
   let total = 0;
@@ -72,112 +84,140 @@ export function computeTokensInUse(deployedCells) {
   return total;
 }
 
-export function getTokensAvailable(deployedCells) {
-  return TOTAL_TOKENS - computeTokensInUse(deployedCells);
+export function getTokensAvailable(deployedCells, tokenCapacity) {
+  return tokenCapacity - computeTokensInUse(deployedCells);
 }
 
-// ── Deploy functions ──────────────────────────────────────────────────────────
+// ── Manufacturing ─────────────────────────────────────────────────────────────
 
-export function deployDendriticCell(nodeId, deployedCells, tokensAvailable, tick) {
-  return deployCell(CELL_TYPES.DENDRITIC, nodeId, deployedCells, tokensAvailable, tick, {});
-}
-
-export function deployNeutrophilPatrol(nodeId, deployedCells, tokensAvailable, tick) {
-  return deployCell(CELL_TYPES.NEUTROPHIL, nodeId, deployedCells, tokensAvailable, tick, {
-    patrolConnectionIdx: 0,
-    patrolNextMoveTick: null, // set when arrived
-  });
-}
-
-export function deployResponder(nodeId, deployedCells, tokensAvailable, tick, hasDendriticConf) {
-  return deployCell(CELL_TYPES.RESPONDER, nodeId, deployedCells, tokensAvailable, tick, {
-    effectiveness: hasDendriticConf ? 1.0 : 0.6,
-    hasDendriticBacking: hasDendriticConf,
-  });
-}
-
-export function deployKillerT(nodeId, deployedCells, tokensAvailable, tick, hasDendriticConf) {
-  if (!hasDendriticConf) {
-    return { success: false, error: 'Killer T requires scout confirmation first.', requiresDendritic: true };
-  }
-  return deployCell(CELL_TYPES.KILLER_T, nodeId, deployedCells, tokensAvailable, tick, {
-    effectiveness: 1.0,
-    hasDendriticBacking: true,
-  });
-}
-
-export function deployBCell(nodeId, deployedCells, tokensAvailable, tick, hasDendriticConf) {
-  return deployCell(CELL_TYPES.B_CELL, nodeId, deployedCells, tokensAvailable, tick, {
-    effectiveness: hasDendriticConf ? 1.0 : 0.85,
-    hasDendriticBacking: hasDendriticConf,
-  });
-}
-
-export function deployNKCell(nodeId, deployedCells, tokensAvailable, tick) {
-  return deployCell(CELL_TYPES.NK_CELL, nodeId, deployedCells, tokensAvailable, tick, {
-    effectiveness: 1.0,
-    hasDendriticBacking: false,
-  });
-}
-
-export function deployMacrophage(nodeId, deployedCells, tokensAvailable, tick) {
-  return deployCell(CELL_TYPES.MACROPHAGE, nodeId, deployedCells, tokensAvailable, tick, {
-    coversAdjacentNodes: true,
-  });
-}
-
-function deployCell(type, nodeId, deployedCells, tokensAvailable, tick, extra = {}) {
+export function trainCell(type, deployedCells, tokenCapacity, tick) {
   const cost = DEPLOY_COSTS[type];
-  if (tokensAvailable < cost) {
-    return { success: false, error: `Not enough tokens (need ${cost}, have ${tokensAvailable})` };
+  const available = getTokensAvailable(deployedCells, tokenCapacity);
+  if (available < cost) {
+    return { success: false, error: `Need ${cost} tokens (have ${available})` };
+  }
+  const trainingTime = TRAINING_TICKS[type] ?? 15;
+  const cell = {
+    id: nextCellId(),
+    type,
+    nodeId: null,
+    phase: 'training',
+    trainedAtTick: tick,
+    trainingCompleteTick: tick + trainingTime,
+    deployedAtTick: null,
+    arrivalTick: null,
+    returnTick: null,
+  };
+  return { success: true, newDeployedCells: { ...deployedCells, [cell.id]: cell }, cost };
+}
+
+// ── Deployment ────────────────────────────────────────────────────────────────
+// Moves a ready cell from roster into the field.
+
+export function deployFromRoster(cellId, nodeId, deployedCells, tick, perceivedState) {
+  const cell = deployedCells[cellId];
+  if (!cell || cell.phase !== 'ready') {
+    return { success: false, error: 'Cell is not ready to deploy' };
   }
   const node = NODES[nodeId];
   if (!node) return { success: false, error: `Unknown node: ${nodeId}` };
 
-  const transitTicks = getTransitTicks(nodeId, type);
-  const cell = {
-    id: nextCellId(),
-    type,
-    nodeId,
-    phase: 'outbound',
-    deployedAtTick: tick,
-    arrivalTick: tick + transitTicks,
-    returnTick: null,
-    ...extra,
-  };
+  if (cell.type === CELL_TYPES.KILLER_T && !hasDendriticConfirmation(nodeId, perceivedState)) {
+    return { success: false, error: 'Killer T requires scout confirmation', requiresDendritic: true };
+  }
 
-  return { success: true, newDeployedCells: { ...deployedCells, [cell.id]: cell }, cost };
+  const transitTicks = getTransitTicks(nodeId, cell.type);
+  const extra = _deployExtra(cell.type, nodeId, perceivedState);
+
+  return {
+    success: true,
+    newDeployedCells: {
+      ...deployedCells,
+      [cellId]: {
+        ...cell,
+        nodeId,
+        phase: 'outbound',
+        deployedAtTick: tick,
+        arrivalTick: tick + transitTicks,
+        returnTick: null,
+        ...extra,
+      },
+    },
+  };
+}
+
+function _deployExtra(type, nodeId, perceivedState) {
+  const hasDC = hasDendriticConfirmation(nodeId, perceivedState);
+  switch (type) {
+    case CELL_TYPES.NEUTROPHIL:
+      return { patrolConnectionIdx: 0, patrolNextMoveTick: null };
+    case CELL_TYPES.RESPONDER:
+      return { effectiveness: hasDC ? 1.0 : 0.6, hasDendriticBacking: hasDC };
+    case CELL_TYPES.KILLER_T:
+      return { effectiveness: 1.0, hasDendriticBacking: true };
+    case CELL_TYPES.B_CELL:
+      return { effectiveness: hasDC ? 1.0 : 0.85, hasDendriticBacking: hasDC };
+    case CELL_TYPES.NK_CELL:
+      return { effectiveness: 1.0, hasDendriticBacking: false };
+    case CELL_TYPES.MACROPHAGE:
+      return { coversAdjacentNodes: true };
+    default:
+      return {};
+  }
+}
+
+// ── Decommission ──────────────────────────────────────────────────────────────
+// Removes a cell from the roster entirely. Frees its token cost.
+// Only valid for training or ready cells (can't decommission mid-field).
+
+export function decommissionCell(cellId, deployedCells) {
+  const cell = deployedCells[cellId];
+  if (!cell) return { success: false, error: 'Cell not found' };
+  if (cell.phase === 'outbound' || cell.phase === 'arrived' || cell.phase === 'returning') {
+    return { success: false, error: 'Recall cell before decommissioning' };
+  }
+  const { [cellId]: _removed, ...rest } = deployedCells;
+  return { success: true, newDeployedCells: rest };
 }
 
 // ── Recall ────────────────────────────────────────────────────────────────────
+// outbound → ready (cancel transit, cell stays in roster)
+// arrived  → returning → (auto-transitions to ready in advanceCells)
 
-// Returns { success, newDeployedCells, immediate }
-// immediate=true means tokens freed right now (cell cancelled while outbound)
-// immediate=false means cell is returning — tokens freed when returnTick reached
 export function recallUnit(cellId, deployedCells, tick) {
   const cell = deployedCells[cellId];
   if (!cell) return { success: false, error: `Cell ${cellId} not found` };
   if (cell.phase === 'returning') return { success: false, error: 'Already returning' };
-
-  if (cell.phase === 'outbound') {
-    // Cancel immediately — tokens freed now
-    const { [cellId]: _removed, ...rest } = deployedCells;
-    return { success: true, newDeployedCells: rest, immediate: true };
+  if (cell.phase === 'training' || cell.phase === 'ready') {
+    return { success: false, error: 'Cell is not deployed' };
   }
 
-  // Phase 'arrived' — start return journey
+  if (cell.phase === 'outbound') {
+    // Cancel deploy — back to ready immediately
+    return {
+      success: true,
+      newDeployedCells: {
+        ...deployedCells,
+        [cellId]: { ...cell, phase: 'ready', nodeId: null, deployedAtTick: null, arrivalTick: null },
+      },
+    };
+  }
+
+  // arrived → start return journey
   const transitTicks = getTransitTicks(cell.nodeId, cell.type);
-  const updated = {
-    ...deployedCells,
-    [cellId]: { ...cell, phase: 'returning', returnTick: tick + transitTicks },
+  return {
+    success: true,
+    newDeployedCells: {
+      ...deployedCells,
+      [cellId]: { ...cell, phase: 'returning', returnTick: tick + transitTicks },
+    },
   };
-  return { success: true, newDeployedCells: updated, immediate: false };
 }
 
 // ── Tick advance ──────────────────────────────────────────────────────────────
-
 // Returns { updatedCells, events }
-// events: [{ type: 'scout_arrived'|'cell_arrived'|'cell_returned', cellId, nodeId, cellType }]
+// events: [{ type, cellId, nodeId?, cellType }]
+
 export function advanceCells(deployedCells, tick) {
   const updated = {};
   const events = [];
@@ -185,10 +225,16 @@ export function advanceCells(deployedCells, tick) {
   for (const [cellId, cell] of Object.entries(deployedCells)) {
     let c = { ...cell };
 
-    // Outbound → arrived/returning
+    // Training → ready
+    if (c.phase === 'training' && tick >= c.trainingCompleteTick) {
+      c.phase = 'ready';
+      c.nodeId = null;
+      events.push({ type: 'cell_ready', cellId, cellType: c.type });
+    }
+
+    // Outbound → arrived (or returning for scouts)
     if (c.phase === 'outbound' && tick >= c.arrivalTick) {
       if (c.type === CELL_TYPES.DENDRITIC) {
-        // Scout arrives → immediately start returning
         const transitTicks = c.arrivalTick - c.deployedAtTick;
         c.phase = 'returning';
         c.returnTick = tick + transitTicks;
@@ -203,7 +249,7 @@ export function advanceCells(deployedCells, tick) {
       }
     }
 
-    // Patrol movement — neutrophils circuit through connected nodes
+    // Patrol movement
     if (c.type === CELL_TYPES.NEUTROPHIL && c.phase === 'arrived' &&
         c.patrolNextMoveTick != null && tick >= c.patrolNextMoveTick) {
       const connections = NODES[c.nodeId]?.connections ?? [];
@@ -215,10 +261,14 @@ export function advanceCells(deployedCells, tick) {
       }
     }
 
-    // Returning → remove
+    // Returning → ready (cells return to roster, not removed)
     if (c.phase === 'returning' && c.returnTick != null && tick >= c.returnTick) {
       events.push({ type: 'cell_returned', cellId, nodeId: c.nodeId, cellType: c.type });
-      continue; // remove from updated
+      c.phase = 'ready';
+      c.nodeId = null;
+      c.returnTick = null;
+      c.arrivalTick = null;
+      c.deployedAtTick = null;
     }
 
     updated[cellId] = c;
@@ -227,8 +277,7 @@ export function advanceCells(deployedCells, tick) {
   return { updatedCells: updated, events };
 }
 
-// Auto-return attack cells when pathogen is cleared at their node.
-// Returns updated deployedCells with those cells set to 'returning'.
+// Auto-return attack cells when their node's pathogen is cleared.
 export function startReturnForClearedNodes(deployedCells, pathogenState, tick) {
   const ATTACK_TYPES = new Set([
     CELL_TYPES.RESPONDER, CELL_TYPES.KILLER_T, CELL_TYPES.B_CELL, CELL_TYPES.NK_CELL,
@@ -248,12 +297,10 @@ export function startReturnForClearedNodes(deployedCells, pathogenState, tick) {
 
 // ── Queries ───────────────────────────────────────────────────────────────────
 
-// Check perceivedState for scout confirmation (more reliable than checking deployedCells)
 export function hasDendriticConfirmation(nodeId, perceivedState) {
   return perceivedState?.nodes?.[nodeId]?.scoutConfirmed ?? false;
 }
 
-// Which nodes currently have patrol/macrophage coverage?
 export function getPatrolCoverage(deployedCells) {
   const coverage = {};
   for (const cell of Object.values(deployedCells)) {
