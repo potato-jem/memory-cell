@@ -13,10 +13,9 @@
 // All functions accept an optional `modifiers` (runModifiers) parameter.
 // When null/undefined, base config values are used (fully backward compatible).
 
-import { NODES, HQ_NODE_ID, computePath, computePathWithModifiers } from '../data/nodes.js';
+import { NODES, HQ_NODE_ID, computePathWithModifiers } from '../data/nodes.js';
 import { PATROL_DWELL_TICKS, SCOUT_DWELL_TICKS, TRAINING_TICKS } from '../data/gameConfig.js';
 import {
-  CELL_CONFIG,
   DEPLOY_COSTS,
   CLEARANCE_RATES,
   CELL_DISPLAY_NAMES,

@@ -190,11 +190,6 @@ const CELL_CONFIG = {
   nk_cell:    { label: 'NK Cell',    color: 'text-orange-400', dot: 'bg-orange-600' },
 };
 
-function turnsLeft(targetTick, currentTick, ticksPerTurn = 5) {
-  if (targetTick == null || currentTick == null) return null;
-  return Math.max(0, Math.ceil((targetTick - currentTick) / ticksPerTurn));
-}
-
 // ── Main component ────────────────────────────────────────────────────────────
 
 export default function NodeDetail({
@@ -241,7 +236,7 @@ export default function NodeDetail({
         <section className="border-b border-gray-800">
           <div className="px-4 py-2 text-xs text-gray-600 uppercase tracking-wider">Your Cells Here</div>
 
-          {cellsHere.length === 0 && cellsEnRoute.length === 0 && 
+          {cellsHere.length === 0 && cellsTransit.length === 0 &&
           (
             <div className="px-4 pb-3 text-xs text-gray-800 italic">No cells deployed.</div>
           )}

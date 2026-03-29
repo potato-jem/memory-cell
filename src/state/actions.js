@@ -12,16 +12,13 @@ import {
   recallUnit,
   advanceCells,
   startReturnForClearedNodes,
-  hasDendriticConfirmation,
   computeTokensInUse,
 } from '../engine/cells.js';
 import {
   applySignalToPerceivedState,
-  applyRoutingDecision,
   applyDendriticReturn,
   applyResponderDeployed,
   applyNeutrophilDeployed,
-  dismissEntity,
 } from './perceivedState.js';
 import { TICKS_PER_TURN, GAME_PHASES, LOSS_REASONS } from './gameState.js';
 import { TOKEN_CAPACITY_MAX, TOKEN_CAPACITY_REGEN_INTERVAL } from '../data/gameConfig.js';
@@ -31,9 +28,6 @@ import { applyModifierPatch } from '../data/runModifiers.js';
 export const ACTION_TYPES = {
   END_TURN:           'END_TURN',
   TOGGLE_FEVER:       'TOGGLE_FEVER',
-  DISMISS_SIGNAL:     'DISMISS_SIGNAL',
-  HOLD_SIGNAL:        'HOLD_SIGNAL',
-  DISMISS_ENTITY:     'DISMISS_ENTITY',
   TRAIN_CELL:         'TRAIN_CELL',
   DEPLOY_FROM_ROSTER: 'DEPLOY_FROM_ROSTER',
   DECOMMISSION_CELL:  'DECOMMISSION_CELL',
@@ -54,9 +48,6 @@ export function gameReducer(state, action) {
   switch (action.type) {
     case ACTION_TYPES.END_TURN:           return handleEndTurn(state);
     case ACTION_TYPES.TOGGLE_FEVER:       return handleToggleFever(state);
-    case ACTION_TYPES.DISMISS_SIGNAL:     return handleSignalDecision(state, action.signalId, 'dismiss');
-    case ACTION_TYPES.HOLD_SIGNAL:        return handleSignalDecision(state, action.signalId, 'hold');
-    case ACTION_TYPES.DISMISS_ENTITY:     return handleDismissEntity(state, action.nodeId, action.entityId);
     case ACTION_TYPES.TRAIN_CELL:         return handleTrainCell(state, action.cellType);
     case ACTION_TYPES.DEPLOY_FROM_ROSTER: return handleDeployFromRoster(state, action.cellId, action.nodeId);
     case ACTION_TYPES.DECOMMISSION_CELL:  return handleDecommissionCell(state, action.cellId);
@@ -203,24 +194,6 @@ function handleEndTurn(state) {
 
 function handleToggleFever(state) {
   return { ...state, fever: { active: !state.fever.active } };
-}
-
-// ── Signal decisions ───────────────────────────────────────────────────────────
-
-function handleSignalDecision(state, signalId, decision) {
-  const signal = state.activeSignals.find(s => s.id === signalId);
-  if (!signal) return state;
-
-  const activeSignals = state.activeSignals.filter(s => s.id !== signalId);
-  const signalHistory = [...state.signalHistory, { ...signal, routed: true, routingDecision: decision }];
-  const perceivedState = applyRoutingDecision(state.perceivedState, signal, decision);
-
-  return { ...state, activeSignals, signalHistory, perceivedState };
-}
-
-function handleDismissEntity(state, nodeId, entityId) {
-  const perceivedState = dismissEntity(state.perceivedState, nodeId, entityId);
-  return { ...state, perceivedState };
 }
 
 // ── Cell manufacturing ─────────────────────────────────────────────────────────

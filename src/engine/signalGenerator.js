@@ -2,7 +2,7 @@
 // Organic signals only come from patrol/macrophage cells actively at nodes.
 // Detection outcomes from detection.js determine what (if anything) they perceive.
 
-import { NODES, NODE_IDS } from '../data/nodes.js';
+import { NODES } from '../data/nodes.js';
 import { SIGNAL_TYPES, SIGNAL_SOURCES, CONFIDENCE_LEVELS } from '../data/signals.js';
 import { WARNING_SIGNAL_TIMEOUT, ALERT_SIGNAL_TIMEOUT, INFO_SIGNAL_TIMEOUT } from '../data/gameConfig.js';
 import { rollDetection, DETECTION_OUTCOMES } from '../data/detection.js';

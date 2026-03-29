@@ -330,7 +330,7 @@ function threatLevelToStatus(threatLevel, current) {
   }
 }
 
-export function entityDisplayLabel(perceivedClass, classifiedType, confidence) {
+export function entityDisplayLabel(perceivedClass, classifiedType) {
   if (perceivedClass === ENTITY_CLASS.CLASSIFIED && classifiedType) {
     const typeNames = {
       bacterial: 'Bacterial pathogen',

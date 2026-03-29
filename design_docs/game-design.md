@@ -1,24 +1,14 @@
 # Memory Cell — Game Design Document
 
-*Consolidated from conceptual-design.txt, memory-cell-design-doc2.md, and implementation plans. Reflects current state of the codebase.*
-
 ---
 
 ## What This Game Is
 
-You are the coordination intelligence of a human immune system. Not a god, not a general, not a doctor. You exist inside a living system — receiving signals from cells you cannot directly control, routing information through a network you cannot fully see, responding to threats you can never directly observe.
-
-The central experience is **information asymmetry**. Most strategy games give you perfect information about your own position and imperfect information about the enemy. This game gives you imperfect information about everything — including what your own cells are doing, whether your own responses are helping, and whether what you're fighting is real.
-
-Your core challenge is the gap between what is actually happening in the body and what your signals are telling you. Managing that gap — keeping it small enough that your responses are roughly appropriate to reality — is the game.
+You are the coordination intelligence of a human immune system
 
 ---
 
 ## Design Pillars
-
-**Information is the action.** Forwarding a signal triggers a response — you cannot gather intelligence neutrally. The act of routing is the intervention.
-
-**The body never stops.** There are no discrete events with clean beginnings and ends. Threats coalesce from background noise gradually. You only know something was serious in retrospect.
 
 **Every decision is legible.** When you take damage, it should be clear why. Pathogens behave consistently. Systemic consequences follow from traceable causes. Death teaches.
 
@@ -45,7 +35,7 @@ Each failure is legible in retrospect. Each teaches something true about how com
 Slow, expensive, high-value. Travels to a specific node, dwells for 2 turns sampling it, returns with definitive intelligence — a single high-accuracy detection roll that upgrades the entity to **classified** (full type identification). Does not fight. Scouts provide en-route visibility at intermediate nodes on the way to their destination.
 
 ### Patrol (Neutrophil)
-Fast, cheap, continuous. Deploys to a node and cycles through adjacent nodes on a timer. Generates signals each turn from wherever it currently is — broad coverage, moderate accuracy. Also provides en-route detection when travelling.
+Fast, cheap, continuous. Deploys to a node and cycles through adjacent nodes. Generates signals each turn from wherever it currently is — broad coverage, moderate accuracy. Also provides en-route detection when travelling.
 
 ### Macrophage
 Static coverage with adjacent node awareness. Higher detection quality than patrol. Can provide en-route detection when redeployed.
@@ -60,13 +50,13 @@ After a pathogen is cleared, a memory entry is recorded. In subsequent runs, pre
 
 ## The Body Map
 
-Nine nodes connected by a movement graph. Each connection is traversable; movement cost is determined by the **exit cost** of the node being left (SPLEEN = 0, all others = 1).
+Nine nodes connected by a movement graph. Each connection is traversable; movement cost is determined by the **exit cost** of the node being left.
 
 ```
-SPLEEN (HQ, cost 0) ─── BLOOD (cost 1) ─── BONE_MARROW
+SPLEEN (HQ, cost 0) ─── BLOOD (cost 1) ─── BONE_MARROW (cost 0) 
                               │
-              ┌───────────────┼──────────────┬──────────┐
-           CHEST           LIVER          MUSCLE    SPLEEN
+              ┌───────────────┼───────────────┐
+           CHEST           LIVER          MUSCLE
               │               │               │
            THROAT            GUT          PERIPHERY
 ```
@@ -106,10 +96,6 @@ Each node tracks these values independently:
 | **immuneSuppressed** | bool | Parasite effect: all clearance at this node halved |
 | **transitPenalty** | int | Parasite effect: extra turns to enter this node |
 
-**Tissue integrity recovery:** +2/turn when no active infection and inflammation < 30.
-
-**Scarring:** If integrity drops below 40, the ceiling drops permanently to lowestPointReached + 25. A site that bottomed at 20 can only ever recover to 45.
-
 ---
 
 ## Pathogen Types
@@ -117,31 +103,24 @@ Each node tracks these values independently:
 All implemented in `src/data/pathogens.js` (PATHOGEN_REGISTRY) and `src/engine/pathogen.js`.
 
 ### Extracellular Bacteria
-**Tracked value:** `infectionLoad`
 Logistic growth (slows near 100). Spreads at load > 80. Direct tissue damage and inflammation. Cleared by neutrophil, macrophage, responder, b_cell.
 
 ### Virus
-**Tracked value:** `cellularCompromise`
 Exponential growth (fast, uncapped). Spreads at compromise > 60. Does NOT directly damage tissue — but clearing it does (cytotoxic response destroys compromised cells). Requires killer_t or nk_cell. Early intervention dramatically cheaper than late.
 
 ### Fungi
-**Tracked value:** `hyphaeLoad` (infectionLoad category)
 Slow logistic growth. Does not spread between sites. At load ≥ 60: **Walled Off** — infection contained but normal clearance blocked; tissue integrity ceiling drops to 50. Replication doubles when systemic stress > 70. Cleared by macrophage, responder.
 
 ### Parasite
-**Tracked value:** `parasiticBurden`
 Moderate growth. **Immune suppression** above burden 50 (halves clearance at this node). **Transit penalty** (extra turns to reach this node). Cannot be cleared by current cell types — **requires eosinophil (not yet implemented)**.
 
 ### Toxin Producer
-**Tracked value:** `infectionLoad`
 Slow growth. Minimal local symptoms. Each turn, toxin output contributes **directly to systemic stress**, bypassing local inflammation. The site may look healthy while systemic stress climbs. Cleared by macrophage, responder.
 
 ### Prion *(stub)*
-**Tracked value:** `corruptionLevel`
 Linear growth. Hidden to player until corruption > 50. Causes direct tissue integrity damage above threshold. **Cannot be cleared** — only progression can be slowed. No cell types can clear it.
 
 ### Cancer *(stub)*
-**Tracked value:** `cellularCompromise`
 Slow exponential. Mimics self-signals (low detection quality). Cleared by nk_cell, killer_t.
 
 ### Benign

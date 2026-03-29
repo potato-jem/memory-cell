@@ -69,17 +69,6 @@ export default function GameShell() {
   }, []);
 
   // ── Signal decisions ────────────────────────────────────────────────────────
-  const handleDismissSignal = useCallback((signalId) => {
-    dispatch({ type: ACTION_TYPES.DISMISS_SIGNAL, signalId });
-  }, []);
-
-  const handleHoldSignal = useCallback((signalId) => {
-    dispatch({ type: ACTION_TYPES.HOLD_SIGNAL, signalId });
-  }, []);
-
-  const handleDismissEntity = useCallback((nodeId, entityId) => {
-    dispatch({ type: ACTION_TYPES.DISMISS_ENTITY, nodeId, entityId });
-  }, []);
 
   const handleRecall = useCallback((cellId) => {
     dispatch({ type: ACTION_TYPES.RECALL_UNIT, cellId });
