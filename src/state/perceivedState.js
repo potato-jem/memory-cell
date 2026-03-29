@@ -149,7 +149,7 @@ function applySignalToEntities(existing, signal) {
 
 // ── Routing decisions ─────────────────────────────────────────────────────────
 
-export function applyDismissSignal(perceivedState, signal) {
+function applyDismissSignal(perceivedState, signal) {
   const nodeId = signal.nodeId;
   const current = perceivedState.nodes[nodeId] ?? makeCleanNode();
 
@@ -168,7 +168,7 @@ export function applyDismissSignal(perceivedState, signal) {
   };
 }
 
-export function applyHoldSignal(perceivedState, signal) {
+function applyHoldSignal(perceivedState, signal) {
   const nodeId = signal.nodeId;
   const current = perceivedState.nodes[nodeId] ?? makeCleanNode();
   const updatedNode = {
@@ -328,11 +328,6 @@ function threatLevelToStatus(threatLevel, current) {
     case THREAT_LEVELS.CRITICAL: return NODE_STATUSES.CONFIRMED;
     default: return NODE_STATUSES.CLEAN;
   }
-}
-
-function higherConfidence(a, b) {
-  const order = { low: 0, medium: 1, high: 2 };
-  return (order[a] ?? 0) >= (order[b] ?? 0) ? a : b;
 }
 
 export function entityDisplayLabel(perceivedClass, classifiedType, confidence) {

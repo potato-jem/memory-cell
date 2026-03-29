@@ -128,8 +128,6 @@ export const NODES = {
 
 export const NODE_IDS = Object.keys(NODES);
 export const HQ_NODE_ID = 'SPLEEN'; // all cells deploy from here
-export const getNode = (id) => NODES[id];
-export const getConnectedNodes = (id) => NODES[id]?.connections.map(cid => NODES[cid]) ?? [];
 
 // ── Dijkstra shortest path using signalTravelCost as edge weights ─────────────
 // Cost is the EXIT cost of the node being left.
@@ -184,6 +182,3 @@ export function computePathCost(path, fromIndex = 0) {
   return cost;
 }
 
-export function getHopDistance(fromId, toId) {
-  return computePathCost(computePath(fromId, toId));
-}

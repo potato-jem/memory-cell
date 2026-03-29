@@ -46,14 +46,6 @@ export const CLEARANCE_RATES = {
   [CELL_TYPES.MACROPHAGE]: 4,
 };
 
-export const AUTOIMMUNE_RISK = {
-  [CELL_TYPES.RESPONDER]: 0.3,
-  [CELL_TYPES.KILLER_T]:  0.6,
-  [CELL_TYPES.B_CELL]:    0.1,
-  [CELL_TYPES.NK_CELL]:   0.3,
-  [CELL_TYPES.MACROPHAGE]:0.0,
-};
-
 // Human-readable display names for UI
 export const CELL_DISPLAY_NAMES = {
   [CELL_TYPES.DENDRITIC]:  'Scout',
@@ -79,7 +71,7 @@ export function computeTokensInUse(deployedCells) {
   return total;
 }
 
-export function getTokensAvailable(deployedCells, tokenCapacity) {
+function getTokensAvailable(deployedCells, tokenCapacity) {
   return tokenCapacity - computeTokensInUse(deployedCells);
 }
 
@@ -404,23 +396,6 @@ export function hasDendriticConfirmation(nodeId, perceivedState) {
   return perceivedState?.nodes?.[nodeId]?.scoutConfirmed ?? false;
 }
 
-export function getPatrolCoverage(deployedCells) {
-  const coverage = {};
-  for (const cell of Object.values(deployedCells)) {
-    if (cell.phase !== 'arrived') continue;
-    if (cell.type === CELL_TYPES.NEUTROPHIL) {
-      coverage[cell.nodeId] = true;
-    }
-    if (cell.type === CELL_TYPES.MACROPHAGE) {
-      coverage[cell.nodeId] = true;
-      for (const adj of (NODES[cell.nodeId]?.connections ?? [])) {
-        if (!coverage[adj]) coverage[adj] = 'adjacent';
-      }
-    }
-  }
-  return coverage;
-}
-
 export function getClearancePower(nodeId, deployedCells, groundTruth) {
   let total = 0;
   for (const cell of Object.values(deployedCells)) {
@@ -438,16 +413,3 @@ export function getClearancePower(nodeId, deployedCells, groundTruth) {
   return total;
 }
 
-export function getDeploymentSummary(deployedCells) {
-  return Object.values(deployedCells).map(cell => ({
-    id: cell.id,
-    type: cell.type,
-    nodeId: cell.nodeId,
-    phase: cell.phase,
-    destNodeId: cell.destNodeId ?? null,
-    arrivalTick: cell.arrivalTick ?? null,
-    returnTick: cell.returnTick ?? null,
-    effectiveness: cell.effectiveness ?? null,
-    hasDendriticBacking: cell.hasDendriticBacking ?? null,
-  }));
-}

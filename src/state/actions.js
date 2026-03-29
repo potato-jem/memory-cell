@@ -27,7 +27,6 @@ import {
 import { TICKS_PER_TURN, GAME_PHASES, LOSS_REASONS } from './gameState.js';
 import { TOKEN_CAPACITY_MAX, TOKEN_CAPACITY_REGEN_INTERVAL } from '../data/gameConfig.js';
 import { recordEncounter } from '../engine/memory.js';
-import { allNodesClear } from '../data/pathogens.js';
 
 export const ACTION_TYPES = {
   END_TURN:           'END_TURN',
