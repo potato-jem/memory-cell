@@ -95,25 +95,36 @@ export function applySignalToPerceivedState(perceivedState, signal) {
   };
 }
 
+// Rank used to determine if an entity should be upgraded
+function classRank(cls) {
+  const ranks = {
+    [ENTITY_CLASS.UNKNOWN]: 1,
+    [ENTITY_CLASS.INFLAMMATORY]: 1,
+    [ENTITY_CLASS.PATHOGEN]: 2,
+    [ENTITY_CLASS.CLASSIFIED]: 3,
+    [ENTITY_CLASS.BENIGN]: 3,
+    [ENTITY_CLASS.SELF_LIKE]: 0,
+  };
+  return ranks[cls] ?? 0;
+}
+
 function applySignalToEntities(existing, signal) {
   const turn = signal.arrivedOnTurn;
-
-  // What entity class does this signal imply?
   const impliedClass = signalTypeToEntityClass(signal.type);
-  if (!impliedClass) return existing; // patrol_clear on clean node adds nothing
+  if (!impliedClass || impliedClass === ENTITY_CLASS.SELF_LIKE) return existing;
 
-  // Find an existing unresolved entity to update, or create new one
-  const existingIdx = existing.findIndex(
-    e => !e.isDismissed && e.perceivedClass === impliedClass
-  );
+  const impliedRank = classRank(impliedClass);
+
+  // Find any active (non-dismissed, non-resolved) entity to potentially upgrade
+  const existingIdx = existing.findIndex(e => !e.isDismissed && !e.isResolved);
 
   if (existingIdx >= 0) {
-    // Update existing entity — upgrade confidence if signal is stronger
     const e = existing[existingIdx];
-    const newConf = higherConfidence(e.confidence, signal.confidence);
+    const currentRank = classRank(e.perceivedClass);
+    const isUpgrade = impliedRank > currentRank;
     const updated = {
       ...e,
-      confidence: newConf,
+      ...(isUpgrade ? { perceivedClass: impliedClass, levelSince: turn } : {}),
       lastUpdatedTurn: turn,
       signalIds: [...e.signalIds, signal.id],
     };
@@ -121,22 +132,19 @@ function applySignalToEntities(existing, signal) {
   }
 
   // Create new entity
-  const entity = {
+  return [...existing, {
     id: nextEntityId(),
     nodeId: signal.nodeId,
-    confidence: signal.confidence,
     perceivedClass: impliedClass,
-    classifiedType: null,     // set by dendritic return
+    classifiedType: null,
     firstSeenTurn: turn,
+    levelSince: turn,
     lastUpdatedTurn: turn,
     signalIds: [signal.id],
     isDismissed: false,
     isResolved: false,
-    // For mimic: self_like entities look reassuring — that's the deception
-    displayLabel: entityDisplayLabel(impliedClass, null, signal.confidence),
-  };
-
-  return [...existing, entity];
+    displayLabel: entityDisplayLabel(impliedClass, null, null),
+  }];
 }
 
 // ── Routing decisions ─────────────────────────────────────────────────────────
@@ -185,7 +193,7 @@ export function applyRoutingDecision(perceivedState, signal, decision) {
 
 // ── Dendritic return ──────────────────────────────────────────────────────────
 
-export function applyDendriticReturn(perceivedState, nodeId, foundThreat, threatType) {
+export function applyDendriticReturn(perceivedState, nodeId, foundThreat, threatType, turn = 0) {
   const current = perceivedState.nodes[nodeId] ?? makeCleanNode();
 
   const updatedNode = {
@@ -195,38 +203,37 @@ export function applyDendriticReturn(perceivedState, nodeId, foundThreat, threat
     threatLevel: foundThreat ? THREAT_LEVELS.CONFIRMED : THREAT_LEVELS.NONE,
   };
 
-  // Resolve all foreign entities at this node with the scout's findings
+  const newClass = foundThreat ? ENTITY_CLASS.CLASSIFIED : ENTITY_CLASS.BENIGN;
+
+  // Resolve all active entities with the scout's findings
   const existingEntities = perceivedState.foreignEntitiesByNode[nodeId] ?? [];
   const resolvedEntities = existingEntities.map(e => {
     if (e.isDismissed) return e;
     return {
       ...e,
-      confidence: 'high',
-      perceivedClass: foundThreat ? ENTITY_CLASS.CLASSIFIED : ENTITY_CLASS.BENIGN,
+      perceivedClass: newClass,
       classifiedType: foundThreat ? threatType : null,
+      levelSince: turn,
+      lastUpdatedTurn: turn,
       isResolved: !foundThreat,
-      displayLabel: entityDisplayLabel(
-        foundThreat ? ENTITY_CLASS.CLASSIFIED : ENTITY_CLASS.BENIGN,
-        foundThreat ? threatType : null,
-        'high'
-      ),
+      displayLabel: entityDisplayLabel(newClass, foundThreat ? threatType : null, null),
     };
   });
 
-  // If found threat but no prior entity, add one now
+  // If found threat but no prior entity, create one
   if (foundThreat && resolvedEntities.length === 0) {
     resolvedEntities.push({
       id: nextEntityId(),
       nodeId,
-      confidence: 'high',
       perceivedClass: ENTITY_CLASS.CLASSIFIED,
       classifiedType: threatType,
-      firstSeenTurn: 0,
-      lastUpdatedTurn: 0,
+      firstSeenTurn: turn,
+      levelSince: turn,
+      lastUpdatedTurn: turn,
       signalIds: [],
       isDismissed: false,
       isResolved: false,
-      displayLabel: entityDisplayLabel(ENTITY_CLASS.CLASSIFIED, threatType, 'high'),
+      displayLabel: entityDisplayLabel(ENTITY_CLASS.CLASSIFIED, threatType, null),
     });
   }
 

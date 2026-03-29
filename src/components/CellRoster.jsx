@@ -6,7 +6,7 @@
 import { useState } from 'react';
 import { CELL_TYPES, CELL_DISPLAY_NAMES, DEPLOY_COSTS } from '../engine/cells.js';
 import { TRAINING_TICKS, TOKEN_CAPACITY_MAX, TOKEN_CAPACITY_REGEN_INTERVAL, TICKS_PER_TURN } from '../data/gameConfig.js';
-import { NODES } from '../data/nodes.js';
+import { NODES, computePathCost } from '../data/nodes.js';
 
 const RECON_TYPES = [CELL_TYPES.DENDRITIC, CELL_TYPES.NEUTROPHIL, CELL_TYPES.MACROPHAGE];
 
@@ -70,7 +70,7 @@ export default function CellRoster({
   tokensInUse,
   currentTick,
   selectedCellId,
-  situationDef,
+  runConfig,
   onTrainCell,
   onSelectCell,
   onDecommission,
@@ -83,7 +83,7 @@ export default function CellRoster({
   const turnsUntilRegen = Math.max(1, Math.ceil(ticksUntilRegen / TICKS_PER_TURN));
   const atCap = tokenCapacity >= TOKEN_CAPACITY_MAX;
 
-  const availableAttack = situationDef?.availableResponders ?? [];
+  const availableAttack = runConfig?.availableResponders ?? [];
   const allTrainable = [...RECON_TYPES, ...availableAttack];
 
   const allCells = Object.values(deployedCells).sort((a, b) => {
@@ -102,17 +102,33 @@ export default function CellRoster({
     return Math.max(1, Math.ceil((targetTick - currentTick) / TICKS_PER_TURN));
   }
 
+  function pathTurnsLeft(cell) {
+    if (cell.path && cell.pathIndex != null) {
+      return computePathCost(cell.path, cell.pathIndex);
+    }
+    return null;
+  }
+
   function getStatusLine(cell) {
-    const nodeLabel = cell.nodeId ? (NODES[cell.nodeId]?.label ?? cell.nodeId) : null;
     if (cell.phase === 'training') {
       return `training ${turnsLeft(cell.trainingCompleteTick)}T`;
     }
     if (cell.phase === 'outbound') {
-      return `→ ${nodeLabel} ${turnsLeft(cell.arrivalTick)}T`;
+      const dest = cell.destNodeId ? (NODES[cell.destNodeId]?.label ?? cell.destNodeId) : '?';
+      const eta = pathTurnsLeft(cell);
+      const etaStr = eta != null ? ` ${eta}T` : '';
+      // Show current intermediate node if not at origin
+      const atNode = cell.nodeId && cell.nodeId !== 'SPLEEN' && cell.nodeId !== cell.destNodeId
+        ? ` (via ${NODES[cell.nodeId]?.label ?? cell.nodeId})`
+        : '';
+      return `→ ${dest}${etaStr}${atNode}`;
     }
-    if (cell.phase === 'arrived') return nodeLabel ?? 'on site';
+    if (cell.phase === 'arrived') {
+      return NODES[cell.nodeId]?.label ?? cell.nodeId ?? 'on site';
+    }
     if (cell.phase === 'returning') {
-      return `↩ ${turnsLeft(cell.returnTick)}T`;
+      const eta = pathTurnsLeft(cell);
+      return eta != null ? `↩ ${eta}T` : '↩ returning';
     }
     return PHASE_LABEL[cell.phase] ?? cell.phase;
   }

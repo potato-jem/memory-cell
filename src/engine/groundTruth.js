@@ -1,180 +1,267 @@
 // Ground truth engine — the hidden simulation.
 // Pure functions. No React, no UI.
-// Layer 2: multi-situation support, new pathogen types.
+//
+// Per-site state: pathogens dict, inflammation, tissueIntegrity, tissueIntegrityCeiling.
+// No single-pathogen 'pathogenState' field — all pathogens live inside nodeStates.
 
 import { NODE_IDS } from '../data/nodes.js';
-import { advancePathogen, initPathogen, isPathodgenCleared } from './pathogen.js';
-import { THREAT_TYPES } from '../data/signals.js';
+import { advanceInstance, computeSpreads, shouldWallOff } from './pathogen.js';
+import { nodeHasActivePathogen } from '../data/pathogens.js';
+import {
+  TISSUE_RECOVERY_RATE,
+  TISSUE_SCAR_THRESHOLD,
+  TISSUE_SCAR_BONUS,
+  INFLAMMATION_DAMAGE_THRESHOLD_1,
+  INFLAMMATION_DAMAGE_THRESHOLD_2,
+  INFLAMMATION_DAMAGE_THRESHOLD_3,
+  INFLAMMATION_DAMAGE_RATE_1,
+  INFLAMMATION_DAMAGE_RATE_2,
+  INFLAMMATION_DAMAGE_RATE_3,
+  INFLAMMATION_RECOVERY_THRESHOLD,
+} from '../data/gameConfig.js';
 
-/**
- * Initialise ground truth for one situation.
- */
-export function initGroundTruth(situationDef) {
-  const nodeStates = {};
-  for (const nodeId of NODE_IDS) {
-    nodeStates[nodeId] = {
-      pathogenStrength: 0,
-      pathogenType: null,
-      inflammation: 0,
-      isClean: true,
-    };
-  }
+// ── Initialisation ─────────────────────────────────────────────────────────────
 
-  const startingNode = situationDef.pathogen.startingNode;
-  nodeStates[startingNode] = {
-    pathogenStrength: situationDef.pathogen.startingStrength,
-    pathogenType: situationDef.pathogen.type,
-    inflammation: 0,
-    isClean: false,
-  };
-
+export function makeCleanSiteState() {
   return {
-    nodeStates,
-    pathogenState: initPathogen(situationDef),
-    spleenStress: 0,
-    totalCollateral: 0,
-    isResolved: false,
-    resolutionType: null,
-    spreadHistory: [],
-    turn: 0,
+    pathogens: {},             // { [pathogenType]: PathogenInstance }
+    inflammation: 0,           // 0–100
+    tissueIntegrity: 100,      // 0–100
+    tissueIntegrityCeiling: 100,
+    lowestIntegrityReached: 100,
+    isWalledOff: false,        // fungi granuloma
+    immuneSuppressed: false,   // active parasite above suppression threshold
+    transitPenalty: 0,         // extra turns added to deployment (parasite logistics)
   };
 }
 
+/** Initialise ground truth for an endless run — all sites start clean. */
+export function initGroundTruth() {
+  const nodeStates = {};
+  for (const nodeId of NODE_IDS) {
+    nodeStates[nodeId] = makeCleanSiteState();
+  }
+  return {
+    nodeStates,
+    turn: 0,
+    spreadHistory: [],
+  };
+}
+
+// ── Turn advancement ───────────────────────────────────────────────────────────
+
 /**
  * Advance ground truth one turn.
- * Returns { newGroundTruth, events }
  *
- * @param {Object[]} seededEventsThisTurn - authored ground truth mutations for this turn
+ * @param {Object} groundTruth
+ * @param {Object} deployedCells
+ * @param {number} turn
+ * @param {number} systemicStress  — passed in so pathogens can react to it
+ * @param {Array}  pendingSpawns   — [{ type, nodeId, initialLoad }] from spawner
+ * @returns {{ newGroundTruth, events, perSiteOutputs }}
+ *   events: [{ type, nodeId, pathogenType? }]
+ *   perSiteOutputs: { [nodeId]: { toxinOutput } } — for systemic stress calculation
  */
-export function advanceGroundTruth(groundTruth, situationDef, deployedCells, turn, routingPressure, seededEventsThisTurn = []) {
+export function advanceGroundTruth(groundTruth, deployedCells, turn, systemicStress, pendingSpawns = []) {
   const events = [];
+  let nodeStates = { ...groundTruth.nodeStates };
+  const perSiteOutputs = {};
 
-  const prevPathogenState = { ...groundTruth.pathogenState };
-  let newPathogenState = advancePathogen(
-    groundTruth.pathogenState,
-    situationDef,
-    deployedCells,
-    turn,
-    groundTruth
-  );
-
-  // Apply authored ground truth mutations (seeded events)
-  for (const event of seededEventsThisTurn) {
-    if (event.type === 'strengthen_pathogen') {
-      const existing = newPathogenState[event.nodeId];
-      if (existing && existing.strength > 0) {
-        newPathogenState = {
-          ...newPathogenState,
-          [event.nodeId]: { ...existing, strength: Math.min(100, existing.strength + (event.amount ?? 10)) },
-        };
-      }
-    } else if (event.type === 'spawn_pathogen') {
-      const existing = newPathogenState[event.nodeId];
-      if (!existing || existing.strength <= 0) {
-        newPathogenState = {
-          ...newPathogenState,
-          [event.nodeId]: {
-            strength: event.strength ?? 10,
-            type: event.pathogenType ?? situationDef.pathogen.type,
-          },
-        };
-      }
-    }
-  }
-
-  // Detect new spreads
-  const spreadHistory = [...(groundTruth.spreadHistory ?? [])];
-  for (const [nodeId, p] of Object.entries(newPathogenState)) {
-    if (!prevPathogenState[nodeId] && p.strength > 0) {
-      events.push({ type: 'spread', to: nodeId, strength: p.strength });
-      spreadHistory.push({ turn, to: nodeId });
-    }
-  }
-
-  // Update node states
-  const newNodeStates = { ...groundTruth.nodeStates };
+  // ── 1. Advance all pathogen instances ───────────────────────────────────────
   for (const nodeId of NODE_IDS) {
-    const pathogenHere = newPathogenState[nodeId];
-    newNodeStates[nodeId] = {
-      ...newNodeStates[nodeId],
-      pathogenStrength: pathogenHere?.strength ?? 0,
-      pathogenType: pathogenHere?.type ?? null,
-      isClean: !pathogenHere || pathogenHere.strength <= 0,
+    const ns = { ...nodeStates[nodeId] };
+    const updatedPathogens = {};
+    let totalTissueDamage = 0;
+    let totalInflammationAdded = 0;
+    let totalToxinOutput = 0;
+    let immuneSuppressedThisTurn = false;
+
+    for (const [pathogenType, instance] of Object.entries(ns.pathogens ?? {})) {
+      const { newInstance, tissueIntegrityDelta, inflammationDelta, toxinOutput, suppressImmune } =
+        advanceInstance(instance, nodeId, deployedCells, ns, systemicStress);
+
+      if (newInstance) {
+        updatedPathogens[pathogenType] = newInstance;
+        // Check for granuloma
+        if (shouldWallOff(newInstance) && !ns.isWalledOff) {
+          ns.isWalledOff = true;
+          events.push({ type: 'site_walled_off', nodeId, pathogenType });
+        }
+      } else {
+        events.push({ type: 'pathogen_cleared', nodeId, pathogenType });
+      }
+
+      totalTissueDamage += tissueIntegrityDelta;
+      totalInflammationAdded += inflammationDelta;
+      totalToxinOutput += toxinOutput;
+      if (suppressImmune) immuneSuppressedThisTurn = true;
+    }
+
+    // Clear walled off status if fungi cleared
+    if (ns.isWalledOff && !updatedPathogens['fungi']) {
+      ns.isWalledOff = false;
+    }
+
+    ns.pathogens = updatedPathogens;
+    ns.immuneSuppressed = immuneSuppressedThisTurn;
+    perSiteOutputs[nodeId] = { toxinOutput: totalToxinOutput };
+
+    // ── 2. Immune cell inflammation contribution ───────────────────────────────
+    const immuneInflammation = computeImmuneCellInflammation(nodeId, deployedCells, ns);
+    totalInflammationAdded += immuneInflammation;
+
+    // ── 3. Update inflammation ─────────────────────────────────────────────────
+    const hasInfection = Object.keys(updatedPathogens).length > 0;
+    const suppressionActive = ns.immuneSuppressed;
+    const effectiveInflammationAdd = suppressionActive ? totalInflammationAdded * 0.5 : totalInflammationAdded;
+    const decayRate = hasInfection ? 3 : 8; // faster decay when cleared
+    const newInflammation = Math.min(100, Math.max(0,
+      ns.inflammation + effectiveInflammationAdd - decayRate
+    ));
+
+    // ── 4. Inflammation tissue damage ──────────────────────────────────────────
+    totalTissueDamage += inflammationDamageTick(newInflammation);
+
+    // ── 5. Update tissue integrity ─────────────────────────────────────────────
+    let newIntegrity = ns.tissueIntegrity + totalTissueDamage;
+
+    // Recovery: +2/turn when no infection and inflammation is low
+    if (!hasInfection && newInflammation < INFLAMMATION_RECOVERY_THRESHOLD) {
+      newIntegrity = Math.min(ns.tissueIntegrityCeiling, newIntegrity + TISSUE_RECOVERY_RATE);
+    }
+
+    newIntegrity = Math.max(0, Math.min(100, newIntegrity));
+
+    // ── 6. Scar ceiling update ─────────────────────────────────────────────────
+    const newLowest = Math.min(ns.lowestIntegrityReached, newIntegrity);
+    let newCeiling = ns.tissueIntegrityCeiling;
+    if (newIntegrity < TISSUE_SCAR_THRESHOLD && newLowest < ns.lowestIntegrityReached) {
+      // Integrity just dropped further below scar threshold — lower the ceiling
+      newCeiling = Math.min(ns.tissueIntegrityCeiling, newLowest + TISSUE_SCAR_BONUS);
+    }
+
+    // ── 7. Parasite transit penalty ────────────────────────────────────────────
+    const parasiteBurden = updatedPathogens['parasite']?.parasiticBurden ?? 0;
+    const transitPenalty = Math.floor(parasiteBurden / 25); // +1T per 25 burden
+
+    nodeStates[nodeId] = {
+      ...ns,
+      inflammation: newInflammation,
+      tissueIntegrity: newIntegrity,
+      tissueIntegrityCeiling: newCeiling,
+      lowestIntegrityReached: newLowest,
+      transitPenalty,
     };
   }
 
-  // Apply responder inflammation
-  const updatedNodeStates = applyInflammation(newNodeStates, deployedCells, situationDef.pathogen.type);
+  // ── 8. Apply spreads ──────────────────────────────────────────────────────
+  const spreads = computeSpreads(nodeStates);
+  const spreadHistory = [...(groundTruth.spreadHistory ?? [])];
+  for (const spread of spreads) {
+    const target = nodeStates[spread.toNodeId];
+    if (!target) continue;
+    // Don't overwrite existing infection of same type
+    if (target.pathogens[spread.type] && !isInstanceClearedSimple(target.pathogens[spread.type], spread.type)) continue;
 
-  // Spleen stress from routing pressure
-  const newSpleenStress = Math.min(100, groundTruth.spleenStress + routingPressure * 8);
-  const decayedSpleenStress = Math.max(0, newSpleenStress - 3);
+    const tv = PATHOGEN_REGISTRY_TV[spread.type] ?? 'infectionLoad';
+    nodeStates[spread.toNodeId] = {
+      ...target,
+      pathogens: {
+        ...target.pathogens,
+        [spread.type]: makeNewInstance(spread.type, spread.initialLoad),
+      },
+    };
+    events.push({ type: 'pathogen_spread', from: spread.fromNodeId, to: spread.toNodeId, pathogenType: spread.type });
+    spreadHistory.push({ turn, to: spread.toNodeId, from: spread.fromNodeId, pathogenType: spread.type });
+  }
 
-  const pathogenCleared = isPathodgenCleared(newPathogenState);
+  // ── 9. Apply pending spawns from spawner ──────────────────────────────────
+  for (const spawn of pendingSpawns) {
+    const target = nodeStates[spawn.nodeId];
+    if (!target) continue;
+    // Only spawn if this pathogen type isn't already active here
+    const existing = target.pathogens[spawn.type];
+    if (existing && !isInstanceClearedSimple(existing, spawn.type)) continue;
+
+    nodeStates[spawn.nodeId] = {
+      ...target,
+      pathogens: {
+        ...target.pathogens,
+        [spawn.type]: makeNewInstance(spawn.type, spawn.initialLoad ?? 8),
+      },
+    };
+    events.push({ type: 'pathogen_spawned', nodeId: spawn.nodeId, pathogenType: spawn.type });
+  }
 
   return {
     newGroundTruth: {
       ...groundTruth,
-      nodeStates: updatedNodeStates,
-      pathogenState: newPathogenState,
-      spleenStress: decayedSpleenStress,
-      spreadHistory,
-      isResolved: pathogenCleared,
-      resolutionType: pathogenCleared ? 'win' : null,
+      nodeStates,
       turn,
+      spreadHistory,
     },
     events,
+    perSiteOutputs,
   };
 }
 
-function applyInflammation(nodeStates, deployedCells, pathogenType) {
-  const result = { ...nodeStates };
+// ── Immune cell inflammation contribution ─────────────────────────────────────
 
-  // Autoimmune situation: NK cells, Killer T, responders all cause MORE inflammation
-  const isAutoimmune = pathogenType === THREAT_TYPES.AUTOIMMUNE;
-
+function computeImmuneCellInflammation(nodeId, deployedCells, ns) {
+  const hasInfection = Object.keys(ns.pathogens ?? {}).length > 0;
+  let added = 0;
   for (const cell of Object.values(deployedCells)) {
+    if (cell.nodeId !== nodeId || cell.phase !== 'arrived') continue;
     const isResponder = ['responder', 'killer_t', 'b_cell', 'nk_cell'].includes(cell.type);
-    if (!isResponder || cell.phase !== 'arrived') continue;
-
-    const nodeId = cell.nodeId;
-    if (!result[nodeId]) continue;
-
-    const isClean = result[nodeId].isClean;
-
-    let inflammationIncrease;
-    if (cell.type === 'killer_t' && isClean) {
-      inflammationIncrease = 25; // T-cells attacking self = crisis
-    } else if (cell.type === 'nk_cell' && isClean) {
-      inflammationIncrease = 15; // NK hitting healthy tissue
-    } else if (isClean) {
-      inflammationIncrease = 15;
+    if (!isResponder) continue;
+    // More inflammation if attacking a clean site (collateral / autoimmune)
+    if (!hasInfection) {
+      added += cell.type === 'killer_t' ? 25 : 15;
     } else {
-      inflammationIncrease = isAutoimmune ? 10 : 5; // autoimmune situation: responders hurt more
+      added += 5;
     }
-
-    result[nodeId] = {
-      ...result[nodeId],
-      inflammation: Math.min(100, (result[nodeId].inflammation ?? 0) + inflammationIncrease),
-    };
   }
+  return added;
+}
 
-  // Decay
-  for (const nodeId of Object.keys(result)) {
-    result[nodeId] = {
-      ...result[nodeId],
-      inflammation: Math.max(0, (result[nodeId].inflammation ?? 0) - 8),
-    };
-  }
+// ── Inflammation damage tick ──────────────────────────────────────────────────
 
-  return result;
+function inflammationDamageTick(inflammation) {
+  if (inflammation >= INFLAMMATION_DAMAGE_THRESHOLD_3) return -INFLAMMATION_DAMAGE_RATE_3;
+  if (inflammation >= INFLAMMATION_DAMAGE_THRESHOLD_2) return -INFLAMMATION_DAMAGE_RATE_2;
+  if (inflammation >= INFLAMMATION_DAMAGE_THRESHOLD_1) return -INFLAMMATION_DAMAGE_RATE_1;
+  return 0;
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+// Mini inline lookup to avoid circular import with pathogens.js registry
+const PATHOGEN_REGISTRY_TV = {
+  extracellular_bacteria: 'infectionLoad',
+  virus:                  'cellularCompromise',
+  fungi:                  'infectionLoad',
+  parasite:               'parasiticBurden',
+  toxin_producer:         'infectionLoad',
+  prion:                  'corruptionLevel',
+  intracellular_bacteria: 'cellularCompromise',
+  cancer:                 'cellularCompromise',
+  autoimmune:             'infectionLoad',
+  benign:                 'infectionLoad',
+};
+
+function makeNewInstance(type, initialLoad) {
+  const tv = PATHOGEN_REGISTRY_TV[type] ?? 'infectionLoad';
+  return { type, [tv]: initialLoad };
+}
+
+function isInstanceClearedSimple(instance, type) {
+  const tv = PATHOGEN_REGISTRY_TV[type] ?? 'infectionLoad';
+  return (instance[tv] ?? 0) <= 0;
 }
 
 export function getGroundTruthSnapshot(groundTruth) {
   return {
     nodeStates: { ...groundTruth.nodeStates },
-    pathogenState: { ...groundTruth.pathogenState },
-    spleenStress: groundTruth.spleenStress,
     spreadHistory: [...(groundTruth.spreadHistory ?? [])],
   };
 }

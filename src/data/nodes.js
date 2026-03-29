@@ -1,28 +1,15 @@
-// The 9 body nodes.
-// Production leaves connect only to Spleen.
-// Spleen is HQ — all cells deploy from here.
 
 export const NODES = {
 
-  // ── Production nodes (leaves) ─────────────────────────────────────────────
-  // THYMUS: {
-  //   id: 'THYMUS',
-  //   label: 'Thymus',
-  //   position: { x: 60, y: 100 },
-  //   connections: ['SPLEEN'],
-  //   signalSpeed: 2,
-  //   damageWeight: 1.8,
-  //   isBottleneck: false,
-  //   isCellSource: true,
-  //   isHQ: false,
-  //   isSystemic: false,
-  // },
+  // ── Production nodes ─────────────────────────────────────────────
+
   BONE_MARROW: {
     id: 'BONE_MARROW',
     label: 'Bone Marrow',
-    position: { x: 0, y: 200 },
-    connections: ['SPLEEN'],
+    position: { x: 85, y: 295 },
+    connections: ['BLOOD'],
     signalSpeed: 3,
+    signalTravelCost: 1,
     damageWeight: 2.5,
     isBottleneck: false,
     isCellSource: true,
@@ -34,9 +21,10 @@ export const NODES = {
   SPLEEN: {
     id: 'SPLEEN',
     label: 'Spleen',
-    position: { x: 60, y: 200 },
-    connections: ['BONE_MARROW', 'CHEST', 'LIVER', 'BLOOD'],
+    position: { x: 85, y: 125 },
+    connections: ['BLOOD'],
     signalSpeed: 1,
+    signalTravelCost: 0,  // HQ — free to leave
     damageWeight: 2.0,
     isBottleneck: false,
     isCellSource: false,
@@ -48,9 +36,10 @@ export const NODES = {
   THROAT: {
     id: 'THROAT',
     label: 'Throat',
-    position: { x: 255, y: 135 },
+    position: { x: 335, y: 85 },
     connections: ['CHEST'],
     signalSpeed: 1,
+    signalTravelCost: 1,
     damageWeight: 1.2,
     isBottleneck: false,
     isCellSource: false,
@@ -60,9 +49,10 @@ export const NODES = {
   CHEST: {
     id: 'CHEST',
     label: 'Chest',
-    position: { x: 160, y: 135 },
-    connections: ['SPLEEN', 'THROAT', 'BLOOD'],
+    position: { x: 210, y: 85 },
+    connections: ['THROAT', 'BLOOD'],
     signalSpeed: 1,
+    signalTravelCost: 1,
     damageWeight: 1.5,
     isBottleneck: false,
     isCellSource: false,
@@ -72,9 +62,10 @@ export const NODES = {
   LIVER: {
     id: 'LIVER',
     label: 'Liver',
-    position: { x: 160, y: 270 },
-    connections: ['GUT', 'SPLEEN', 'BLOOD'],
+    position: { x: 210, y: 335 },
+    connections: ['GUT', 'BLOOD'],
     signalSpeed: 2,
+    signalTravelCost: 1,
     damageWeight: 1.8,
     isBottleneck: false,
     isCellSource: false,
@@ -84,9 +75,10 @@ export const NODES = {
   BLOOD: {
     id: 'BLOOD',
     label: 'Blood',
-    position: { x: 160, y: 200 },
-    connections: ['SPLEEN', 'CHEST', 'LIVER', 'PERIPHERY'],
+    position: { x: 85, y: 210 },
+    connections: ['SPLEEN', 'BONE_MARROW', 'CHEST', 'LIVER', 'MUSCLE'],
     signalSpeed: 1,
+    signalTravelCost: 1,
     damageWeight: 2.0,
     isBottleneck: false,
     isCellSource: false,
@@ -96,10 +88,24 @@ export const NODES = {
   GUT: {
     id: 'GUT',
     label: 'Gut',
-    position: { x: 255, y: 270 },
+    position: { x: 335, y: 335 },
     connections: ['LIVER'],
     signalSpeed: 2,
+    signalTravelCost: 1,
     damageWeight: 1.3,
+    isBottleneck: false,
+    isCellSource: false,
+    isHQ: false,
+    isSystemic: false,
+  },
+  MUSCLE: {
+    id: 'MUSCLE',
+    label: 'Muscle',
+    position: { x: 210, y: 210 },
+    connections: ['BLOOD', 'PERIPHERY'],
+    signalSpeed: 2,
+    signalTravelCost: 1,
+    damageWeight: 1.0,
     isBottleneck: false,
     isCellSource: false,
     isHQ: false,
@@ -108,9 +114,10 @@ export const NODES = {
   PERIPHERY: {
     id: 'PERIPHERY',
     label: 'Periphery',
-    position: { x: 255, y: 200 },
-    connections: ['BLOOD'],
+    position: { x: 335, y: 210 },
+    connections: ['MUSCLE'],
     signalSpeed: 2,
+    signalTravelCost: 1,
     damageWeight: 0.8,
     isBottleneck: false,
     isCellSource: false,
@@ -124,27 +131,59 @@ export const HQ_NODE_ID = 'SPLEEN'; // all cells deploy from here
 export const getNode = (id) => NODES[id];
 export const getConnectedNodes = (id) => NODES[id]?.connections.map(cid => NODES[cid]) ?? [];
 
-// BFS shortest-path hop distances between all node pairs — computed once at load.
-function computeAllHopDistances() {
-  const distances = {};
-  for (const startId of Object.keys(NODES)) {
-    distances[startId] = { [startId]: 0 };
-    const queue = [startId];
-    while (queue.length > 0) {
-      const nodeId = queue.shift();
-      for (const connId of NODES[nodeId].connections) {
-        if (distances[startId][connId] === undefined) {
-          distances[startId][connId] = distances[startId][nodeId] + 1;
-          queue.push(connId);
-        }
+// ── Dijkstra shortest path using signalTravelCost as edge weights ─────────────
+// Cost is the EXIT cost of the node being left.
+// SPLEEN has cost 0 (free departure from HQ); all others cost 1.
+
+export function computePath(fromId, toId) {
+  if (fromId === toId) return [fromId];
+
+  const nodeIds = Object.keys(NODES);
+  const dist = {};
+  const prev = {};
+  const unvisited = new Set(nodeIds);
+
+  for (const id of nodeIds) dist[id] = Infinity;
+  dist[fromId] = 0;
+
+  while (unvisited.size > 0) {
+    let u = null;
+    for (const id of unvisited) {
+      if (u === null || dist[id] < dist[u]) u = id;
+    }
+    if (dist[u] === Infinity || u === toId) break;
+    unvisited.delete(u);
+
+    const exitCost = NODES[u].signalTravelCost ?? 1;
+    for (const connId of (NODES[u].connections ?? [])) {
+      if (!unvisited.has(connId)) continue;
+      const alt = dist[u] + exitCost;
+      if (alt < dist[connId]) {
+        dist[connId] = alt;
+        prev[connId] = u;
       }
     }
   }
-  return distances;
+
+  const path = [];
+  let cur = toId;
+  while (cur !== undefined) {
+    path.unshift(cur);
+    cur = prev[cur];
+  }
+  return path[0] === fromId ? path : [fromId, toId];
 }
 
-const HOP_DISTANCES = computeAllHopDistances();
+// Sum of exit costs along path[fromIndex..path.length-2].
+// This equals the number of turns needed (budget = 1/turn).
+export function computePathCost(path, fromIndex = 0) {
+  let cost = 0;
+  for (let i = fromIndex; i < path.length - 1; i++) {
+    cost += NODES[path[i]]?.signalTravelCost ?? 1;
+  }
+  return cost;
+}
 
 export function getHopDistance(fromId, toId) {
-  return HOP_DISTANCES[fromId]?.[toId] ?? 99;
+  return computePathCost(computePath(fromId, toId));
 }

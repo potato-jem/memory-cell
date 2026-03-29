@@ -1,67 +1,167 @@
-// BodyMap — the main event. Large SVG with notification badges on nodes.
-// Clicking a node selects it for detail view.
+// BodyMap — SVG body map.
+//
+// Node appearance:
+//   Fill colour  = inflammation (dark blue → olive → amber → orange → red)
+//   Fill level   = tissue integrity (full = 100%, empty = 0%)
+//   Arc rings    = classified pathogens (arc length = load %, each type a unique colour)
+//   Inner dots   = friendly cells present (colour = cell type, sorted)
+//   Orange badge = count of unclassified anomalies ("possible threat")
+//   Red badge    = count of confirmed-but-untyped threats
+//   (Classified threats are shown as rings, not badges)
 
 import { NODES } from '../data/nodes.js';
-import { NODE_STATUSES } from '../state/perceivedState.js';
+import { ENTITY_CLASS } from '../state/perceivedState.js';
+import { PATHOGEN_SIGNAL_TYPE, getPrimaryLoad } from '../data/pathogens.js';
 
-const SVG_W = 320;
-const SVG_H = 540;
-const NODE_R = 14;
+const SVG_W = 420;
+const SVG_H = 420;
+const NODE_R = 22;
 
-// Node fill/stroke by perceived status
-const STATUS_STYLES = {
-  [NODE_STATUSES.CLEAN]:        { fill: '#0f172a', stroke: '#1e3a5f', glow: null },
-  [NODE_STATUSES.WATCHING]:     { fill: '#1c1208', stroke: '#854d0e', glow: '#854d0e' },
-  [NODE_STATUSES.INVESTIGATING]:{ fill: '#0c1a35', stroke: '#1d4ed8', glow: '#1d4ed8' },
-  [NODE_STATUSES.SUSPECTED]:    { fill: '#2d1200', stroke: '#c2410c', glow: '#c2410c' },
-  [NODE_STATUSES.CONFIRMED]:    { fill: '#2d0000', stroke: '#dc2626', glow: '#dc2626' },
-  [NODE_STATUSES.RESPONDING]:   { fill: '#3d0000', stroke: '#ef4444', glow: '#ef4444' },
-  [NODE_STATUSES.RESOLVED]:     { fill: '#021a0a', stroke: '#16a34a', glow: '#16a34a' },
+// ── Colour tables ─────────────────────────────────────────────────────────────
+
+const PATHOGEN_RING_COLORS = {
+  extracellular_bacteria: '#a3e635',   // lime
+  intracellular_bacteria: '#34d399',   // emerald
+  virus:                  '#e879f9',   // fuchsia
+  fungi:                  '#f59e0b',   // amber
+  parasite:               '#a855f7',   // purple
+  toxin_producer:         '#fb923c',   // orange
+  prion:                  '#ef4444',   // red
+  cancer:                 '#94a3b8',   // slate
 };
 
-// Two badge counts per node:
-//   knownCount  — threat_confirmed / threat_expanding (red badge, right)
-//   unknownCount — anomaly_detected / collateral_damage (blue/yellow badge, left)
-// Info signals (patrol_clear, false_alarm) do NOT appear in badges.
-function getNodeBadges(signals) {
-  if (!signals || signals.length === 0) return { knownCount: 0, unknownCount: 0 };
-  const active = signals.filter(s => !s.routed);
-  const knownCount = active.filter(s =>
-    s.type === 'threat_confirmed' || s.type === 'threat_expanding'
-  ).length;
-  const unknownCount = active.filter(s =>
-    s.type === 'anomaly_detected' || s.type === 'collateral_damage'
-  ).length;
-  return { knownCount, unknownCount };
+const CELL_DOT_COLORS = {
+  neutrophil: '#60a5fa',   // blue
+  macrophage: '#fbbf24',   // amber
+  dendritic:  '#c084fc',   // purple
+  responder:  '#f87171',   // red
+  killer_t:   '#fb7185',   // rose
+  b_cell:     '#4ade80',   // green
+  nk_cell:    '#fb923c',   // orange
+};
+const CELL_TYPE_ORDER = ['neutrophil', 'macrophage', 'dendritic', 'responder', 'killer_t', 'b_cell', 'nk_cell'];
+
+// ── Signal type → pathogen type reverse map ───────────────────────────────────
+const SIG_TO_PATHOGEN = {};
+for (const [pathType, sigType] of Object.entries(PATHOGEN_SIGNAL_TYPE)) {
+  if (!SIG_TO_PATHOGEN[sigType]) SIG_TO_PATHOGEN[sigType] = [];
+  SIG_TO_PATHOGEN[sigType].push(pathType);
 }
 
-function getCellIndicators(nodeId, deployedCells) {
-  const here = Object.values(deployedCells).filter(c => c.nodeId === nodeId && c.phase === 'arrived');
-  const enRoute = Object.values(deployedCells).filter(c => c.nodeId === nodeId && c.phase === 'outbound');
-  return { here, enRoute };
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function inflammationStyle(pct) {
+  // pct 0..1 — returns { fill, stroke } SVG colour strings
+  if (pct < 0.10) return { fill: '#0a1628', stroke: '#1e3a5f' };   // deep navy
+  if (pct < 0.25) return { fill: '#151a00', stroke: '#4a6010' };   // dark olive
+  if (pct < 0.50) return { fill: '#2a1500', stroke: '#854d0e' };   // dark amber
+  if (pct < 0.75) return { fill: '#3a0e00', stroke: '#c2410c' };   // dark orange
+  return                 { fill: '#3a0000', stroke: '#dc2626' };    // dark red
 }
 
-export default function BodyMap({ perceivedState, deployedCells, selectedNodeId, onSelectNode, onNodeContextMenu, activeSignals }) {
-  const nodeList = Object.values(NODES);
+// Partial circle arc, starting at 12 o'clock, sweeping clockwise by `pct` (0..1).
+// Returns an SVG path `d` string (open arc — no fill, use stroke).
+function arcPath(cx, cy, r, pct) {
+  if (pct <= 0) return '';
+  const p = Math.min(pct, 0.9999);
+  const a0 = -Math.PI / 2;
+  const a1 = a0 + p * 2 * Math.PI;
+  const x0 = cx + r * Math.cos(a0);
+  const y0 = cy + r * Math.sin(a0);
+  const x1 = cx + r * Math.cos(a1);
+  const y1 = cy + r * Math.sin(a1);
+  const large = p > 0.5 ? 1 : 0;
+  return `M ${x0.toFixed(2)} ${y0.toFixed(2)} A ${r} ${r} 0 ${large} 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`;
+}
 
-  // Deduplicated connections
-  const connections = [];
-  const seen = new Set();
-  for (const node of nodeList) {
-    for (const connId of node.connections) {
-      const key = [node.id, connId].sort().join('-');
-      if (!seen.has(key)) {
-        seen.add(key);
-        if (NODES[connId]) connections.push({ from: node, to: NODES[connId] });
-      }
+// Rings to render:
+//   CLASSIFIED entity  → type-specific colour, arc = GT load %
+//   PATHOGEN entity    → generic orange ring, arc = dominant GT load %
+function getPathogenRings(nodeId, perceivedState, gtNodeStates) {
+  const entities = (perceivedState.foreignEntitiesByNode?.[nodeId] ?? [])
+    .filter(e => !e.isDismissed);
+
+  const gtNode = gtNodeStates?.[nodeId];
+  if (!gtNode) return [];
+
+  const rings = [];
+  const seenPathogenTypes = new Set();
+
+  // 1. CLASSIFIED entities → specific ring colour
+  for (const entity of entities.filter(e => e.perceivedClass === ENTITY_CLASS.CLASSIFIED && e.classifiedType)) {
+    const pathTypes = SIG_TO_PATHOGEN[entity.classifiedType] ?? [];
+    for (const pt of pathTypes) {
+      if (seenPathogenTypes.has(pt)) continue;
+      const inst = gtNode.pathogens?.[pt];
+      if (!inst) continue;
+      const load = getPrimaryLoad(inst);
+      if (load <= 0) continue;
+      seenPathogenTypes.add(pt);
+      rings.push({ pathogenType: pt, loadPct: Math.min(0.999, load / 100), color: PATHOGEN_RING_COLORS[pt] ?? '#aaa', dashed: false });
     }
   }
 
-  // Group signals by node for badges
-  const signalsByNode = {};
-  for (const sig of (activeSignals ?? [])) {
-    if (!signalsByNode[sig.nodeId]) signalsByNode[sig.nodeId] = [];
-    signalsByNode[sig.nodeId].push(sig);
+  // 2. PATHOGEN entities (confirmed-untyped) → generic ring using dominant GT pathogen
+  const hasUntyped = entities.some(e => e.perceivedClass === ENTITY_CLASS.PATHOGEN);
+  if (hasUntyped) {
+    // Find highest-load GT pathogen not already shown as a classified ring
+    let bestLoad = 0, bestType = null;
+    for (const [pt, inst] of Object.entries(gtNode.pathogens ?? {})) {
+      if (seenPathogenTypes.has(pt)) continue;
+      const load = getPrimaryLoad(inst);
+      if (load > bestLoad) { bestLoad = load; bestType = pt; }
+    }
+    if (bestType && bestLoad > 0) {
+      rings.push({ pathogenType: bestType, loadPct: Math.min(0.999, bestLoad / 100), color: '#f97316', dashed: true });
+    }
+  }
+
+  return rings;
+}
+
+function getBadgeCounts(nodeId, perceivedState, rings) {
+  const entities = (perceivedState.foreignEntitiesByNode?.[nodeId] ?? []).filter(e => !e.isDismissed);
+  // UNKNOWN → orange badge; PATHOGEN → orange badge if no ring yet (ring already conveys it)
+  const hasRings = rings.length > 0;
+  return {
+    possible: entities.filter(e => e.perceivedClass === ENTITY_CLASS.UNKNOWN).length,
+    // Confirmed-untyped badge only shows when there's no ring (no GT data found)
+    confirmed: hasRings ? 0 : entities.filter(e => e.perceivedClass === ENTITY_CLASS.PATHOGEN).length,
+  };
+}
+
+function getCellDots(nodeId, deployedCells) {
+  // Show cells at this node regardless of phase (arrived, outbound-passing-through, returning)
+  // Outbound/returning cells at their current intermediate position appear as dimmed dots
+  return Object.values(deployedCells)
+    .filter(c => c.nodeId === nodeId &&
+      (c.phase === 'arrived' || c.phase === 'outbound' || c.phase === 'returning'))
+    .sort((a, b) => CELL_TYPE_ORDER.indexOf(a.type) - CELL_TYPE_ORDER.indexOf(b.type));
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
+
+export default function BodyMap({
+  perceivedState,
+  groundTruthNodeStates,
+  deployedCells,
+  selectedNodeId,
+  onSelectNode,
+  onNodeContextMenu,
+}) {
+  const nodeList = Object.values(NODES);
+
+  // Deduplicated edges
+  const edges = [];
+  const seenEdges = new Set();
+  for (const node of nodeList) {
+    for (const connId of node.connections) {
+      const key = [node.id, connId].sort().join('-');
+      if (!seenEdges.has(key) && NODES[connId]) {
+        seenEdges.add(key);
+        edges.push({ from: node, to: NODES[connId] });
+      }
+    }
   }
 
   return (
@@ -72,46 +172,71 @@ export default function BodyMap({ perceivedState, deployedCells, selectedNodeId,
         style={{ maxHeight: '100%' }}
       >
         <defs>
-          {/* Glow filters for active nodes */}
-          {['#c2410c', '#dc2626', '#ef4444', '#1d4ed8', '#16a34a', '#854d0e'].map(color => (
-            <filter key={color} id={`glow-${color.replace('#', '')}`}>
-              <feGaussianBlur stdDeviation="3" result="coloredBlur" />
+          {/* Per-node integrity clip paths */}
+          {nodeList.map(node => {
+            const gt = groundTruthNodeStates?.[node.id];
+            const integ = Math.max(0, Math.min(100, gt?.tissueIntegrity ?? 100)) / 100;
+            const cx = node.position.x;
+            const cy = node.position.y;
+            return (
+              <clipPath key={node.id} id={`clip-${node.id}`}>
+                <rect
+                  x={cx - NODE_R}
+                  y={cy + NODE_R - integ * 2 * NODE_R}
+                  width={2 * NODE_R}
+                  height={integ * 2 * NODE_R}
+                />
+              </clipPath>
+            );
+          })}
+
+          {/* Glow filters */}
+          {[
+            '#dc2626', '#c2410c', '#f97316', '#f59e0b',
+            '#a3e635', '#34d399', '#e879f9', '#a855f7',
+            '#fb923c', '#60a5fa', '#fbbf24',
+          ].map(c => (
+            <filter key={c} id={`glow-${c.slice(1)}`} x="-50%" y="-50%" width="200%" height="200%">
+              <feGaussianBlur stdDeviation="2.5" result="blur" />
               <feMerge>
-                <feMergeNode in="coloredBlur" />
+                <feMergeNode in="blur" />
                 <feMergeNode in="SourceGraphic" />
               </feMerge>
             </filter>
           ))}
         </defs>
 
-        {/* Body silhouette */}
-        {/* <BodySilhouette /> */}
-
         {/* Connection lines */}
-        {connections.map(({ from, to }) => {
-          
-          return (
-            <line
-              key={`${from.id}-${to.id}`}
-              x1={from.position.x} y1={from.position.y}
-              x2={to.position.x} y2={to.position.y}
-              stroke={'#1e293b'}
-              strokeWidth={1}
-              strokeDasharray={ 'none'}
-              opacity="0.6"
-            />
-          );
-        })}
+        {edges.map(({ from, to }) => (
+          <line
+            key={`${from.id}-${to.id}`}
+            x1={from.position.x} y1={from.position.y}
+            x2={to.position.x}   y2={to.position.y}
+            stroke="#1e293b" strokeWidth="1.5" opacity="0.5"
+          />
+        ))}
 
         {/* Nodes */}
         {nodeList.map(node => {
-          const psNode = perceivedState.nodes[node.id];
-          const status = psNode?.status ?? NODE_STATUSES.CLEAN;
-          const style = STATUS_STYLES[status] ?? STATUS_STYLES[NODE_STATUSES.CLEAN];
+          const cx = node.position.x;
+          const cy = node.position.y;
+          const gt  = groundTruthNodeStates?.[node.id];
+          const inflammPct = (gt?.inflammation ?? 0) / 100;
+          const { fill, stroke } = inflammationStyle(inflammPct);
           const isSelected = node.id === selectedNodeId;
-          const { knownCount, unknownCount } = getNodeBadges(signalsByNode[node.id]);
-          const { here, enRoute } = getCellIndicators(node.id, deployedCells);
-          const hasCells = here.length > 0 || enRoute.length > 0;
+          const rings = getPathogenRings(node.id, perceivedState, groundTruthNodeStates);
+          const { possible, confirmed } = getBadgeCounts(node.id, perceivedState, rings);
+          const cellDots = getCellDots(node.id, deployedCells);
+
+          // Pathogen rings: start just outside the node border, spaced 6px apart
+          const ringBase = NODE_R + 5;
+          const ringStep = 6;
+
+          // Selection ring sits outside all pathogen rings
+          const selectR = ringBase + rings.length * ringStep + 6;
+
+          // Multi-line label for "Bone Marrow"
+          const words = node.label.split(' ');
 
           return (
             <g
@@ -120,142 +245,140 @@ export default function BodyMap({ perceivedState, deployedCells, selectedNodeId,
               onContextMenu={e => { e.preventDefault(); onNodeContextMenu?.(node.id); }}
               className="cursor-pointer"
             >
-              {/* Glow ring for active nodes */}
-              {style.glow && (
-                <circle
-                  cx={node.position.x} cy={node.position.y}
-                  r={NODE_R + 4}
-                  fill="none"
-                  stroke={style.glow}
-                  strokeWidth="1"
-                  opacity="0.3"
-                  filter={`url(#glow-${style.glow.replace('#', '')})`}
-                />
-              )}
+              {/* Pathogen arc rings */}
+              {rings.map((ring, i) => {
+                const r = ringBase + i * ringStep;
+                const d = arcPath(cx, cy, r, ring.loadPct);
+                return d ? (
+                  <path
+                    key={ring.pathogenType}
+                    d={d}
+                    fill="none"
+                    stroke={ring.color}
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeDasharray={ring.dashed ? '4 3' : undefined}
+                    opacity={ring.dashed ? 0.6 : 0.85}
+                    filter={`url(#glow-${ring.color.slice(1)})`}
+                  />
+                ) : null;
+              })}
 
               {/* Selection ring */}
               {isSelected && (
                 <circle
-                  cx={node.position.x} cy={node.position.y}
-                  r={NODE_R + 7}
+                  cx={cx} cy={cy} r={selectR}
                   fill="none"
                   stroke="#60a5fa"
                   strokeWidth="1.5"
-                  strokeDasharray="5,3"
+                  strokeDasharray="4 3"
                   opacity="0.8"
                 />
               )}
 
-              {/* HQ ring */}
+              {/* HQ outer ring */}
               {node.isHQ && (
-                <circle
-                  cx={node.position.x} cy={node.position.y}
-                  r={NODE_R + 5}
-                  fill="none"
-                  stroke="#7c3aed"
-                  strokeWidth="1"
-                  opacity="0.5"
-                />
+                <circle cx={cx} cy={cy} r={NODE_R + 3}
+                  fill="none" stroke="#7c3aed" strokeWidth="1" opacity="0.5" />
               )}
 
-              {/* Node body */}
+              {/* Dark background circle */}
+              <circle cx={cx} cy={cy} r={NODE_R} fill="#050d18" />
+
+              {/* Inflammation fill, clipped to integrity level from bottom */}
               <circle
-                cx={node.position.x} cy={node.position.y}
-                r={NODE_R}
-                fill={style.fill}
-                stroke={style.stroke}
-                strokeWidth={node.isBottleneck ? 2 : 1.5}
+                cx={cx} cy={cy} r={NODE_R - 0.75}
+                fill={fill}
+                clipPath={`url(#clip-${node.id})`}
               />
 
-              {/* Node label */}
-              <text
-                x={node.position.x}
-                y={node.position.y + 1}
-                textAnchor="middle"
-                dominantBaseline="middle"
-                fontSize="7"
-                fill={style.stroke}
-                fontFamily="monospace"
-                fontWeight="500"
-              >
-                {node.label}
-              </text>
+              {/* Border (drawn last so it's always crisp on top) */}
+              <circle
+                cx={cx} cy={cy} r={NODE_R}
+                fill="none"
+                stroke={stroke}
+                strokeWidth={node.isBottleneck ? 2.5 : 1.5}
+              />
 
-              {/* Cell presence dot (bottom of node) */}
-              {hasCells && (
-                <g>
-                  {here.length > 0 && (
-                    <circle
-                      cx={node.position.x - 8} cy={node.position.y + NODE_R + 5}
-                      r={4}
-                      fill="#1e3a5f"
-                      stroke="#3b82f6"
-                      strokeWidth="1"
-                    />
-                  )}
-                  {here.length > 0 && (
-                    <text
-                      x={node.position.x - 8} y={node.position.y + NODE_R + 5}
-                      textAnchor="middle" dominantBaseline="middle"
-                      fontSize="5" fill="#93c5fd" fontFamily="monospace"
-                    >
-                      {here.length}
-                    </text>
-                  )}
-                  {enRoute.length > 0 && (
-                    <circle
-                      cx={node.position.x + 8} cy={node.position.y + NODE_R + 5}
-                      r={4}
-                      fill="#1a1a2e"
-                      stroke="#6366f1"
-                      strokeWidth="1"
-                      strokeDasharray="2,1"
-                    />
-                  )}
-                  {enRoute.length > 0 && (
-                    <text
-                      x={node.position.x + 8} y={node.position.y + NODE_R + 5}
-                      textAnchor="middle" dominantBaseline="middle"
-                      fontSize="5" fill="#a5b4fc" fontFamily="monospace"
-                    >
-                      {enRoute.length}
-                    </text>
-                  )}
-                </g>
+              {/* Friendly cell dots around inner edge */}
+              {/* Arrived = full opacity; outbound/returning = dimmed (passing through) */}
+              {cellDots.map((cell, i) => {
+                const angle = (i / Math.max(1, cellDots.length)) * 2 * Math.PI - Math.PI / 2;
+                const dr = NODE_R - 6;
+                const inTransit = cell.phase === 'outbound' || cell.phase === 'returning';
+                return (
+                  <circle
+                    key={cell.id}
+                    cx={cx + dr * Math.cos(angle)}
+                    cy={cy + dr * Math.sin(angle)}
+                    r={inTransit ? 2 : 2.5}
+                    fill={CELL_DOT_COLORS[cell.type] ?? '#888'}
+                    opacity={inTransit ? 0.35 : 0.95}
+                  />
+                );
+              })}
+
+              {/* Node label — split "Bone Marrow" onto two lines */}
+              {words.length > 1 ? (
+                <text
+                  textAnchor="middle"
+                  fontFamily="monospace"
+                  fontWeight={node.isHQ ? '600' : '500'}
+                  fill={node.isHQ ? '#a78bfa' : stroke}
+                  className="pointer-events-none select-none"
+                >
+                  <tspan x={cx} y={cy - 3} fontSize="6.5">{words[0]}</tspan>
+                  <tspan x={cx} dy="9"     fontSize="6.5">{words[1]}</tspan>
+                </text>
+              ) : (
+                <text
+                  x={cx} y={cy + 1}
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                  fontSize="7"
+                  fontFamily="monospace"
+                  fontWeight={node.isHQ ? '600' : '500'}
+                  fill={node.isHQ ? '#a78bfa' : stroke}
+                  className="pointer-events-none select-none"
+                >
+                  {node.label}
+                </text>
               )}
 
-              {/* Known problems badge — top-right (red) */}
-              {knownCount > 0 && (
+              {/* Orange badge — possible / unclassified threats */}
+              {possible > 0 && (
                 <g>
                   <circle
-                    cx={node.position.x + NODE_R - 2}
-                    cy={node.position.y - NODE_R + 2}
-                    r={7} fill="#450a0a" stroke="#ef4444" strokeWidth="1"
+                    cx={cx - NODE_R + 4} cy={cy - NODE_R + 3}
+                    r={6} fill="#92400e" stroke="#f59e0b" strokeWidth="0.75"
                   />
                   <text
-                    x={node.position.x + NODE_R - 2} y={node.position.y - NODE_R + 2}
+                    x={cx - NODE_R + 4} y={cy - NODE_R + 3}
                     textAnchor="middle" dominantBaseline="middle"
-                    fontSize="6" fill="#ef4444" fontFamily="monospace" fontWeight="bold"
+                    fontSize="6" fontFamily="monospace" fontWeight="bold"
+                    fill="#fde68a"
+                    className="pointer-events-none select-none"
                   >
-                    {knownCount > 9 ? '9+' : knownCount}
+                    {possible}
                   </text>
                 </g>
               )}
 
-              {/* Unknown signals badge — top-left (yellow) */}
-              {unknownCount > 0 && (
+              {/* Red badge — confirmed untyped threats */}
+              {confirmed > 0 && (
                 <g>
                   <circle
-                    cx={node.position.x - NODE_R + 2}
-                    cy={node.position.y - NODE_R + 2}
-                    r={7} fill="#2d1800" stroke="#f59e0b" strokeWidth="1"
+                    cx={cx + NODE_R - 4} cy={cy - NODE_R + 3}
+                    r={6} fill="#7f1d1d" stroke="#ef4444" strokeWidth="0.75"
                   />
                   <text
-                    x={node.position.x - NODE_R + 2} y={node.position.y - NODE_R + 2}
+                    x={cx + NODE_R - 4} y={cy - NODE_R + 3}
                     textAnchor="middle" dominantBaseline="middle"
-                    fontSize="6" fill="#f59e0b" fontFamily="monospace" fontWeight="bold"
+                    fontSize="6" fontFamily="monospace" fontWeight="bold"
+                    fill="#fca5a5"
+                    className="pointer-events-none select-none"
                   >
-                    {unknownCount > 9 ? '9+' : unknownCount}
+                    {confirmed}
                   </text>
                 </g>
               )}
@@ -264,26 +387,5 @@ export default function BodyMap({ perceivedState, deployedCells, selectedNodeId,
         })}
       </svg>
     </div>
-  );
-}
-
-function BodySilhouette() {
-  return (
-    <g opacity="0.06" stroke="#94a3b8" strokeWidth="1" fill="none">
-      {/* Head */}
-      <ellipse cx="160" cy="32" rx="28" ry="25" />
-      {/* Neck */}
-      <rect x="150" y="55" width="20" height="18" />
-      {/* Torso */}
-      <path d="M110 73 L70 160 L80 360 L240 360 L250 160 L210 73 Z" />
-      {/* Left arm */}
-      <path d="M110 90 L55 220 L70 230" />
-      {/* Right arm */}
-      <path d="M210 90 L265 220 L250 230" />
-      {/* Left leg */}
-      <path d="M120 360 L100 530" />
-      {/* Right leg */}
-      <path d="M200 360 L220 530" />
-    </g>
   );
 }

@@ -1,171 +1,217 @@
-// Pathogen behaviour — pure functions.
-// Layer 2: bacterial, viral, cancer, autoimmune, molecular mimic.
+// Pathogen engine — per-instance advancement, clearance, spread, and damage output.
+// Pure functions. No React, no UI.
+//
+// A PathogenInstance lives at nodeStates[nodeId].pathogens[pathogenType].
+// Each type tracks exactly one primary value (infectionLoad, cellularCompromise, etc.).
 
 import { NODES } from '../data/nodes.js';
-import { CELL_TYPES, getClearancePower } from './cells.js';
-import { THREAT_TYPES } from '../data/signals.js';
+import { PATHOGEN_REGISTRY, isInstanceCleared, getPrimaryLoad } from '../data/pathogens.js';
+import { CLEARANCE_RATES } from './cells.js';
+
+// ── Clearance ─────────────────────────────────────────────────────────────────
 
 /**
- * Advance pathogen state one turn.
- * @param {Object} pathogenState - { [nodeId]: { strength, type } }
- * @param {Object} situationDef
- * @param {Object} deployedCells
- * @param {number} turn
- * @param {Object} groundTruth - needed for NK cell effectiveness calculation
+ * How much of a pathogen's primary value is removed this turn by present immune cells.
+ * Only cell types listed in clearableBy contribute.
  */
-export function advancePathogen(pathogenState, situationDef, deployedCells, turn, groundTruth) {
-  const def = situationDef.pathogen;
-  const newState = {};
+export function getClearancePower(pathogenType, nodeId, deployedCells, nodeState) {
+  const def = PATHOGEN_REGISTRY[pathogenType];
+  if (!def) return 0;
+  const clearableBy = def.clearableBy ?? [];
 
-  for (const [nodeId, nodePathogen] of Object.entries(pathogenState)) {
-    if (!nodePathogen || nodePathogen.strength <= 0) continue;
+  let total = 0;
+  for (const cell of Object.values(deployedCells)) {
+    if (cell.nodeId !== nodeId || cell.phase !== 'arrived') continue;
+    if (!clearableBy.includes(cell.type)) continue;
+    const base = CLEARANCE_RATES[cell.type] ?? 0;
+    total += base * (cell.effectiveness ?? 1.0);
+  }
 
-    const clearance = getClearancePower(nodeId, deployedCells, groundTruth);
+  // Parasite immune suppression: if node has active parasite above threshold,
+  // all clearance at this node is halved
+  if (nodeState?.immuneSuppressed) total *= 0.5;
 
-    // Type-specific growth behaviour
-    const growth = computeGrowth(def, nodePathogen, turn);
-    const newStrength = Math.max(0, nodePathogen.strength + growth - clearance);
+  return total;
+}
 
-    if (newStrength > 0) {
-      newState[nodeId] = { strength: newStrength, type: nodePathogen.type ?? def.type };
+// ── Instance advancement ───────────────────────────────────────────────────────
+
+/**
+ * Advance one pathogen instance for one turn.
+ *
+ * Returns:
+ *   newInstance       — updated instance (null if cleared)
+ *   tissueIntegrityDelta — how much integrity to subtract (negative = damage)
+ *   inflammationDelta    — how much inflammation to add
+ *   toxinOutput          — direct systemic stress contribution this turn
+ *   compromiseCleared    — for viruses: how much cellularCompromise was removed (for tissue cost)
+ */
+export function advanceInstance(instance, nodeId, deployedCells, nodeState, systemicStress) {
+  const def = PATHOGEN_REGISTRY[instance.type];
+  if (!def) return { newInstance: null, tissueIntegrityDelta: 0, inflammationDelta: 0, toxinOutput: 0 };
+
+  const tv = def.trackedValue;
+  const currentLoad = instance[tv] ?? 0;
+
+  // Clearance
+  const clearance = getClearancePower(instance.type, nodeId, deployedCells, nodeState);
+
+  // Growth
+  const growth = computeGrowth(def, currentLoad, systemicStress);
+
+  // Walled Off sites don't grow or clear (contained but stable)
+  let rawNew;
+  if (nodeState?.isWalledOff && instance.type === 'fungi') {
+    rawNew = Math.max(0, currentLoad - 0.5); // ticks down very slowly
+  } else {
+    rawNew = Math.max(0, currentLoad + growth - clearance);
+  }
+  const newLoad = Math.min(100, rawNew);
+
+  // Damage & inflammation (scaled by load/100)
+  const loadFraction = currentLoad / 100;
+  let tissueIntegrityDelta = -(def.tissueDamageRate ?? 0) * loadFraction;
+  let inflammationDelta = (def.inflammationRate ?? 0) * loadFraction;
+
+  // Prion: no inflammation, but tissue damage above hidden threshold
+  if (instance.type === 'prion') {
+    inflammationDelta = 0;
+    tissueIntegrityDelta = currentLoad >= def.hiddenUntil
+      ? -(def.tissueDamageAboveThreshold ?? 0)
+      : 0;
+  }
+
+  // Parasite immune suppression flag (affects future rounds via nodeState)
+  const suppressImmune = def.immuneSuppression && currentLoad >= (def.suppressionThreshold ?? 50);
+
+  // Toxin output
+  const toxinOutput = def.toxinOutputRate ? currentLoad * def.toxinOutputRate : 0;
+
+  // Viral clearance tissue cost: track how much compromise was cleared
+  let compromiseCleared = 0;
+  if (instance.type === 'virus' || instance.type === 'intracellular_bacteria') {
+    compromiseCleared = Math.max(0, currentLoad - newLoad);
+    const clearanceTissueCost = def.clearanceTissueCost ?? 0;
+    tissueIntegrityDelta -= compromiseCleared * clearanceTissueCost;
+  }
+
+  if (newLoad <= 0) {
+    return { newInstance: null, tissueIntegrityDelta, inflammationDelta, toxinOutput, suppressImmune: false };
+  }
+
+  const newInstance = { ...instance, [tv]: newLoad };
+  return { newInstance, tissueIntegrityDelta, inflammationDelta, toxinOutput, suppressImmune };
+}
+
+function computeGrowth(def, currentLoad, systemicStress) {
+  let rate = def.replicationRate;
+
+  // Fungi thrive in high systemic stress
+  if (def.highStressMultiplier && systemicStress > 70) {
+    rate *= def.highStressMultiplier;
+  }
+
+  switch (def.growthModel) {
+    case 'logistic':
+      return rate * currentLoad * (1 - currentLoad / 100);
+    case 'exponential':
+      return rate * currentLoad;
+    case 'linear':
+    default:
+      return rate;
+  }
+}
+
+// ── Spread ────────────────────────────────────────────────────────────────────
+
+/**
+ * Check all infected nodes and return any new spreads.
+ * Returns an array of { type, fromNodeId, toNodeId, initialLoad }.
+ */
+export function computeSpreads(nodeStates) {
+  const spreads = [];
+
+  for (const [nodeId, ns] of Object.entries(nodeStates)) {
+    if (!ns.pathogens) continue;
+    const node = NODES[nodeId];
+    if (!node) continue;
+
+    for (const [pathogenType, instance] of Object.entries(ns.pathogens)) {
+      if (isInstanceCleared(instance)) continue;
+
+      const def = PATHOGEN_REGISTRY[pathogenType];
+      if (!def || def.spreadThreshold == null) continue;
+
+      const load = getPrimaryLoad(instance);
+      if (load < def.spreadThreshold) continue;
+
+      // Find adjacent nodes that don't already have this pathogen
+      for (const targetId of node.connections) {
+        const targetNs = nodeStates[targetId];
+        if (!targetNs) continue;
+        if (targetNs.pathogens?.[pathogenType] && !isInstanceCleared(targetNs.pathogens[pathogenType])) continue;
+        // Only spread to one new node per turn per source (deterministic: first eligible)
+        spreads.push({
+          type: pathogenType,
+          fromNodeId: nodeId,
+          toNodeId: targetId,
+          initialLoad: def.spreadStrength ?? 10,
+        });
+        break; // one spread target per source per turn
+      }
     }
   }
 
-  // Spread
-  return checkSpread(newState, situationDef, turn);
+  return spreads;
 }
 
-function computeGrowth(def, nodePathogen, turn) {
-  switch (def.type) {
-    case THREAT_TYPES.VIRAL:
-      // Viral: fast early growth, then slows as immune system activates
-      // Replication curve: high in early turns, moderate later
-      return def.growthRatePerTurn * (turn < 10 ? 1.3 : 0.8);
+// ── Granuloma ─────────────────────────────────────────────────────────────────
 
-    case THREAT_TYPES.CANCER:
-      // Cancer: slow linear growth — this is what makes it so dangerous
-      return def.growthRatePerTurn; // already set low in situationDef
-
-    case THREAT_TYPES.AUTOIMMUNE:
-      // Autoimmune "pathogen" grows proportional to responder deployment
-      // (the responders ARE the threat) — handled in groundTruth.js via inflammation
-      return def.growthRatePerTurn * 0.5; // slow base — responders amplify it
-
-    case THREAT_TYPES.MIMIC:
-      // Mimic: normal growth but hides behind clean signals for first N turns
-      return def.growthRatePerTurn;
-
-    case THREAT_TYPES.BACTERIAL:
-    default:
-      return def.growthRatePerTurn;
-  }
-}
-
-function checkSpread(pathogenState, situationDef, turn) {
-  const def = situationDef.pathogen;
-  const result = { ...pathogenState };
-
-  for (const [nodeId, nodePathogen] of Object.entries(pathogenState)) {
-    if (nodePathogen.strength < def.spreadThreshold) continue;
-
-    const candidates = getSpreadCandidates(nodeId, result, situationDef);
-    if (candidates.length === 0) continue;
-
-    // Viral spreads to ALL adjacent candidates at once (fast spread)
-    // Others spread to first candidate only
-    if (def.type === THREAT_TYPES.VIRAL) {
-      for (const target of candidates.slice(0, 2)) {
-        if (!result[target]) {
-          result[target] = {
-            strength: Math.floor(nodePathogen.strength * 0.25),
-            type: def.type,
-          };
-        }
-      }
-    } else {
-      const target = candidates[0];
-      if (!result[target]) {
-        result[target] = {
-          strength: Math.floor(nodePathogen.strength * 0.3),
-          type: def.type,
-        };
-      }
-    }
-  }
-
-  return result;
-}
-
-function getSpreadCandidates(sourceNodeId, currentState, situationDef) {
-  const def = situationDef.pathogen;
-  const sourceNode = NODES[sourceNodeId];
-  if (!sourceNode) return [];
-
-  const preferredTargets = def.spreadNodes ?? sourceNode.connections;
-
-  return preferredTargets.filter(targetId => {
-    if (!sourceNode.connections.includes(targetId)) return false;
-    if (currentState[targetId]?.strength > 0) return false;
-    return true;
-  });
-}
-
-// ── Signal accuracy by type ───────────────────────────────────────────────────
-
-/**
- * Get the effective signal accuracy rate for a given pathogen type and strength.
- * Cancer is very quiet. Mimic is silent until late. Viral is intermittent.
- */
-export function getSignalAccuracyForType(pathogenType, strength, turn, situationDef) {
-  const base = situationDef.signalAccuracyRate ?? 0.70;
-
-  switch (pathogenType) {
-    case THREAT_TYPES.CANCER:
-      // Cancer barely signals — accuracy drops with low strength
-      return strength < 30 ? 0.20 : strength < 60 ? 0.40 : 0.60;
-
-    case THREAT_TYPES.VIRAL:
-      // Viral goes quiet during active replication (turns 5-12), then surges
-      if (turn >= 5 && turn <= 12) return 0.35;
-      return base;
-
-    case THREAT_TYPES.MIMIC:
-      // Mimic is completely silent until it crosses a reveal threshold
-      if (strength < situationDef.pathogen.mimicRevealThreshold) return 0.05;
-      return base;
-
-    case THREAT_TYPES.AUTOIMMUNE:
-      // Autoimmune signals well — it's your own immune system making noise
-      return 0.90;
-
-    case THREAT_TYPES.BACTERIAL:
-    default:
-      return base;
-  }
+/** Returns true if a fungi instance should trigger/maintain Walled Off status. */
+export function shouldWallOff(instance) {
+  if (!instance || instance.type !== 'fungi') return false;
+  const def = PATHOGEN_REGISTRY.fungi;
+  return getPrimaryLoad(instance) >= (def.granulomaThreshold ?? 60);
 }
 
 // ── Queries ───────────────────────────────────────────────────────────────────
 
-export function isPathodgenCleared(pathogenState) {
-  return Object.values(pathogenState).every(p => !p || p.strength <= 0);
+/**
+ * Returns total pathogen load across all nodes (for overview display).
+ */
+export function getTotalPathogenLoad(nodeStates) {
+  let total = 0;
+  for (const ns of Object.values(nodeStates)) {
+    for (const inst of Object.values(ns.pathogens ?? {})) {
+      total += getPrimaryLoad(inst);
+    }
+  }
+  return total;
 }
 
-export function getTotalPathogenStrength(pathogenState) {
-  return Object.values(pathogenState).reduce((sum, p) => sum + (p?.strength ?? 0), 0);
+/**
+ * Get all active infections as a flat list for overview/post-mortem.
+ */
+export function getActiveInfections(nodeStates) {
+  const result = [];
+  for (const [nodeId, ns] of Object.entries(nodeStates)) {
+    for (const [type, inst] of Object.entries(ns.pathogens ?? {})) {
+      if (!isInstanceCleared(inst)) {
+        result.push({ nodeId, type, load: getPrimaryLoad(inst) });
+      }
+    }
+  }
+  return result;
 }
 
-export function getInfectedNodes(pathogenState) {
-  return Object.entries(pathogenState)
-    .filter(([, p]) => p && p.strength > 0)
-    .map(([nodeId, p]) => ({ nodeId, strength: p.strength, type: p.type }));
-}
+// ── Legacy compatibility ───────────────────────────────────────────────────────
+// isPathodgenCleared kept for any remaining callers during migration.
 
-export function initPathogen(situationDef) {
-  const def = situationDef.pathogen;
-  return {
-    [def.startingNode]: {
-      strength: def.startingStrength,
-      type: def.type,
-    },
-  };
+export function isPathodgenCleared(nodeStates) {
+  for (const ns of Object.values(nodeStates)) {
+    for (const inst of Object.values(ns.pathogens ?? {})) {
+      if (!isInstanceCleared(inst)) return false;
+    }
+  }
+  return true;
 }

@@ -14,11 +14,10 @@ function nextSignalId() { return `sig_${_signalIdCounter++}`; }
 /**
  * Generate signals for one simulation turn.
  * Signals come only from cells actively present at nodes (phase === 'arrived').
- * Ground truth mutations (seeded events) are applied upstream in advanceGroundTruth.
  *
  * @param {Object} groundTruth
  * @param {Object} deployedCells
- * @param {Object} situationDef
+ * @param {Object} runConfig     — replaces situationDef
  * @param {number} turn
  * @param {Object|null} memoryBank
  * @param {string} situationId
@@ -27,7 +26,7 @@ function nextSignalId() { return `sig_${_signalIdCounter++}`; }
 export function generateSignals(
   groundTruth,
   deployedCells,
-  situationDef,
+  runConfig,
   turn,
   memoryBank = null,
   situationId = 'primary',
@@ -36,20 +35,18 @@ export function generateSignals(
   const signals = [];
   const usedNodes = new Set();
 
-  // ── 1. Per-cell detection rolls (patrol + macrophage) ─────────────────────
-  // Each cell at a node rolls independently against the detection matrix.
+  // ── 1. Per-cell detection rolls — arrived patrol/macrophage only ──────────
   // One signal per node per turn (first roll that produces a non-MISS wins).
+  // En-route detection is handled separately via generateSignalsForVisits.
   for (const cell of Object.values(deployedCells)) {
-    if (!['neutrophil', 'macrophage'].includes(cell.type)) continue;
     if (cell.phase !== 'arrived') continue;
+    if (!['neutrophil', 'macrophage'].includes(cell.type)) continue;
 
     const nodeId = cell.nodeId;
     if (usedNodes.has(nodeId)) continue;
 
     const nodeState = groundTruth.nodeStates?.[nodeId] ?? {};
-    const pathogenHere = groundTruth.pathogenState?.[nodeId];
-    const actualThreatType = (pathogenHere?.strength > 0) ? pathogenHere.type : null;
-    const threatStrength = pathogenHere?.strength ?? 0;
+    const { actualThreatType, threatStrength } = dominantPathogenForDetection(nodeState);
     const inflammation = nodeState.inflammation ?? 0;
 
     const { outcome, reportedType } = rollDetection(cell.type, actualThreatType, threatStrength, inflammation);
@@ -98,15 +95,12 @@ export function generateSignals(
 // Called from the TICK handler when a scout_arrived event fires.
 // The scout gets ONE detection roll on arrival — result is definitive for that visit.
 
-export function makeDendriticReturnSignal(cell, groundTruth, situationDef, tick, turn, situationId) {
+export function makeDendriticReturnSignal(cell, groundTruth, runConfig, tick, turn, situationId) {
   const node = NODES[cell.nodeId];
   if (!node) return null;
 
-  const pathogenType = situationDef.pathogen.type;
-  const pathogenHere = groundTruth.pathogenState?.[cell.nodeId];
   const nodeState = groundTruth.nodeStates?.[cell.nodeId] ?? {};
-  const actualThreatType = (pathogenHere?.strength > 0) ? pathogenType : null;
-  const threatStrength = pathogenHere?.strength ?? 0;
+  const { actualThreatType, threatStrength } = dominantPathogenForDetection(nodeState);
   const inflammation = nodeState.inflammation ?? 0;
 
   const { outcome, reportedType } = rollDetection('dendritic', actualThreatType, threatStrength, inflammation);
@@ -128,8 +122,9 @@ export function generateSilenceNotices(groundTruth, deployedCells, turn) {
     if (cell.type !== 'neutrophil' || cell.phase !== 'arrived') continue;
     const nodeId = cell.nodeId;
     const node = NODES[nodeId];
-    const pathogenHere = groundTruth.pathogenState?.[nodeId];
-    if (pathogenHere?.strength > 0) {
+    const ns = groundTruth.nodeStates?.[nodeId];
+    const { threatStrength } = dominantPathogenForDetection(ns ?? {});
+    if (threatStrength > 0) {
       notices.push({
         nodeId, nodeLabel: node?.label,
         message: `Patrol at ${node?.label} — no confirmed report this turn.`,
@@ -138,6 +133,21 @@ export function generateSilenceNotices(groundTruth, deployedCells, turn) {
     }
   }
   return notices;
+}
+
+// ── Helper: derive dominant threat for detection rolls ────────────────────────
+// Maps new nodeState.pathogens structure → { actualThreatType, threatStrength }
+// that the existing detection roll system understands.
+
+import { getDominantPathogen } from '../data/pathogens.js';
+import { PATHOGEN_SIGNAL_TYPE } from '../data/pathogens.js';
+
+function dominantPathogenForDetection(nodeState) {
+  const dominant = getDominantPathogen(nodeState);
+  if (!dominant) return { actualThreatType: null, threatStrength: 0 };
+  // Map pathogen type to signal vocabulary type
+  const signalType = PATHOGEN_SIGNAL_TYPE[dominant.type] ?? dominant.type;
+  return { actualThreatType: signalType, threatStrength: dominant.load };
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -248,6 +258,42 @@ function makeSignal({
   };
 }
 
+
+// ── En-route detection for intermediate node visits ───────────────────────────
+// Called with nodesVisited from advanceCells.
+// Only recon cell types (neutrophil, macrophage, dendritic) generate signals.
+// One signal per unique node per call (first recon cell wins).
+
+export function generateSignalsForVisits(nodesVisited, groundTruth, turn, tick, situationId = 'primary') {
+  const RECON_TYPES = new Set(['neutrophil', 'macrophage', 'dendritic']);
+  const signals = [];
+  const seenNodes = new Set();
+
+  for (const { cellType, nodeId } of nodesVisited) {
+    if (!RECON_TYPES.has(cellType)) continue;
+    if (seenNodes.has(nodeId)) continue;
+    if (!NODES[nodeId]) continue;
+
+    const nodeState = groundTruth.nodeStates?.[nodeId] ?? {};
+    const { actualThreatType, threatStrength } = dominantPathogenForDetection(nodeState);
+    const inflammation = nodeState.inflammation ?? 0;
+
+    const { outcome, reportedType } = rollDetection(cellType, actualThreatType, threatStrength, inflammation);
+    if (outcome === DETECTION_OUTCOMES.MISS) continue;
+
+    const sig = detectionOutcomeToSignal({
+      outcome, reportedType,
+      nodeId, nodeLabel: NODES[nodeId].label,
+      cellType, turn, tick, situationId, memoryBank: null,
+    });
+    if (!sig) continue;
+
+    signals.push(sig);
+    seenNodes.add(nodeId);
+  }
+
+  return signals;
+}
 
 function buildSignalText(type, confidence, nodeLabel, reportedThreatType, detectionOutcome) {
   const loc = nodeLabel ?? 'Unknown';

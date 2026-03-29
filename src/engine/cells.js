@@ -2,15 +2,18 @@
 //
 // Lifecycle:  training → ready → outbound → arrived → returning → ready  (loops)
 //
+// Path-based movement: cells store path[], pathIndex, destNodeId.
+// nodeId = path[pathIndex] = current intermediate position.
+// Movement budget = 1 per turn; exit cost = signalTravelCost of node being left.
+// 0-cost nodes (SPLEEN) allow free passage to the next hop in the same turn.
+//
 // Tokens are held by every cell in the roster regardless of phase.
 // Tokens are freed only when a cell is explicitly decommissioned.
-// tokenCapacity (from game state) grows slowly over time via regen.
 
-import { NODES, HQ_NODE_ID, getHopDistance } from '../data/nodes.js';
+import { NODES, HQ_NODE_ID, computePath, computePathCost } from '../data/nodes.js';
 import {
-  ATTACK_TRANSIT_PER_HOP,
-  SCOUT_TRANSIT_PER_HOP,
   PATROL_DWELL_TICKS,
+  SCOUT_DWELL_TICKS,
   TRAINING_TICKS,
 } from '../data/gameConfig.js';
 
@@ -65,14 +68,6 @@ export const CELL_DISPLAY_NAMES = {
 let _cellIdCounter = 1;
 function nextCellId() { return `cell_${_cellIdCounter++}`; }
 
-// ── Transit time ──────────────────────────────────────────────────────────────
-
-export function getTransitTicks(targetNodeId, cellType) {
-  const hops = Math.max(1, getHopDistance(HQ_NODE_ID, targetNodeId));
-  if (cellType === CELL_TYPES.DENDRITIC) return hops * SCOUT_TRANSIT_PER_HOP;
-  return hops * ATTACK_TRANSIT_PER_HOP;
-}
-
 // ── Token accounting ──────────────────────────────────────────────────────────
 // Counts ALL cells in roster (any phase). tokenCapacity comes from game state.
 
@@ -86,6 +81,25 @@ export function computeTokensInUse(deployedCells) {
 
 export function getTokensAvailable(deployedCells, tokenCapacity) {
   return tokenCapacity - computeTokensInUse(deployedCells);
+}
+
+// ── Starting cells (pre-game, no training delay) ──────────────────────────────
+
+export function makeReadyCell(type) {
+  return {
+    id: nextCellId(),
+    type,
+    nodeId: null,
+    phase: 'ready',
+    trainedAtTick: 0,
+    trainingCompleteTick: 0,
+    deployedAtTick: null,
+    arrivalTick: null,
+    returnTick: null,
+    path: null,
+    pathIndex: 0,
+    destNodeId: null,
+  };
 }
 
 // ── Manufacturing ─────────────────────────────────────────────────────────────
@@ -107,18 +121,22 @@ export function trainCell(type, deployedCells, tokenCapacity, tick) {
     deployedAtTick: null,
     arrivalTick: null,
     returnTick: null,
+    path: null,
+    pathIndex: 0,
+    destNodeId: null,
   };
   return { success: true, newDeployedCells: { ...deployedCells, [cell.id]: cell }, cost };
 }
 
 // ── Deployment ────────────────────────────────────────────────────────────────
-// Moves a ready cell from roster into the field.
+// Moves any non-training cell to a new node.
+// Works whether the cell is ready (from roster) or already deployed anywhere.
 
 export function deployFromRoster(cellId, nodeId, deployedCells, tick, perceivedState) {
   const cell = deployedCells[cellId];
-  if (!cell || cell.phase !== 'ready') {
-    return { success: false, error: 'Cell is not ready to deploy' };
-  }
+  if (!cell) return { success: false, error: 'Cell not found' };
+  if (cell.phase === 'training') return { success: false, error: 'Cell is still in training' };
+
   const node = NODES[nodeId];
   if (!node) return { success: false, error: `Unknown node: ${nodeId}` };
 
@@ -126,7 +144,12 @@ export function deployFromRoster(cellId, nodeId, deployedCells, tick, perceivedS
     return { success: false, error: 'Killer T requires scout confirmation', requiresDendritic: true };
   }
 
-  const transitTicks = getTransitTicks(nodeId, cell.type);
+  // Origin: arrived/returning cells travel from their current node; others from HQ
+  const fromNodeId = (cell.phase === 'arrived' || cell.phase === 'returning')
+    ? cell.nodeId
+    : HQ_NODE_ID;
+
+  const path = computePath(fromNodeId, nodeId);
   const extra = _deployExtra(cell.type, nodeId, perceivedState);
 
   return {
@@ -135,11 +158,15 @@ export function deployFromRoster(cellId, nodeId, deployedCells, tick, perceivedS
       ...deployedCells,
       [cellId]: {
         ...cell,
-        nodeId,
+        nodeId: fromNodeId,
         phase: 'outbound',
+        path,
+        pathIndex: 0,
+        destNodeId: nodeId,
         deployedAtTick: tick,
-        arrivalTick: tick + transitTicks,
+        arrivalTick: null,
         returnTick: null,
+        scoutDwellUntilTick: null,
         ...extra,
       },
     },
@@ -167,8 +194,6 @@ function _deployExtra(type, nodeId, perceivedState) {
 }
 
 // ── Decommission ──────────────────────────────────────────────────────────────
-// Removes a cell from the roster entirely. Frees its token cost.
-// Only valid for training or ready cells (can't decommission mid-field).
 
 export function decommissionCell(cellId, deployedCells) {
   const cell = deployedCells[cellId];
@@ -181,8 +206,6 @@ export function decommissionCell(cellId, deployedCells) {
 }
 
 // ── Recall ────────────────────────────────────────────────────────────────────
-// outbound → ready (cancel transit, cell stays in roster)
-// arrived  → returning → (auto-transitions to ready in advanceCells)
 
 export function recallUnit(cellId, deployedCells, tick) {
   const cell = deployedCells[cellId];
@@ -198,58 +221,100 @@ export function recallUnit(cellId, deployedCells, tick) {
       success: true,
       newDeployedCells: {
         ...deployedCells,
-        [cellId]: { ...cell, phase: 'ready', nodeId: null, deployedAtTick: null, arrivalTick: null },
+        [cellId]: {
+          ...cell,
+          phase: 'ready',
+          nodeId: null,
+          path: null,
+          pathIndex: 0,
+          destNodeId: null,
+          deployedAtTick: null,
+          arrivalTick: null,
+        },
       },
     };
   }
 
   // arrived → start return journey
-  const transitTicks = getTransitTicks(cell.nodeId, cell.type);
+  const returnPath = computePath(cell.nodeId, HQ_NODE_ID);
   return {
     success: true,
     newDeployedCells: {
       ...deployedCells,
-      [cellId]: { ...cell, phase: 'returning', returnTick: tick + transitTicks },
+      [cellId]: {
+        ...cell,
+        phase: 'returning',
+        path: returnPath,
+        pathIndex: 0,
+        destNodeId: HQ_NODE_ID,
+        returnTick: null,
+      },
     },
   };
 }
 
 // ── Tick advance ──────────────────────────────────────────────────────────────
-// Returns { updatedCells, events }
+// Returns { updatedCells, events, nodesVisited }
 // events: [{ type, cellId, nodeId?, cellType }]
+// nodesVisited: [{ cellId, cellType, nodeId }] — intermediate nodes touched this tick
 
 export function advanceCells(deployedCells, tick) {
   const updated = {};
   const events = [];
+  const nodesVisited = [];
 
   for (const [cellId, cell] of Object.entries(deployedCells)) {
     let c = { ...cell };
 
-    // Training → ready
+    // ── Training → ready ──────────────────────────────────────────────────────
     if (c.phase === 'training' && tick >= c.trainingCompleteTick) {
       c.phase = 'ready';
       c.nodeId = null;
       events.push({ type: 'cell_ready', cellId, cellType: c.type });
     }
 
-    // Outbound → arrived (or returning for scouts)
-    if (c.phase === 'outbound' && tick >= c.arrivalTick) {
-      if (c.type === CELL_TYPES.DENDRITIC) {
-        const transitTicks = c.arrivalTick - c.deployedAtTick;
-        c.phase = 'returning';
-        c.returnTick = tick + transitTicks;
-        events.push({ type: 'scout_arrived', cellId, nodeId: c.nodeId });
-      } else if (c.type === CELL_TYPES.NEUTROPHIL) {
-        c.phase = 'arrived';
-        c.patrolNextMoveTick = tick + PATROL_DWELL_TICKS;
-        events.push({ type: 'cell_arrived', cellId, nodeId: c.nodeId, cellType: c.type });
-      } else {
-        c.phase = 'arrived';
-        events.push({ type: 'cell_arrived', cellId, nodeId: c.nodeId, cellType: c.type });
+    // ── Outbound movement (path-based) ────────────────────────────────────────
+    if (c.phase === 'outbound' && c.path && c.pathIndex < c.path.length - 1) {
+      let budget = 1;
+      while (c.pathIndex < c.path.length - 1) {
+        const exitCost = NODES[c.path[c.pathIndex]]?.signalTravelCost ?? 1;
+        if (exitCost > 0 && budget < exitCost) break;
+        budget -= exitCost;
+        c.pathIndex++;
+        c.nodeId = c.path[c.pathIndex];
+        nodesVisited.push({ cellId, cellType: c.type, nodeId: c.nodeId });
+        if (budget <= 0) break;
+      }
+
+      // Check arrival at destination
+      if (c.pathIndex >= c.path.length - 1) {
+        if (c.type === CELL_TYPES.DENDRITIC) {
+          c.phase = 'arrived';
+          c.scoutDwellUntilTick = tick + SCOUT_DWELL_TICKS;
+          events.push({ type: 'scout_arrived', cellId, nodeId: c.nodeId });
+        } else if (c.type === CELL_TYPES.NEUTROPHIL) {
+          c.phase = 'arrived';
+          c.patrolNextMoveTick = tick + PATROL_DWELL_TICKS;
+          events.push({ type: 'cell_arrived', cellId, nodeId: c.nodeId, cellType: c.type });
+        } else {
+          c.phase = 'arrived';
+          events.push({ type: 'cell_arrived', cellId, nodeId: c.nodeId, cellType: c.type });
+        }
       }
     }
 
-    // Patrol movement
+    // ── Scout dwell complete → start return journey ───────────────────────────
+    if (c.type === CELL_TYPES.DENDRITIC && c.phase === 'arrived' &&
+        c.scoutDwellUntilTick != null && tick >= c.scoutDwellUntilTick) {
+      const returnPath = computePath(c.nodeId, HQ_NODE_ID);
+      c.phase = 'returning';
+      c.path = returnPath;
+      c.pathIndex = 0;
+      c.destNodeId = HQ_NODE_ID;
+      c.scoutDwellUntilTick = null;
+    }
+
+    // ── Patrol movement (cycles adjacent nodes) ───────────────────────────────
     if (c.type === CELL_TYPES.NEUTROPHIL && c.phase === 'arrived' &&
         c.patrolNextMoveTick != null && tick >= c.patrolNextMoveTick) {
       const connections = NODES[c.nodeId]?.connections ?? [];
@@ -258,11 +323,38 @@ export function advanceCells(deployedCells, tick) {
         c.nodeId = connections[nextIdx];
         c.patrolConnectionIdx = nextIdx;
         c.patrolNextMoveTick = tick + PATROL_DWELL_TICKS;
+        nodesVisited.push({ cellId, cellType: c.type, nodeId: c.nodeId });
       }
     }
 
-    // Returning → ready (cells return to roster, not removed)
-    if (c.phase === 'returning' && c.returnTick != null && tick >= c.returnTick) {
+    // ── Returning movement (path-based) ───────────────────────────────────────
+    if (c.phase === 'returning' && c.path && c.pathIndex < c.path.length - 1) {
+      let budget = 1;
+      while (c.pathIndex < c.path.length - 1) {
+        const exitCost = NODES[c.path[c.pathIndex]]?.signalTravelCost ?? 1;
+        if (exitCost > 0 && budget < exitCost) break;
+        budget -= exitCost;
+        c.pathIndex++;
+        c.nodeId = c.path[c.pathIndex];
+        if (budget <= 0) break;
+      }
+
+      // Check arrival at HQ
+      if (c.pathIndex >= c.path.length - 1) {
+        events.push({ type: 'cell_returned', cellId, nodeId: c.nodeId, cellType: c.type });
+        c.phase = 'ready';
+        c.nodeId = null;
+        c.path = null;
+        c.pathIndex = 0;
+        c.destNodeId = null;
+        c.arrivalTick = null;
+        c.deployedAtTick = null;
+        c.returnTick = null;
+      }
+    }
+
+    // Legacy: returning cell without path (shouldn't happen with new deploys, but safe fallback)
+    if (c.phase === 'returning' && !c.path && c.returnTick != null && tick >= c.returnTick) {
       events.push({ type: 'cell_returned', cellId, nodeId: c.nodeId, cellType: c.type });
       c.phase = 'ready';
       c.nodeId = null;
@@ -274,11 +366,11 @@ export function advanceCells(deployedCells, tick) {
     updated[cellId] = c;
   }
 
-  return { updatedCells: updated, events };
+  return { updatedCells: updated, events, nodesVisited };
 }
 
 // Auto-return attack cells when their node's pathogen is cleared.
-export function startReturnForClearedNodes(deployedCells, pathogenState, tick) {
+export function startReturnForClearedNodes(deployedCells, nodeStates, tick) {
   const ATTACK_TYPES = new Set([
     CELL_TYPES.RESPONDER, CELL_TYPES.KILLER_T, CELL_TYPES.B_CELL, CELL_TYPES.NK_CELL,
   ]);
@@ -286,10 +378,21 @@ export function startReturnForClearedNodes(deployedCells, pathogenState, tick) {
   for (const [cellId, cell] of Object.entries(updated)) {
     if (!ATTACK_TYPES.has(cell.type)) continue;
     if (cell.phase !== 'arrived') continue;
-    const p = pathogenState[cell.nodeId];
-    if (!p || p.strength <= 0) {
-      const transitTicks = getTransitTicks(cell.nodeId, cell.type);
-      updated[cellId] = { ...cell, phase: 'returning', returnTick: tick + transitTicks };
+    const ns = nodeStates[cell.nodeId];
+    const hasPathogen = ns && Object.values(ns.pathogens ?? {}).some(inst => {
+      const tv = inst.type ? Object.keys(inst).find(k => k !== 'type') : null;
+      return tv ? (inst[tv] ?? 0) > 0 : false;
+    });
+    if (!hasPathogen) {
+      const returnPath = computePath(cell.nodeId, HQ_NODE_ID);
+      updated[cellId] = {
+        ...cell,
+        phase: 'returning',
+        path: returnPath,
+        pathIndex: 0,
+        destNodeId: HQ_NODE_ID,
+        returnTick: null,
+      };
     }
   }
   return updated;
@@ -341,6 +444,7 @@ export function getDeploymentSummary(deployedCells) {
     type: cell.type,
     nodeId: cell.nodeId,
     phase: cell.phase,
+    destNodeId: cell.destNodeId ?? null,
     arrivalTick: cell.arrivalTick ?? null,
     returnTick: cell.returnTick ?? null,
     effectiveness: cell.effectiveness ?? null,

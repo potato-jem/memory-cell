@@ -286,25 +286,5 @@ Between encounters, narrative events fire occasionally. Format: a situation is d
 
 ---
 
-## Implementation Notes for Claude Code
-
-### Data Model
-
-Each site should be a self-contained object with its own value set and a list of active pathogen instances. Pathogens should be separate objects with their own per-type behaviour functions, not hard-coded into site logic.
-
-```
-Site {
-  id, name, adjacentSites[]
-  infectionLoad, cellularCompromise, corruption
-  inflammation, tissueIntegrity, integrityMax
-  immunePresence, pendingDeployments[]
-  activePathogens[], status (normal / walled_off / suspected_infection)
-}
-
-Pathogen {
-  type (bacteria / virus / fungi / parasite / toxin / prion)
-  subtype (extracellular / intracellular for bacteria)
-  replicationRate, toxinOutput
-  tick(site) → mutates site values
-}
-```
+### Pathogen events
+A run should be 'endless' for now. Pathogens should be randomly chosen from the pool and assigned to a location (each pathogen / location pair have their own probability). And there should be some high level adjustments to probabilities to ensure the player isn't overwhelmed or doing nothing (so probabilities are initially globally higher then reduce.) Best structure is probably a global chance of 'something' occuring, then fixed pathogen/location pairs probabilities after that (i.e. given that 'something' has happened, what is the probability of it being a viral infection in the chest). Can do conditional probaility modifiers too (e.g. inflamation may have a probability modification, and there may be global effects from upgrades/scars.) So have a think about what structure makes the most sense. Need to think carefully to avoid gaming the system by making viral infections really likely to avoid other harder pathogens. 
