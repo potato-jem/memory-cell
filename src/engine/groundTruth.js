@@ -18,7 +18,14 @@ import {
   INFLAMMATION_DAMAGE_RATE_2,
   INFLAMMATION_DAMAGE_RATE_3,
   INFLAMMATION_RECOVERY_THRESHOLD,
+  INFLAMMATION_DECAY_RATE_INFECTED,
+  INFLAMMATION_DECAY_RATE_CLEAR,
+  ATTACK_CELL_INFLAMMATION_ON_INFECTED,
+  ATTACK_CELL_INFLAMMATION_ON_CLEAN,
+  KILLER_T_INFLAMMATION_ON_CLEAN,
+  PARASITE_TRANSIT_PENALTY_PER_BURDEN,
 } from '../data/gameConfig.js';
+import { getEffectiveIntegrityRecovery } from '../data/runModifiers.js';
 
 // ── Initialisation ─────────────────────────────────────────────────────────────
 
@@ -62,7 +69,7 @@ export function initGroundTruth() {
  *   events: [{ type, nodeId, pathogenType? }]
  *   perSiteOutputs: { [nodeId]: { toxinOutput } } — for systemic stress calculation
  */
-export function advanceGroundTruth(groundTruth, deployedCells, turn, systemicStress, pendingSpawns = []) {
+export function advanceGroundTruth(groundTruth, deployedCells, turn, systemicStress, pendingSpawns = [], modifiers = null) {
   const events = [];
   let nodeStates = { ...groundTruth.nodeStates };
   const perSiteOutputs = {};
@@ -78,7 +85,7 @@ export function advanceGroundTruth(groundTruth, deployedCells, turn, systemicStr
 
     for (const [pathogenType, instance] of Object.entries(ns.pathogens ?? {})) {
       const { newInstance, tissueIntegrityDelta, inflammationDelta, toxinOutput, suppressImmune } =
-        advanceInstance(instance, nodeId, deployedCells, ns, systemicStress);
+        advanceInstance(instance, nodeId, deployedCells, ns, systemicStress, modifiers);
 
       if (newInstance) {
         updatedPathogens[pathogenType] = newInstance;
@@ -114,7 +121,7 @@ export function advanceGroundTruth(groundTruth, deployedCells, turn, systemicStr
     const hasInfection = Object.keys(updatedPathogens).length > 0;
     const suppressionActive = ns.immuneSuppressed;
     const effectiveInflammationAdd = suppressionActive ? totalInflammationAdded * 0.5 : totalInflammationAdded;
-    const decayRate = hasInfection ? 3 : 8; // faster decay when cleared
+    const decayRate = hasInfection ? INFLAMMATION_DECAY_RATE_INFECTED : INFLAMMATION_DECAY_RATE_CLEAR;
     const newInflammation = Math.min(100, Math.max(0,
       ns.inflammation + effectiveInflammationAdd - decayRate
     ));
@@ -127,7 +134,7 @@ export function advanceGroundTruth(groundTruth, deployedCells, turn, systemicStr
 
     // Recovery: +2/turn when no infection and inflammation is low
     if (!hasInfection && newInflammation < INFLAMMATION_RECOVERY_THRESHOLD) {
-      newIntegrity = Math.min(ns.tissueIntegrityCeiling, newIntegrity + TISSUE_RECOVERY_RATE);
+      newIntegrity = Math.min(ns.tissueIntegrityCeiling, newIntegrity + getEffectiveIntegrityRecovery(TISSUE_RECOVERY_RATE, modifiers));
     }
 
     newIntegrity = Math.max(0, Math.min(100, newIntegrity));
@@ -142,7 +149,7 @@ export function advanceGroundTruth(groundTruth, deployedCells, turn, systemicStr
 
     // ── 7. Parasite transit penalty ────────────────────────────────────────────
     const parasiteBurden = updatedPathogens['parasite']?.parasiticBurden ?? 0;
-    const transitPenalty = Math.floor(parasiteBurden / 25); // +1T per 25 burden
+    const transitPenalty = Math.floor(parasiteBurden / PARASITE_TRANSIT_PENALTY_PER_BURDEN);
 
     nodeStates[nodeId] = {
       ...ns,
@@ -155,7 +162,7 @@ export function advanceGroundTruth(groundTruth, deployedCells, turn, systemicStr
   }
 
   // ── 8. Apply spreads ──────────────────────────────────────────────────────
-  const spreads = computeSpreads(nodeStates);
+  const spreads = computeSpreads(nodeStates, modifiers);
   const spreadHistory = [...(groundTruth.spreadHistory ?? [])];
   for (const spread of spreads) {
     const target = nodeStates[spread.toNodeId];
@@ -216,9 +223,9 @@ function computeImmuneCellInflammation(nodeId, deployedCells, ns) {
     if (!isResponder) continue;
     // More inflammation if attacking a clean site (collateral / autoimmune)
     if (!hasInfection) {
-      added += cell.type === 'killer_t' ? 25 : 15;
+      added += cell.type === 'killer_t' ? KILLER_T_INFLAMMATION_ON_CLEAN : ATTACK_CELL_INFLAMMATION_ON_CLEAN;
     } else {
-      added += 5;
+      added += ATTACK_CELL_INFLAMMATION_ON_INFECTED;
     }
   }
   return added;

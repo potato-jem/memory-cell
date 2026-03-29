@@ -70,3 +70,17 @@ export const SPAWN_FLOOR_CHANCE = 0.15;             // minimum floor regardless 
 export const SPAWN_DECAY_PER_TURN = 0.008;          // base chance decays each turn
 export const SPAWN_IDLE_BOOST = 0.35;               // added when no active infections
 export const SPAWN_OVERWHELM_PENALTY = 0.30;        // subtracted when 3+ active infections
+
+// ── Inflammation dynamics ──────────────────────────────────────────────────────
+// Inflammation decays each turn regardless of other factors.
+export const INFLAMMATION_DECAY_RATE_INFECTED = 3;   // inflammation lost/turn while infection active
+export const INFLAMMATION_DECAY_RATE_CLEAR = 8;      // inflammation lost/turn when no active infection
+
+// ── Immune cell inflammation contribution ──────────────────────────────────────
+// Attack cells at a node add inflammation each turn they are present.
+export const ATTACK_CELL_INFLAMMATION_ON_INFECTED = 5;     // per attack cell at infected node
+export const ATTACK_CELL_INFLAMMATION_ON_CLEAN = 15;       // per attack cell at clean node
+export const KILLER_T_INFLAMMATION_ON_CLEAN = 25;          // killer T specifically (higher cascade risk)
+
+// ── Parasite transit penalty ───────────────────────────────────────────────────
+export const PARASITE_TRANSIT_PENALTY_PER_BURDEN = 25;     // +1 turn penalty per N parasiticBurden

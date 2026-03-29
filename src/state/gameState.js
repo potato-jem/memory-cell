@@ -8,6 +8,7 @@ import { makeReadyCell, computeTokensInUse } from '../engine/cells.js';
 import { NODE_IDS } from '../data/nodes.js';
 import { INITIAL_TOKEN_CAPACITY, TICKS_PER_TURN } from '../data/gameConfig.js';
 import { DEFAULT_RUN_CONFIG } from '../data/runConfig.js';
+import { makeRunModifiers } from '../data/runModifiers.js';
 
 export { TICKS_PER_TURN };
 
@@ -74,6 +75,10 @@ export function initGameState(runConfig = DEFAULT_RUN_CONFIG, existingMemoryBank
 
     // Memory bank — carries across runs
     memoryBank: existingMemoryBank ?? initMemoryBank(),
+
+    // Runtime modifiers — accumulate upgrades, scars, decisions
+    // Dispatch APPLY_MODIFIER with a patch to modify cell/node/pathogen/detection/systemic/spawn behavior
+    runModifiers: makeRunModifiers(),
 
     // Phase
     phase: GAME_PHASES.PLAYING,

@@ -30,7 +30,8 @@ export function generateSignals(
   turn,
   memoryBank = null,
   situationId = 'primary',
-  tick = 0
+  tick = 0,
+  modifiers = null
 ) {
   const signals = [];
   const usedNodes = new Set();
@@ -49,7 +50,7 @@ export function generateSignals(
     const { actualThreatType, threatStrength } = dominantPathogenForDetection(nodeState);
     const inflammation = nodeState.inflammation ?? 0;
 
-    const { outcome, reportedType } = rollDetection(cell.type, actualThreatType, threatStrength, inflammation);
+    const { outcome, reportedType } = rollDetection(cell.type, actualThreatType, threatStrength, inflammation, modifiers);
     if (outcome === DETECTION_OUTCOMES.MISS) continue;
 
     const sig = detectionOutcomeToSignal({
@@ -95,7 +96,7 @@ export function generateSignals(
 // Called from the TICK handler when a scout_arrived event fires.
 // The scout gets ONE detection roll on arrival — result is definitive for that visit.
 
-export function makeDendriticReturnSignal(cell, groundTruth, runConfig, tick, turn, situationId) {
+export function makeDendriticReturnSignal(cell, groundTruth, runConfig, tick, turn, situationId, modifiers = null) {
   const node = NODES[cell.nodeId];
   if (!node) return null;
 
@@ -103,7 +104,7 @@ export function makeDendriticReturnSignal(cell, groundTruth, runConfig, tick, tu
   const { actualThreatType, threatStrength } = dominantPathogenForDetection(nodeState);
   const inflammation = nodeState.inflammation ?? 0;
 
-  const { outcome, reportedType } = rollDetection('dendritic', actualThreatType, threatStrength, inflammation);
+  const { outcome, reportedType } = rollDetection('dendritic', actualThreatType, threatStrength, inflammation, modifiers);
 
   return detectionOutcomeToSignal({
     outcome, reportedType,
@@ -264,7 +265,7 @@ function makeSignal({
 // Only recon cell types (neutrophil, macrophage, dendritic) generate signals.
 // One signal per unique node per call (first recon cell wins).
 
-export function generateSignalsForVisits(nodesVisited, groundTruth, turn, tick, situationId = 'primary') {
+export function generateSignalsForVisits(nodesVisited, groundTruth, turn, tick, situationId = 'primary', modifiers = null) {
   const RECON_TYPES = new Set(['neutrophil', 'macrophage', 'dendritic']);
   const signals = [];
   const seenNodes = new Set();
@@ -278,7 +279,7 @@ export function generateSignalsForVisits(nodesVisited, groundTruth, turn, tick, 
     const { actualThreatType, threatStrength } = dominantPathogenForDetection(nodeState);
     const inflammation = nodeState.inflammation ?? 0;
 
-    const { outcome, reportedType } = rollDetection(cellType, actualThreatType, threatStrength, inflammation);
+    const { outcome, reportedType } = rollDetection(cellType, actualThreatType, threatStrength, inflammation, modifiers);
     if (outcome === DETECTION_OUTCOMES.MISS) continue;
 
     const sig = detectionOutcomeToSignal({

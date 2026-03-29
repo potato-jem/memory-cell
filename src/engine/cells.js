@@ -9,70 +9,53 @@
 //
 // Tokens are held by every cell in the roster regardless of phase.
 // Tokens are freed only when a cell is explicitly decommissioned.
+//
+// All functions accept an optional `modifiers` (runModifiers) parameter.
+// When null/undefined, base config values are used (fully backward compatible).
 
-import { NODES, HQ_NODE_ID, computePath, computePathCost } from '../data/nodes.js';
+import { NODES, HQ_NODE_ID, computePath, computePathWithModifiers } from '../data/nodes.js';
+import { PATROL_DWELL_TICKS, SCOUT_DWELL_TICKS, TRAINING_TICKS } from '../data/gameConfig.js';
 import {
-  PATROL_DWELL_TICKS,
-  SCOUT_DWELL_TICKS,
-  TRAINING_TICKS,
-} from '../data/gameConfig.js';
+  CELL_CONFIG,
+  DEPLOY_COSTS,
+  CLEARANCE_RATES,
+  CELL_DISPLAY_NAMES,
+  ATTACK_CELL_TYPES,
+  getEffectiveClearanceRate,
+  getEffectiveDeployCost,
+  getEffectiveTrainingTicks,
+  getEffectiveEffectiveness,
+} from '../data/cellConfig.js';
+import { getEffectiveConnections, getEffectiveExitCost } from '../data/runModifiers.js';
+
+// Re-export flat tables for backward compatibility
+export { DEPLOY_COSTS, CLEARANCE_RATES, CELL_DISPLAY_NAMES };
 
 export const CELL_TYPES = {
   DENDRITIC:  'dendritic',
-  NEUTROPHIL: 'neutrophil',   // patrol — circuits through connected nodes
+  NEUTROPHIL: 'neutrophil',
   RESPONDER:  'responder',
   KILLER_T:   'killer_t',
   B_CELL:     'b_cell',
   NK_CELL:    'nk_cell',
-  MACROPHAGE: 'macrophage',   // static coverage — sees own node + adjacent
-};
-
-// Token cost to manufacture each cell type (held for the cell's lifetime)
-export const DEPLOY_COSTS = {
-  [CELL_TYPES.DENDRITIC]:  2,
-  [CELL_TYPES.NEUTROPHIL]: 1,
-  [CELL_TYPES.RESPONDER]:  3,
-  [CELL_TYPES.KILLER_T]:   4,
-  [CELL_TYPES.B_CELL]:     2,
-  [CELL_TYPES.NK_CELL]:    3,
-  [CELL_TYPES.MACROPHAGE]: 1,
-};
-
-export const CLEARANCE_RATES = {
-  [CELL_TYPES.RESPONDER]: 12,
-  [CELL_TYPES.KILLER_T]:  20,
-  [CELL_TYPES.B_CELL]:     8,
-  [CELL_TYPES.NK_CELL]:   15,
-  [CELL_TYPES.MACROPHAGE]: 4,
-};
-
-// Human-readable display names for UI
-export const CELL_DISPLAY_NAMES = {
-  [CELL_TYPES.DENDRITIC]:  'Scout',
-  [CELL_TYPES.NEUTROPHIL]: 'Patrol',
-  [CELL_TYPES.RESPONDER]:  'Responder',
-  [CELL_TYPES.KILLER_T]:   'Killer T',
-  [CELL_TYPES.B_CELL]:     'B-Cell',
-  [CELL_TYPES.NK_CELL]:    'NK Cell',
-  [CELL_TYPES.MACROPHAGE]: 'Macrophage',
+  MACROPHAGE: 'macrophage',
 };
 
 let _cellIdCounter = 1;
 function nextCellId() { return `cell_${_cellIdCounter++}`; }
 
 // ── Token accounting ──────────────────────────────────────────────────────────
-// Counts ALL cells in roster (any phase). tokenCapacity comes from game state.
 
-export function computeTokensInUse(deployedCells) {
+export function computeTokensInUse(deployedCells, modifiers = null) {
   let total = 0;
   for (const cell of Object.values(deployedCells)) {
-    total += DEPLOY_COSTS[cell.type] ?? 0;
+    total += getEffectiveDeployCost(cell.type, modifiers);
   }
   return total;
 }
 
-function getTokensAvailable(deployedCells, tokenCapacity) {
-  return tokenCapacity - computeTokensInUse(deployedCells);
+function getTokensAvailable(deployedCells, tokenCapacity, modifiers) {
+  return tokenCapacity - computeTokensInUse(deployedCells, modifiers);
 }
 
 // ── Starting cells (pre-game, no training delay) ──────────────────────────────
@@ -96,13 +79,14 @@ export function makeReadyCell(type) {
 
 // ── Manufacturing ─────────────────────────────────────────────────────────────
 
-export function trainCell(type, deployedCells, tokenCapacity, tick) {
-  const cost = DEPLOY_COSTS[type];
-  const available = getTokensAvailable(deployedCells, tokenCapacity);
+export function trainCell(type, deployedCells, tokenCapacity, tick, modifiers = null) {
+  const cost = getEffectiveDeployCost(type, modifiers);
+  const available = getTokensAvailable(deployedCells, tokenCapacity, modifiers);
   if (available < cost) {
     return { success: false, error: `Need ${cost} tokens (have ${available})` };
   }
-  const trainingTime = TRAINING_TICKS[type] ?? 15;
+  const baseTicks = TRAINING_TICKS[type] ?? 15;
+  const trainingTime = getEffectiveTrainingTicks(type, baseTicks, modifiers);
   const cell = {
     id: nextCellId(),
     type,
@@ -121,10 +105,8 @@ export function trainCell(type, deployedCells, tokenCapacity, tick) {
 }
 
 // ── Deployment ────────────────────────────────────────────────────────────────
-// Moves any non-training cell to a new node.
-// Works whether the cell is ready (from roster) or already deployed anywhere.
 
-export function deployFromRoster(cellId, nodeId, deployedCells, tick, perceivedState) {
+export function deployFromRoster(cellId, nodeId, deployedCells, tick, perceivedState, modifiers = null) {
   const cell = deployedCells[cellId];
   if (!cell) return { success: false, error: 'Cell not found' };
   if (cell.phase === 'training') return { success: false, error: 'Cell is still in training' };
@@ -136,13 +118,12 @@ export function deployFromRoster(cellId, nodeId, deployedCells, tick, perceivedS
     return { success: false, error: 'Killer T requires scout confirmation', requiresDendritic: true };
   }
 
-  // Origin: arrived/returning cells travel from their current node; others from HQ
   const fromNodeId = (cell.phase === 'arrived' || cell.phase === 'returning')
     ? cell.nodeId
     : HQ_NODE_ID;
 
-  const path = computePath(fromNodeId, nodeId);
-  const extra = _deployExtra(cell.type, nodeId, perceivedState);
+  const path = computePathWithModifiers(fromNodeId, nodeId, modifiers);
+  const extra = _deployExtra(cell.type, nodeId, perceivedState, modifiers);
 
   return {
     success: true,
@@ -165,19 +146,19 @@ export function deployFromRoster(cellId, nodeId, deployedCells, tick, perceivedS
   };
 }
 
-function _deployExtra(type, nodeId, perceivedState) {
+function _deployExtra(type, nodeId, perceivedState, modifiers) {
   const hasDC = hasDendriticConfirmation(nodeId, perceivedState);
   switch (type) {
     case CELL_TYPES.NEUTROPHIL:
       return { patrolConnectionIdx: 0, patrolNextMoveTick: null };
     case CELL_TYPES.RESPONDER:
-      return { effectiveness: hasDC ? 1.0 : 0.6, hasDendriticBacking: hasDC };
+      return { effectiveness: getEffectiveEffectiveness(type, hasDC, modifiers), hasDendriticBacking: hasDC };
     case CELL_TYPES.KILLER_T:
-      return { effectiveness: 1.0, hasDendriticBacking: true };
+      return { effectiveness: getEffectiveEffectiveness(type, true, modifiers), hasDendriticBacking: true };
     case CELL_TYPES.B_CELL:
-      return { effectiveness: hasDC ? 1.0 : 0.85, hasDendriticBacking: hasDC };
+      return { effectiveness: getEffectiveEffectiveness(type, hasDC, modifiers), hasDendriticBacking: hasDC };
     case CELL_TYPES.NK_CELL:
-      return { effectiveness: 1.0, hasDendriticBacking: false };
+      return { effectiveness: getEffectiveEffectiveness(type, false, modifiers), hasDendriticBacking: false };
     case CELL_TYPES.MACROPHAGE:
       return { coversAdjacentNodes: true };
     default:
@@ -199,7 +180,7 @@ export function decommissionCell(cellId, deployedCells) {
 
 // ── Recall ────────────────────────────────────────────────────────────────────
 
-export function recallUnit(cellId, deployedCells, tick) {
+export function recallUnit(cellId, deployedCells, tick, modifiers = null) {
   const cell = deployedCells[cellId];
   if (!cell) return { success: false, error: `Cell ${cellId} not found` };
   if (cell.phase === 'returning') return { success: false, error: 'Already returning' };
@@ -208,7 +189,6 @@ export function recallUnit(cellId, deployedCells, tick) {
   }
 
   if (cell.phase === 'outbound') {
-    // Cancel deploy — back to ready immediately
     return {
       success: true,
       newDeployedCells: {
@@ -227,8 +207,7 @@ export function recallUnit(cellId, deployedCells, tick) {
     };
   }
 
-  // arrived → start return journey
-  const returnPath = computePath(cell.nodeId, HQ_NODE_ID);
+  const returnPath = computePathWithModifiers(cell.nodeId, HQ_NODE_ID, modifiers);
   return {
     success: true,
     newDeployedCells: {
@@ -247,10 +226,8 @@ export function recallUnit(cellId, deployedCells, tick) {
 
 // ── Tick advance ──────────────────────────────────────────────────────────────
 // Returns { updatedCells, events, nodesVisited }
-// events: [{ type, cellId, nodeId?, cellType }]
-// nodesVisited: [{ cellId, cellType, nodeId }] — intermediate nodes touched this tick
 
-export function advanceCells(deployedCells, tick) {
+export function advanceCells(deployedCells, tick, modifiers = null) {
   const updated = {};
   const events = [];
   const nodesVisited = [];
@@ -269,7 +246,8 @@ export function advanceCells(deployedCells, tick) {
     if (c.phase === 'outbound' && c.path && c.pathIndex < c.path.length - 1) {
       let budget = 1;
       while (c.pathIndex < c.path.length - 1) {
-        const exitCost = NODES[c.path[c.pathIndex]]?.signalTravelCost ?? 1;
+        const baseExitCost = NODES[c.path[c.pathIndex]]?.signalTravelCost ?? 1;
+        const exitCost = getEffectiveExitCost(c.path[c.pathIndex], baseExitCost, modifiers);
         if (exitCost > 0 && budget < exitCost) break;
         budget -= exitCost;
         c.pathIndex++;
@@ -278,7 +256,6 @@ export function advanceCells(deployedCells, tick) {
         if (budget <= 0) break;
       }
 
-      // Check arrival at destination
       if (c.pathIndex >= c.path.length - 1) {
         if (c.type === CELL_TYPES.DENDRITIC) {
           c.phase = 'arrived';
@@ -298,7 +275,7 @@ export function advanceCells(deployedCells, tick) {
     // ── Scout dwell complete → start return journey ───────────────────────────
     if (c.type === CELL_TYPES.DENDRITIC && c.phase === 'arrived' &&
         c.scoutDwellUntilTick != null && tick >= c.scoutDwellUntilTick) {
-      const returnPath = computePath(c.nodeId, HQ_NODE_ID);
+      const returnPath = computePathWithModifiers(c.nodeId, HQ_NODE_ID, modifiers);
       c.phase = 'returning';
       c.path = returnPath;
       c.pathIndex = 0;
@@ -309,7 +286,8 @@ export function advanceCells(deployedCells, tick) {
     // ── Patrol movement (cycles adjacent nodes) ───────────────────────────────
     if (c.type === CELL_TYPES.NEUTROPHIL && c.phase === 'arrived' &&
         c.patrolNextMoveTick != null && tick >= c.patrolNextMoveTick) {
-      const connections = NODES[c.nodeId]?.connections ?? [];
+      const baseConnections = NODES[c.nodeId]?.connections ?? [];
+      const connections = getEffectiveConnections(c.nodeId, baseConnections, modifiers);
       if (connections.length > 0) {
         const nextIdx = ((c.patrolConnectionIdx ?? 0) + 1) % connections.length;
         c.nodeId = connections[nextIdx];
@@ -323,7 +301,8 @@ export function advanceCells(deployedCells, tick) {
     if (c.phase === 'returning' && c.path && c.pathIndex < c.path.length - 1) {
       let budget = 1;
       while (c.pathIndex < c.path.length - 1) {
-        const exitCost = NODES[c.path[c.pathIndex]]?.signalTravelCost ?? 1;
+        const baseExitCost = NODES[c.path[c.pathIndex]]?.signalTravelCost ?? 1;
+        const exitCost = getEffectiveExitCost(c.path[c.pathIndex], baseExitCost, modifiers);
         if (exitCost > 0 && budget < exitCost) break;
         budget -= exitCost;
         c.pathIndex++;
@@ -331,7 +310,6 @@ export function advanceCells(deployedCells, tick) {
         if (budget <= 0) break;
       }
 
-      // Check arrival at HQ
       if (c.pathIndex >= c.path.length - 1) {
         events.push({ type: 'cell_returned', cellId, nodeId: c.nodeId, cellType: c.type });
         c.phase = 'ready';
@@ -345,7 +323,7 @@ export function advanceCells(deployedCells, tick) {
       }
     }
 
-    // Legacy: returning cell without path (shouldn't happen with new deploys, but safe fallback)
+    // Legacy: returning cell without path
     if (c.phase === 'returning' && !c.path && c.returnTick != null && tick >= c.returnTick) {
       events.push({ type: 'cell_returned', cellId, nodeId: c.nodeId, cellType: c.type });
       c.phase = 'ready';
@@ -362,21 +340,18 @@ export function advanceCells(deployedCells, tick) {
 }
 
 // Auto-return attack cells when their node's pathogen is cleared.
-export function startReturnForClearedNodes(deployedCells, nodeStates, tick) {
-  const ATTACK_TYPES = new Set([
-    CELL_TYPES.RESPONDER, CELL_TYPES.KILLER_T, CELL_TYPES.B_CELL, CELL_TYPES.NK_CELL,
-  ]);
+export function startReturnForClearedNodes(deployedCells, nodeStates, tick, modifiers = null) {
   const updated = { ...deployedCells };
   for (const [cellId, cell] of Object.entries(updated)) {
-    if (!ATTACK_TYPES.has(cell.type)) continue;
+    if (!ATTACK_CELL_TYPES.has(cell.type)) continue;
     if (cell.phase !== 'arrived') continue;
     const ns = nodeStates[cell.nodeId];
     const hasPathogen = ns && Object.values(ns.pathogens ?? {}).some(inst => {
-      const tv = inst.type ? Object.keys(inst).find(k => k !== 'type') : null;
+      const tv = Object.keys(inst).find(k => k !== 'type');
       return tv ? (inst[tv] ?? 0) > 0 : false;
     });
     if (!hasPathogen) {
-      const returnPath = computePath(cell.nodeId, HQ_NODE_ID);
+      const returnPath = computePathWithModifiers(cell.nodeId, HQ_NODE_ID, modifiers);
       updated[cellId] = {
         ...cell,
         phase: 'returning',
@@ -396,20 +371,20 @@ export function hasDendriticConfirmation(nodeId, perceivedState) {
   return perceivedState?.nodes?.[nodeId]?.scoutConfirmed ?? false;
 }
 
-export function getClearancePower(nodeId, deployedCells, groundTruth) {
+export function getClearancePower(nodeId, deployedCells, groundTruth, modifiers = null) {
   let total = 0;
   for (const cell of Object.values(deployedCells)) {
     if (cell.phase !== 'arrived' || cell.nodeId !== nodeId) continue;
     const baseRate = CLEARANCE_RATES[cell.type] ?? 0;
     if (baseRate === 0) continue;
+    const effectiveRate = getEffectiveClearanceRate(cell.type, modifiers);
     const effectiveness = cell.effectiveness ?? 1.0;
     const nodeState = groundTruth?.nodeStates?.[nodeId];
     if (cell.type === CELL_TYPES.NK_CELL && nodeState?.isClean) {
-      total += baseRate * 0.3;
+      total += effectiveRate * 0.3;
     } else {
-      total += baseRate * effectiveness;
+      total += effectiveRate * effectiveness;
     }
   }
   return total;
 }
-

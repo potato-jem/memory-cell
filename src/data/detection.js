@@ -16,6 +16,8 @@
 // Each profile { miss, anomaly, threatUnclassified, correctId, wrongId } must sum to 1.
 // Clean profiles { miss, clear, falseAlarm } must also sum to 1.
 
+import { getDetectionAccuracyBonus } from './runModifiers.js';
+
 export const DETECTION_OUTCOMES = {
   MISS: 'miss',
   ANOMALY: 'anomaly',
@@ -107,7 +109,7 @@ export const WEAK_PATHOGEN_MISS_INCREASE = 0.30;
  * @param {number} inflammation    - 0–100
  * @returns {{ outcome: string, reportedType: string|null }}
  */
-export function rollDetection(cellType, threatType, threatStrength, inflammation) {
+export function rollDetection(cellType, threatType, threatStrength, inflammation, modifiers = null) {
   if (!threatType || threatStrength <= 0) {
     return rollCleanDetection(cellType, inflammation);
   }
@@ -117,6 +119,17 @@ export function rollDetection(cellType, threatType, threatStrength, inflammation
 
   let profile = applyInflammationModifier(baseProfile, inflammation);
   profile = applyStrengthModifier(profile, threatStrength);
+
+  // Apply detection accuracy bonus from upgrades/scars
+  const accuracyBonus = getDetectionAccuracyBonus(cellType, threatType, modifiers);
+  if (accuracyBonus > 0 && profile.miss > 0) {
+    const transferred = Math.min(profile.miss, accuracyBonus);
+    profile = {
+      ...profile,
+      miss: profile.miss - transferred,
+      correctId: profile.correctId + transferred,
+    };
+  }
 
   const outcome = pickOutcome([
     [DETECTION_OUTCOMES.MISS,               profile.miss],

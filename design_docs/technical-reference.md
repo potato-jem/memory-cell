@@ -22,6 +22,15 @@ Memory Cell is a turn-based strategy game set inside the human immune system. Th
 ```
 src/
   data/           — static definitions (no logic, no React)
+    gameConfig.js    — ALL tunable numeric constants (balance live here)
+    cellConfig.js    — cell type registry (costs, rates, behaviors)
+    spawnConfig.js   — spawn weights, unlock turns, schedule
+    runModifiers.js  — runtime modifier system (upgrades/scars/decisions)
+    nodes.js         — body map topology + path computation
+    pathogens.js     — pathogen registry
+    detection.js     — detection probability matrix
+    signals.js       — signal type constants
+    runConfig.js     — default starting units
   engine/         — pure simulation functions
   state/          — game state shape + reducer
   components/     — React UI
@@ -49,6 +58,107 @@ Key constants:
 | `INTEGRITY_HIT_STRESS_*` | `systemicValues.js` | Integrity damage at stress thresholds |
 | `SPAWN_*` | `spawner.js` | Pathogen spawn probability parameters |
 | `WARNING/ALERT/INFO_SIGNAL_TIMEOUT` | `signalGenerator.js` | Signal expiry in ticks |
+| `INFLAMMATION_DECAY_RATE_*` | `groundTruth.js` | How fast inflammation decays per turn (infected vs clear) |
+| `ATTACK_CELL_INFLAMMATION_*` | `groundTruth.js` | Inflammation added by attack cells each turn |
+| `KILLER_T_INFLAMMATION_ON_CLEAN` | `groundTruth.js` | Killer T cascade risk on clean sites |
+| `PARASITE_TRANSIT_PENALTY_PER_BURDEN` | `groundTruth.js` | Burden threshold for each +1 turn transit penalty |
+
+---
+
+### `cellConfig.js`
+Single source of truth for all per-type cell properties.
+
+**`CELL_CONFIG[type]` fields:**
+| Field | Purpose |
+|---|---|
+| `displayName` | UI label |
+| `deployCost` | Tokens held for cell's lifetime |
+| `clearanceRate` | Pathogen clearance power per turn |
+| `isRecon` / `isAttack` / `isPatrol` | Role flags |
+| `requiresScoutConfirmation` | Killer T: cannot deploy without scout confirmation |
+| `effectivenessWithBacking` | Clearance effectiveness when scout has confirmed threat |
+| `effectivenessWithoutBacking` | Clearance effectiveness without scout confirmation (null = N/A) |
+
+**Derived tables:** `DEPLOY_COSTS`, `CLEARANCE_RATES`, `CELL_DISPLAY_NAMES` — re-exported from `cells.js` for backward compat.
+
+**Convenience sets:** `ATTACK_CELL_TYPES`, `RECON_CELL_TYPES`, `PATROL_CELL_TYPES`
+
+**Modifier-aware accessors (use in engine code):**
+- `getEffectiveClearanceRate(cellType, modifiers)` — base × `clearanceRateMultiplier`
+- `getEffectiveDeployCost(cellType, modifiers)` — base + `deploymentCostDelta`
+- `getEffectiveTrainingTicks(cellType, baseTicks, modifiers)` — baseTicks + `trainingTicksDelta`
+- `getEffectiveEffectiveness(cellType, hasBacking, modifiers)` — base + bonus
+
+---
+
+### `spawnConfig.js`
+All spawn probability data extracted from `spawner.js` so it's tunable without touching engine logic.
+
+| Export | Purpose |
+|---|---|
+| `BASE_WEIGHTS` | `{ [pathogenType]: { [nodeId]: weight } }` — spatial distribution |
+| `TYPE_BASE_WEIGHT` | `{ [pathogenType]: weight }` — relative frequency across types |
+| `UNLOCK_TURN` | `{ [pathogenType]: turn }` — minimum turn for each type to spawn |
+| `SPAWN_SCHEDULE` | `[{ turn, typeBoost, typeMultiplier, globalBoost }]` — scripted spikes |
+
+---
+
+### `runModifiers.js`
+Runtime modifier system. Accumulates effects from upgrades, scars, and decisions.
+
+**`makeRunModifiers()`** — creates an empty modifier set. Lives in `state.runModifiers`.
+
+**Modifier schema:**
+```js
+{
+  cells: {
+    [cellType]: {
+      clearanceRateMultiplier,      // scales clearanceRate from cellConfig
+      trainingTicksDelta,           // added to trainingTicks (negative = faster)
+      deploymentCostDelta,          // added to deployCost (clamped to min 1)
+      effectivenessBackedBonus,     // added to effectiveness when scout-confirmed
+      effectivenessUnbackedBonus,   // added to effectiveness without backing
+      autoimmuneSurchargeMultiplier,// scales inflammation on clean-site attacks
+    }
+  },
+  nodes: {
+    [nodeId]: {
+      addedConnections,    // new edges from this node (array of nodeIds)
+      removedConnections,  // blocked edges (array of nodeIds)
+      exitCostDelta,       // added to signalTravelCost
+      spawnWeightMultiplier, // scales spawn weight for this node
+    }
+  },
+  pathogens: {
+    [pathogenType]: {
+      growthRateMultiplier,    // scales replicationRate
+      spreadThresholdDelta,    // added to spreadThreshold
+      damageRateMultiplier,    // scales tissueDamageRate
+      clearanceRateMultiplier, // scales how fast this type is cleared
+    }
+  },
+  detection: {
+    [cellType]: { [threatType]: { accuracyBonus } }  // added to correctId probability
+  },
+  systemic: {
+    stressDecayBonus,         // added to STRESS_DECAY_RATE
+    feverStressMultiplier,    // scales STRESS_FEVER_PER_TURN
+    integrityRecoveryBonus,   // added to TISSUE_RECOVERY_RATE
+    tokenCapacityBonus,       // added to INITIAL_TOKEN_CAPACITY at run start
+  },
+  spawn: {
+    [pathogenType]: { weightMultiplier }  // scales TYPE_BASE_WEIGHT
+  }
+}
+```
+
+**`applyModifierPatch(runModifiers, patch)`** — deep-merges a patch onto current modifiers. Scalars replace; arrays (connections) union-merge. Dispatch `APPLY_MODIFIER` to apply during play.
+
+**Stacking upgrades:** read the current value first, then compute the combined value:
+```js
+const current = state.runModifiers.cells?.responder?.clearanceRateMultiplier ?? 1.0;
+dispatch({ type: 'APPLY_MODIFIER', patch: { cells: { responder: { clearanceRateMultiplier: current * 1.3 } } } });
+```
 
 ---
 
@@ -78,8 +188,10 @@ SPLEEN (HQ) ─── BLOOD ─── BONE_MARROW
 - `NODES` — the full node dictionary
 - `NODE_IDS` — `Object.keys(NODES)`
 - `HQ_NODE_ID` — `'SPLEEN'`
-- `computePath(fromId, toId)` — Dijkstra shortest path using `signalTravelCost` as edge weights
-- `computePathCost(path, fromIndex?)` — sum of exit costs along a path; equals turns remaining
+- `computePath(fromId, toId)` — Dijkstra shortest path using base topology
+- `computePathCost(path, fromIndex?)` — sum of exit costs along a path
+- `computePathWithModifiers(fromId, toId, modifiers)` — respects `addedConnections`, `removedConnections`, `exitCostDelta` from runModifiers. Used by cells.js for all path computation during play.
+- `computePathCostWithModifiers(path, modifiers, fromIndex?)` — modifier-aware cost sum
 
 **Movement budget:** 1 per turn. A 0-cost origin (SPLEEN) means the cell moves to the first intermediate node for free, then spends 1 to reach the next. So SPLEEN → GUT takes 2 turns (SPLEEN→BLOOD for free + BLOOD→LIVER for 1 + LIVER→GUT for 1 = cost 2).
 
@@ -167,23 +279,24 @@ All cell lifecycle logic. Pure functions only.
 }
 ```
 
+Cell config and modifier-aware accessors live in `src/data/cellConfig.js`. `cells.js` re-exports `DEPLOY_COSTS`, `CLEARANCE_RATES`, `CELL_DISPLAY_NAMES` for backward compatibility.
+
 **Key exports:**
 | Function | Purpose |
 |---|---|
 | `CELL_TYPES` | String constants for all cell types |
-| `DEPLOY_COSTS` | Token cost per type |
-| `CLEARANCE_RATES` | Clearance power per type (used by `pathogen.js`) |
-| `CELL_DISPLAY_NAMES` | UI labels |
+| `DEPLOY_COSTS` | Token cost per type (re-exported from cellConfig) |
+| `CLEARANCE_RATES` | Clearance power per type (re-exported from cellConfig) |
+| `CELL_DISPLAY_NAMES` | UI labels (re-exported from cellConfig) |
 | `makeReadyCell(type)` | Create a pre-trained cell (for starting roster) |
-| `trainCell(type, ...)` | Create a cell in training phase |
-| `deployFromRoster(cellId, nodeId, ...)` | Move cell to a node; computes `path` via Dijkstra; works from any non-training phase |
-| `recallUnit(cellId, ...)` | Outbound → cancel; arrived → compute return path |
+| `trainCell(type, ..., modifiers?)` | Create a cell in training; uses effective training ticks from modifiers |
+| `deployFromRoster(cellId, nodeId, ..., modifiers?)` | Move cell to a node; uses `computePathWithModifiers` |
+| `recallUnit(cellId, ..., modifiers?)` | Outbound → cancel; arrived → compute return path with modifiers |
 | `decommissionCell(cellId, ...)` | Remove from roster (only ready/training) |
-| `advanceCells(deployedCells, tick)` | **Main tick function.** Returns `{updatedCells, events, nodesVisited}` |
-| `startReturnForClearedNodes(...)` | Auto-returns attack cells when their node is clear |
-| `computeTokensInUse(deployedCells)` | Sum of token costs across all cells |
+| `advanceCells(deployedCells, tick, modifiers?)` | **Main tick function.** Returns `{updatedCells, events, nodesVisited}` |
+| `startReturnForClearedNodes(..., modifiers?)` | Auto-returns attack cells when their node is clear |
+| `computeTokensInUse(deployedCells, modifiers?)` | Sum of effective token costs across all cells |
 | `hasDendriticConfirmation(nodeId, ps)` | Check perceived state for scout confirmation |
-| `getClearancePower(nodeId, cells, gt)` | Total clearance power at a node (not the same as `pathogen.js`'s version) |
 
 **`advanceCells` returns:**
 - `updatedCells` — new deployedCells dict
@@ -208,7 +321,7 @@ Hidden simulation. Advances all pathogen instances, inflammation, tissue integri
 |---|---|
 | `makeCleanSiteState()` | Empty node state (no pathogens, inflammation=0, integrity=100) |
 | `initGroundTruth()` | All nodes start clean |
-| `advanceGroundTruth(gt, cells, turn, stress, spawns)` | **Main turn function.** Returns `{newGroundTruth, events, perSiteOutputs}` |
+| `advanceGroundTruth(gt, cells, turn, stress, spawns, modifiers?)` | **Main turn function.** Returns `{newGroundTruth, events, perSiteOutputs}` |
 
 **`advanceGroundTruth` events:** `pathogen_cleared`, `pathogen_spread`
 
@@ -236,9 +349,9 @@ Per-instance pathogen advancement and spread. Called by `groundTruth.js`.
 **Key exports:**
 | Function | Purpose |
 |---|---|
-| `getClearancePower(pathogenType, nodeId, cells, nodeState)` | Clearance power filtered by `clearableBy` list |
-| `advanceInstance(instance, nodeId, cells, nodeState, stress)` | One-turn advancement: growth, clearance, damage output |
-| `computeSpreads(nodeStates, spreadHistory)` | Determine which pathogens spread to adjacent nodes |
+| `getClearancePower(pathogenType, nodeId, cells, nodeState, modifiers?)` | Clearance power filtered by `clearableBy`; scales by modifier `clearanceRateMultiplier` |
+| `advanceInstance(instance, nodeId, cells, nodeState, stress, modifiers?)` | One-turn advancement: growth, clearance, damage output; respects all pathogen modifiers |
+| `computeSpreads(nodeStates, modifiers?)` | Determine spread events; respects `spreadThresholdDelta` |
 | `shouldWallOff(instance)` | True if fungi above granuloma threshold |
 
 **Growth models:**
@@ -254,10 +367,10 @@ Translates ground truth into signals the player receives.
 **Key exports:**
 | Function | Purpose |
 |---|---|
-| `generateSignals(gt, cells, config, turn, memory, situationId, tick)` | Per-turn: arrived patrol/macrophage detection + collateral damage |
-| `generateSignalsForVisits(nodesVisited, gt, turn, tick, situationId)` | En-route: detection at intermediate nodes for recon cells (neutrophil, macrophage, dendritic) |
-| `makeDendriticReturnSignal(cell, gt, config, tick, turn, situationId)` | One-shot detection roll when scout arrives at destination |
-| `generateSilenceNotices(gt, cells, turn)` | Informational-only notices when patrol is present but reports nothing |
+| `generateSignals(gt, cells, config, turn, memory, situationId, tick, modifiers?)` | Per-turn: arrived patrol/macrophage detection + collateral damage |
+| `generateSignalsForVisits(nodesVisited, gt, turn, tick, situationId, modifiers?)` | En-route: detection at intermediate nodes |
+| `makeDendriticReturnSignal(cell, gt, config, tick, turn, situationId, modifiers?)` | One-shot detection roll when scout arrives at destination |
+| `generateSilenceNotices(gt, cells, turn)` | Informational-only notices when patrol reports nothing |
 
 **Signal shape:**
 ```js
@@ -286,9 +399,9 @@ Translates ground truth into signals the player receives.
 ### `spawner.js`
 Probabilistic pathogen spawning each turn.
 
-`rollSpawns(nodeStates, turn, systemicStress)` → `[{type, nodeId, initialLoad}]`
+`rollSpawns(nodeStates, turn, systemicStress, rng?, modifiers?)` → `[{type, nodeId, initialLoad}]`
 
-Spawn probability decays over time (SPAWN_DECAY_PER_TURN), boosted when no active infections, penalised when 3+ active. MUSCLE has higher weights for parasite and cancer.
+Spawn weights, unlock turns, and schedule are in `src/data/spawnConfig.js`. Edit that file to tune spawn distributions without touching engine logic. Modifiers can further scale per-type weights (`spawn[type].weightMultiplier`) and per-node weights (`nodes[nodeId].spawnWeightMultiplier`).
 
 ---
 
@@ -298,7 +411,7 @@ Computes SystemicStress (pressure, not health) and SystemicIntegrity (the actual
 **Key exports:**
 | Function | Purpose |
 |---|---|
-| `computeSystemicStress(nodeStates, perSiteOutputs, fever, currentStress)` | New stress value this turn |
+| `computeSystemicStress(nodeStates, perSiteOutputs, fever, currentStress, modifiers?)` | New stress value; respects `feverStressMultiplier` and `stressDecayBonus` |
 | `applySystemicIntegrityHits(integrity, stress)` | Reduces integrity when stress ≥ 80 |
 | `computeNewScars(nodeStates, existingScars, integrity, prevIntegrity)` | Generates scar objects when integrity drops |
 | `isSystemCollapsed(integrity)` | True if integrity ≤ 0 (loss condition) |
@@ -339,6 +452,7 @@ Game state shape and `initGameState(runConfig, existingMemoryBank)`.
   signalHistory,               // all signals ever seen
   silenceNotices,              // informational patrol messages
   memoryBank,                  // persists across runs
+  runModifiers,                // accumulated upgrades/scars/decisions — see runModifiers.js
   phase,                       // 'playing' | 'lost'
   lossReason,
   postMortem,
@@ -405,6 +519,7 @@ The `gameReducer` and all action handlers. **This is the only place state mutati
 | `RECALL_UNIT` | Return cell to HQ |
 | `RESTART` | Replace state with new `initialState` |
 | `SELECT_NODE` | Set `selectedNodeId` |
+| `APPLY_MODIFIER` | Deep-merge a `patch` object into `state.runModifiers` (upgrades, scars, decisions) |
 
 **END_TURN sequence:**
 1. Token capacity regen
@@ -494,17 +609,38 @@ End-of-run screen. Shows final systemic integrity/stress, timeline chart, domina
 ## Common Patterns
 
 **Adding a new cell type:**
-1. `CELL_TYPES` + `DEPLOY_COSTS` + `CLEARANCE_RATES` + `CELL_DISPLAY_NAMES` in `cells.js`
-2. `TRAINING_TICKS` in `gameConfig.js`
-3. `_deployExtra` in `cells.js` for type-specific fields
-4. `CELL_CONFIG` in `NodeDetail.jsx` + `CELL_DOT_COLORS` + `CELL_TYPE_ORDER` in `BodyMap.jsx`
-5. Train button in `CellRoster.jsx`
+1. Add entry to `CELL_CONFIG` in `cellConfig.js` (deployCost, clearanceRate, role flags, effectiveness values)
+2. Add type constant to `CELL_TYPES` in `cells.js`
+3. `TRAINING_TICKS` entry in `gameConfig.js`
+4. `_deployExtra` in `cells.js` for any type-specific cell fields (patrol index, dwell tick, etc.)
+5. `CELL_DOT_COLORS` + `CELL_TYPE_ORDER` in `BodyMap.jsx`
+6. Train button in `CellRoster.jsx`
 
 **Adding a new pathogen type:**
 1. `PATHOGEN_TYPES` + `PATHOGEN_SIGNAL_TYPE` + `PATHOGEN_DISPLAY_NAMES` in `pathogens.js`
 2. Entry in `PATHOGEN_REGISTRY` in `pathogens.js` (trackedValue, growth, rates, clearableBy)
-3. `BASE_WEIGHTS` in `spawner.js` to control spawn frequency
+3. `BASE_WEIGHTS` entry in `spawnConfig.js` to control spawn frequency
 4. Optionally: special behaviour hook in `advanceInstance` in `pathogen.js`
+
+**Applying an upgrade / scar / decision:**
+Dispatch `APPLY_MODIFIER` with a `patch` — it deep-merges into `state.runModifiers` and all engine functions pick it up automatically on the next turn.
+
+```js
+// Boost responder clearance 30%:
+const current = state.runModifiers.cells?.responder?.clearanceRateMultiplier ?? 1.0;
+dispatch({ type: 'APPLY_MODIFIER', patch: { cells: { responder: { clearanceRateMultiplier: current * 1.3 } } } });
+
+// Slow scout training (scar):
+dispatch({ type: 'APPLY_MODIFIER', patch: { cells: { dendritic: { trainingTicksDelta: 10 } } } });
+
+// Open a new route (decision):
+dispatch({ type: 'APPLY_MODIFIER', patch: { nodes: { LIVER: { addedConnections: ['CHEST'] } } } });
+
+// Make bacteria grow faster (hard mode modifier):
+dispatch({ type: 'APPLY_MODIFIER', patch: { pathogens: { extracellular_bacteria: { growthRateMultiplier: 1.4 } } } });
+```
+
+For numeric stacking: always read the current value from `state.runModifiers` before computing the new combined value (see `runModifiers.js` — Stacking upgrades pattern).
 
 **Adding a new node:**
 1. Add entry to `NODES` in `nodes.js` (include `connections`, `signalTravelCost: 1`)

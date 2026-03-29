@@ -241,7 +241,8 @@ export default function NodeDetail({
         <section className="border-b border-gray-800">
           <div className="px-4 py-2 text-xs text-gray-600 uppercase tracking-wider">Your Cells Here</div>
 
-          {cellsHere.length === 0 && cellsEnRoute.length === 0 && (
+          {cellsHere.length === 0 && cellsEnRoute.length === 0 && 
+          (
             <div className="px-4 pb-3 text-xs text-gray-800 italic">No cells deployed.</div>
           )}
 

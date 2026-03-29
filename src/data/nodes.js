@@ -1,3 +1,4 @@
+import { getEffectiveConnections, getEffectiveExitCost } from './runModifiers.js';
 
 export const NODES = {
 
@@ -8,7 +9,6 @@ export const NODES = {
     label: 'Bone Marrow',
     position: { x: 85, y: 295 },
     connections: ['BLOOD'],
-    signalSpeed: 3,
     signalTravelCost: 1,
     damageWeight: 2.5,
     isBottleneck: false,
@@ -23,7 +23,6 @@ export const NODES = {
     label: 'Spleen',
     position: { x: 85, y: 125 },
     connections: ['BLOOD'],
-    signalSpeed: 1,
     signalTravelCost: 0,  // HQ — free to leave
     damageWeight: 2.0,
     isBottleneck: false,
@@ -38,7 +37,6 @@ export const NODES = {
     label: 'Throat',
     position: { x: 335, y: 85 },
     connections: ['CHEST'],
-    signalSpeed: 1,
     signalTravelCost: 1,
     damageWeight: 1.2,
     isBottleneck: false,
@@ -51,7 +49,6 @@ export const NODES = {
     label: 'Chest',
     position: { x: 210, y: 85 },
     connections: ['THROAT', 'BLOOD'],
-    signalSpeed: 1,
     signalTravelCost: 1,
     damageWeight: 1.5,
     isBottleneck: false,
@@ -64,7 +61,6 @@ export const NODES = {
     label: 'Liver',
     position: { x: 210, y: 335 },
     connections: ['GUT', 'BLOOD'],
-    signalSpeed: 2,
     signalTravelCost: 1,
     damageWeight: 1.8,
     isBottleneck: false,
@@ -77,7 +73,6 @@ export const NODES = {
     label: 'Blood',
     position: { x: 85, y: 210 },
     connections: ['SPLEEN', 'BONE_MARROW', 'CHEST', 'LIVER', 'MUSCLE'],
-    signalSpeed: 1,
     signalTravelCost: 1,
     damageWeight: 2.0,
     isBottleneck: false,
@@ -90,7 +85,6 @@ export const NODES = {
     label: 'Gut',
     position: { x: 335, y: 335 },
     connections: ['LIVER'],
-    signalSpeed: 2,
     signalTravelCost: 1,
     damageWeight: 1.3,
     isBottleneck: false,
@@ -103,7 +97,6 @@ export const NODES = {
     label: 'Muscle',
     position: { x: 210, y: 210 },
     connections: ['BLOOD', 'PERIPHERY'],
-    signalSpeed: 2,
     signalTravelCost: 1,
     damageWeight: 1.0,
     isBottleneck: false,
@@ -116,7 +109,6 @@ export const NODES = {
     label: 'Periphery',
     position: { x: 335, y: 210 },
     connections: ['MUSCLE'],
-    signalSpeed: 2,
     signalTravelCost: 1,
     damageWeight: 0.8,
     isBottleneck: false,
@@ -178,6 +170,68 @@ export function computePathCost(path, fromIndex = 0) {
   let cost = 0;
   for (let i = fromIndex; i < path.length - 1; i++) {
     cost += NODES[path[i]]?.signalTravelCost ?? 1;
+  }
+  return cost;
+}
+
+// ── Modifier-aware path computation ──────────────────────────────────────────
+// Use these when runModifiers may include added/removed connections or exit cost changes.
+// Falls back to standard computePath/computePathCost when no node modifiers are active.
+
+export function computePathWithModifiers(fromId, toId, modifiers) {
+  if (fromId === toId) return [fromId];
+  if (!modifiers || Object.keys(modifiers.nodes ?? {}).length === 0) {
+    return computePath(fromId, toId);
+  }
+
+  const nodeIds = Object.keys(NODES);
+  const dist = {};
+  const prev = {};
+  const unvisited = new Set(nodeIds);
+
+  for (const id of nodeIds) dist[id] = Infinity;
+  dist[fromId] = 0;
+
+  while (unvisited.size > 0) {
+    let u = null;
+    for (const id of unvisited) {
+      if (u === null || dist[id] < dist[u]) u = id;
+    }
+    if (dist[u] === Infinity || u === toId) break;
+    unvisited.delete(u);
+
+    const baseExitCost = NODES[u].signalTravelCost ?? 1;
+    const exitCost = getEffectiveExitCost(u, baseExitCost, modifiers);
+    const baseConnections = NODES[u].connections ?? [];
+    const connections = getEffectiveConnections(u, baseConnections, modifiers);
+
+    for (const connId of connections) {
+      if (!unvisited.has(connId)) continue;
+      const alt = dist[u] + exitCost;
+      if (alt < dist[connId]) {
+        dist[connId] = alt;
+        prev[connId] = u;
+      }
+    }
+  }
+
+  const path = [];
+  let cur = toId;
+  while (cur !== undefined) {
+    path.unshift(cur);
+    cur = prev[cur];
+  }
+  return path[0] === fromId ? path : [fromId, toId];
+}
+
+export function computePathCostWithModifiers(path, modifiers, fromIndex = 0) {
+  if (!modifiers || Object.keys(modifiers.nodes ?? {}).length === 0) {
+    return computePathCost(path, fromIndex);
+  }
+  let cost = 0;
+  for (let i = fromIndex; i < path.length - 1; i++) {
+    const baseExitCost = NODES[path[i]]?.signalTravelCost ?? 1;
+    cost += getEffectiveExitCost(path[i], baseExitCost, modifiers);
   }
   return cost;
 }

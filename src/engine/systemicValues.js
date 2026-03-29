@@ -20,6 +20,7 @@ import {
   INTEGRITY_HIT_STRESS_90,
   INTEGRITY_HIT_STRESS_100,
 } from '../data/gameConfig.js';
+import { getEffectiveStressDecay, getEffectiveFeverStress } from '../data/runModifiers.js';
 
 /**
  * Compute the new systemic stress value for this turn.
@@ -30,7 +31,7 @@ import {
  * @param {number} currentStress — previous value (for decay calculation)
  * @returns {{ stress: number, sources: Object[] }}
  */
-export function computeSystemicStress(nodeStates, perSiteOutputs, fever, currentStress) {
+export function computeSystemicStress(nodeStates, perSiteOutputs, fever, currentStress, modifiers = null) {
   const sources = [];
   let delta = 0;
 
@@ -51,8 +52,9 @@ export function computeSystemicStress(nodeStates, perSiteOutputs, fever, current
 
   // ── Fever ──────────────────────────────────────────────────────────────────
   if (fever?.active) {
-    delta += STRESS_FEVER_PER_TURN;
-    sources.push({ type: 'fever', amount: STRESS_FEVER_PER_TURN });
+    const feverStress = getEffectiveFeverStress(STRESS_FEVER_PER_TURN, modifiers);
+    delta += feverStress;
+    sources.push({ type: 'fever', amount: feverStress });
   }
 
   // ── Toxin output ───────────────────────────────────────────────────────────
@@ -84,8 +86,9 @@ export function computeSystemicStress(nodeStates, perSiteOutputs, fever, current
 
   // ── Natural decay when no active infections ────────────────────────────────
   if (infectedCount === 0) {
-    delta -= STRESS_DECAY_RATE;
-    sources.push({ type: 'decay', amount: -STRESS_DECAY_RATE });
+    const decayRate = getEffectiveStressDecay(STRESS_DECAY_RATE, modifiers);
+    delta -= decayRate;
+    sources.push({ type: 'decay', amount: -decayRate });
   }
 
   const stress = Math.max(0, Math.min(100, currentStress + delta));
