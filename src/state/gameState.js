@@ -1,10 +1,8 @@
 // Game state shape and initialisation.
-// Turn-based endless run. No situationStates array — single groundTruth + perceivedState.
+// Turn-based endless run. Detection state lives on pathogen instances in groundTruth.
 
 import { initGroundTruth } from '../engine/groundTruth.js';
-import { initPerceivedState } from './perceivedState.js';
 import { makeReadyCell, computeTokensInUse } from '../engine/cells.js';
-import { NODE_IDS } from '../data/nodes.js';
 import { INITIAL_TOKEN_CAPACITY, TICKS_PER_TURN } from '../data/gameConfig.js';
 import { DEFAULT_RUN_CONFIG } from '../data/runConfig.js';
 import { makeRunModifiers } from '../data/runModifiers.js';
@@ -38,10 +36,8 @@ export function initGameState(runConfig = DEFAULT_RUN_CONFIG) {
     runConfig,
 
     // Ground truth — the hidden simulation
+    // Detection state (detected_level, perceived_type) lives on pathogen instances here.
     groundTruth: initGroundTruth(),
-
-    // Perceived state — what the player's immune system believes
-    perceivedState: initPerceivedState(NODE_IDS),
 
     // Cell deployment
     deployedCells,

@@ -3,15 +3,16 @@
 // Node appearance:
 //   Fill colour  = inflammation (dark blue → olive → amber → orange → red)
 //   Fill level   = tissue integrity (full = 100%, empty = 0%)
-//   Arc rings    = classified pathogens (arc length = load %, each type a unique colour)
+//   Arc rings    = detected pathogens (style reflects detected_level; arc = load %)
+//     unknown       → thin dashed grey ring, fixed arc
+//     threat        → dashed orange ring, fixed arc
+//     classified    → solid type-colour ring, arc = load %
+//     misclassified → solid ring in perceived_type colour, arc = load %
 //   Inner dots   = friendly cells present (colour = cell type, sorted)
-//   Orange badge = count of unclassified anomalies ("possible threat")
-//   Red badge    = count of confirmed-but-untyped threats
-//   (Classified threats are shown as rings, not badges)
+//   Yellow badge = count of unknown-level pathogens
 
 import { NODES } from '../data/nodes.js';
-import { ENTITY_CLASS } from '../state/perceivedState.js';
-import { PATHOGEN_SIGNAL_TYPE, getPrimaryLoad } from '../data/pathogens.js';
+import { getPrimaryLoad } from '../data/pathogens.js';
 
 const SVG_W = 420;
 const SVG_H = 420;
@@ -41,13 +42,6 @@ const CELL_DOT_COLORS = {
 };
 const CELL_TYPE_ORDER = ['neutrophil', 'macrophage', 'dendritic', 'responder', 'killer_t', 'b_cell', 'nk_cell'];
 
-// ── Signal type → pathogen type reverse map ───────────────────────────────────
-const SIG_TO_PATHOGEN = {};
-for (const [pathType, sigType] of Object.entries(PATHOGEN_SIGNAL_TYPE)) {
-  if (!SIG_TO_PATHOGEN[sigType]) SIG_TO_PATHOGEN[sigType] = [];
-  SIG_TO_PATHOGEN[sigType].push(pathType);
-}
-
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function inflammationStyle(pct) {
@@ -74,60 +68,43 @@ function arcPath(cx, cy, r, pct) {
   return `M ${x0.toFixed(2)} ${y0.toFixed(2)} A ${r} ${r} 0 ${large} 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`;
 }
 
-// Rings to render:
-//   CLASSIFIED entity  → type-specific colour, arc = GT load %
-//   PATHOGEN entity    → generic orange ring, arc = dominant GT load %
-function getPathogenRings(nodeId, perceivedState, gtNodeStates) {
-  const entities = (perceivedState.foreignEntitiesByNode?.[nodeId] ?? [])
-    .filter(e => !e.isDismissed);
-
-  const gtNode = gtNodeStates?.[nodeId];
-  if (!gtNode) return [];
-
+// Build rings and badge counts from pathogen detected_levels.
+// Rings are sorted: classified/misclassified innermost, then threat, then unknown (outermost).
+function getPathogenDisplay(nodeId, gtNodeStates, isVisible) {
+  const pathogens = gtNodeStates?.[nodeId]?.pathogens ?? [];
   const rings = [];
-  const seenPathogenTypes = new Set();
+  let unknownCount = 0;
 
-  // 1. CLASSIFIED entities → specific ring colour
-  for (const entity of entities.filter(e => e.perceivedClass === ENTITY_CLASS.CLASSIFIED && e.classifiedType)) {
-    const pathTypes = SIG_TO_PATHOGEN[entity.classifiedType] ?? [];
-    for (const pt of pathTypes) {
-      if (seenPathogenTypes.has(pt)) continue;
-      const inst = gtNode.pathogens?.find(i => i.type === pt);
-      if (!inst) continue;
-      const load = getPrimaryLoad(inst);
-      if (load <= 0) continue;
-      seenPathogenTypes.add(pt);
-      rings.push({ pathogenType: pt, loadPct: Math.min(0.999, load / 100), color: PATHOGEN_RING_COLORS[pt] ?? '#aaa', dashed: false });
-    }
+  // Separate by level for ordered rendering
+  const classified = [], threats = [], unknowns = [];
+  for (const inst of pathogens) {
+    if (inst.detected_level === 'classified' || inst.detected_level === 'misclassified') classified.push(inst);
+    else if (inst.detected_level === 'threat') threats.push(inst);
+    else if (inst.detected_level === 'unknown') unknowns.push(inst);
+  }
+  unknownCount = unknowns.length;
+
+  // classified/misclassified: solid type-colour ring; arc = load % when visible
+  for (const inst of classified) {
+    const displayType = inst.perceived_type ?? inst.type;
+    const color = PATHOGEN_RING_COLORS[displayType] ?? '#aaa';
+    const load = getPrimaryLoad(inst);
+    if (load <= 0) continue;
+    const loadPct = isVisible ? Math.min(0.999, load / 100) : 0.85;
+    rings.push({ uid: inst.uid, loadPct, color, dashed: false, dashArray: undefined });
   }
 
-  // 2. PATHOGEN entities (confirmed-untyped) → generic ring using dominant GT pathogen
-  const hasUntyped = entities.some(e => e.perceivedClass === ENTITY_CLASS.PATHOGEN);
-  if (hasUntyped) {
-    // Find highest-load GT pathogen not already shown as a classified ring
-    let bestLoad = 0, bestType = null;
-    for (const inst of (gtNode.pathogens ?? [])) {
-      if (seenPathogenTypes.has(inst.type)) continue;
-      const load = getPrimaryLoad(inst);
-      if (load > bestLoad) { bestLoad = load; bestType = inst.type; }
-    }
-    if (bestType && bestLoad > 0) {
-      rings.push({ pathogenType: bestType, loadPct: Math.min(0.999, bestLoad / 100), color: '#f97316', dashed: true });
-    }
+  // threat: dashed orange ring, fixed arc (load unknown to player)
+  for (const inst of threats) {
+    rings.push({ uid: inst.uid, loadPct: 0.55, color: '#f97316', dashed: true, dashArray: '5 3' });
   }
 
-  return rings;
-}
+  // unknown: thin dashed grey ring, short fixed arc
+  for (const inst of unknowns) {
+    rings.push({ uid: inst.uid, loadPct: 0.25, color: '#6b7280', dashed: true, dashArray: '3 4' });
+  }
 
-function getBadgeCounts(nodeId, perceivedState, rings) {
-  const entities = (perceivedState.foreignEntitiesByNode?.[nodeId] ?? []).filter(e => !e.isDismissed);
-  // UNKNOWN → orange badge; PATHOGEN → orange badge if no ring yet (ring already conveys it)
-  const hasRings = rings.length > 0;
-  return {
-    possible: entities.filter(e => e.perceivedClass === ENTITY_CLASS.UNKNOWN).length,
-    // Confirmed-untyped badge only shows when there's no ring (no GT data found)
-    confirmed: hasRings ? 0 : entities.filter(e => e.perceivedClass === ENTITY_CLASS.PATHOGEN).length,
-  };
+  return { rings, unknownCount };
 }
 
 function getCellDots(nodeId, deployedCells) {
@@ -142,7 +119,6 @@ function getCellDots(nodeId, deployedCells) {
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function BodyMap({
-  perceivedState,
   groundTruthNodeStates,
   deployedCells,
   selectedNodeId,
@@ -229,8 +205,7 @@ export default function BodyMap({
           const inflammPct = (fogGt?.inflammation ?? 0) / 100;
           const { fill, stroke } = inflammationStyle(inflammPct);
           const isSelected = node.id === selectedNodeId;
-          const rings = getPathogenRings(node.id, perceivedState, groundTruthNodeStates);
-          const { possible, confirmed } = getBadgeCounts(node.id, perceivedState, rings);
+          const { rings, unknownCount } = getPathogenDisplay(node.id, groundTruthNodeStates, isVisible);
           const cellDots = getCellDots(node.id, deployedCells);
 
           // Pathogen rings: start just outside the node border, spaced 6px apart
@@ -271,15 +246,15 @@ export default function BodyMap({
                   const d = arcPath(cx, cy, r, ring.loadPct);
                   return d ? (
                     <path
-                      key={ring.pathogenType}
+                      key={ring.uid ?? i}
                       d={d}
                       fill="none"
                       stroke={ring.color}
-                      strokeWidth="2.5"
+                      strokeWidth={ring.dashed ? 1.5 : 2.5}
                       strokeLinecap="round"
-                      strokeDasharray={ring.dashed ? '4 3' : undefined}
-                      opacity={ring.dashed ? 0.6 : 0.85}
-                      filter={`url(#glow-${ring.color.slice(1)})`}
+                      strokeDasharray={ring.dashArray}
+                      opacity={ring.dashed ? 0.55 : 0.85}
+                      filter={ring.dashed ? undefined : `url(#glow-${ring.color.slice(1)})`}
                     />
                   ) : null;
                 })}
@@ -335,12 +310,12 @@ export default function BodyMap({
                   </text>
                 )}
 
-                {/* Orange badge — possible / unclassified threats */}
-                {possible > 0 && (
+                {/* Yellow badge — count of unknown-level pathogens */}
+                {unknownCount > 0 && (
                   <g>
                     <circle
                       cx={cx - NODE_R + 4} cy={cy - NODE_R + 3}
-                      r={6} fill="#92400e" stroke="#f59e0b" strokeWidth="0.75"
+                      r={6} fill="#78350f" stroke="#d97706" strokeWidth="0.75"
                     />
                     <text
                       x={cx - NODE_R + 4} y={cy - NODE_R + 3}
@@ -349,26 +324,7 @@ export default function BodyMap({
                       fill="#fde68a"
                       className="pointer-events-none select-none"
                     >
-                      {possible}
-                    </text>
-                  </g>
-                )}
-
-                {/* Red badge — confirmed untyped threats */}
-                {confirmed > 0 && (
-                  <g>
-                    <circle
-                      cx={cx + NODE_R - 4} cy={cy - NODE_R + 3}
-                      r={6} fill="#7f1d1d" stroke="#ef4444" strokeWidth="0.75"
-                    />
-                    <text
-                      x={cx + NODE_R - 4} y={cy - NODE_R + 3}
-                      textAnchor="middle" dominantBaseline="middle"
-                      fontSize="6" fontFamily="monospace" fontWeight="bold"
-                      fill="#fca5a5"
-                      className="pointer-events-none select-none"
-                    >
-                      {confirmed}
+                      {unknownCount}
                     </text>
                   </g>
                 )}

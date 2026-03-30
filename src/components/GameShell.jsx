@@ -5,10 +5,10 @@
 import { useReducer, useCallback, useState } from 'react';
 import { initGameState, GAME_PHASES } from '../state/gameState.js';
 import { gameReducer, ACTION_TYPES } from '../state/actions.js';
-import { THREAT_LEVELS } from '../state/perceivedState.js';
 import { DEFAULT_RUN_CONFIG } from '../data/runConfig.js';
 import { CELL_TYPES, CELL_DISPLAY_NAMES, DEPLOY_COSTS } from '../engine/cells.js';
 import { NODES, computeVisibility } from '../data/nodes.js';
+import { PATHOGEN_DISPLAY_NAMES } from '../data/pathogens.js';
 import BodyMap from './BodyMap.jsx';
 import CellRoster from './CellRoster.jsx';
 import NodeDetail from './NodeDetail.jsx';
@@ -271,7 +271,6 @@ export default function GameShell() {
           onClick={e => { if (e.target === e.currentTarget) handleSelectNode(null); }}
         >
           <BodyMap
-            perceivedState={state.perceivedState}
             groundTruthNodeStates={state.groundTruth.nodeStates}
             deployedCells={state.deployedCells}
             selectedNodeId={selectedNodeId}
@@ -287,7 +286,6 @@ export default function GameShell() {
           <div className="w-80 shrink-0 overflow-hidden flex flex-col border-l border-gray-800">
             <NodeDetail
               nodeId={selectedNodeId}
-              perceivedState={state.perceivedState}
               groundTruthNodeState={state.groundTruth.nodeStates[selectedNodeId]}
               deployedCells={state.deployedCells}
               currentTurn={state.turn}
@@ -308,7 +306,6 @@ export default function GameShell() {
               scars={state.scars}
               groundTruthNodeStates={state.groundTruth.nodeStates}
               onSelectNode={handleSelectNode}
-              perceivedState={state.perceivedState}
             />
           </div>
         )}
@@ -330,14 +327,19 @@ export default function GameShell() {
 
 function OverviewPanel({
   deployedCells, systemicStress, systemicIntegrity,
-  stressHistory, fever, scars,  groundTruthNodeStates, onSelectNode, perceivedState,
+  stressHistory, fever, scars, groundTruthNodeStates, onSelectNode,
 }) {
-  const alertNodes = Object.entries(perceivedState?.nodes ?? {})
-    .filter(([, n]) => n.threatLevel >= THREAT_LEVELS.CONFIRMED)
+  const ALERT_LEVELS = new Set(['threat', 'classified', 'misclassified']);
+
+  const alertNodes = Object.entries(groundTruthNodeStates ?? {})
+    .filter(([, ns]) => ns.pathogens?.some(i => ALERT_LEVELS.has(i.detected_level)))
     .map(([nodeId]) => nodeId);
 
-  const warningNodes = Object.entries(perceivedState?.nodes ?? {})
-    .filter(([, n]) => n.threatLevel === THREAT_LEVELS.SUSPECTED)
+  const warningNodes = Object.entries(groundTruthNodeStates ?? {})
+    .filter(([, ns]) => {
+      const hasAlert = ns.pathogens?.some(i => ALERT_LEVELS.has(i.detected_level));
+      return !hasAlert && ns.pathogens?.some(i => i.detected_level === 'unknown');
+    })
     .map(([nodeId]) => nodeId);
 
   const totalDeployed = Object.keys(deployedCells).length;
@@ -383,7 +385,7 @@ function OverviewPanel({
             <div className="px-3 py-1.5 text-red-700 uppercase tracking-wider">Alerts ({alertNodes.length})</div>
             {alertNodes.map(nodeId => (
               <NodeSummaryRow key={nodeId} nodeId={nodeId} level="alert" onSelect={onSelectNode}
-                entities={perceivedState?.foreignEntitiesByNode?.[nodeId] ?? []} />
+                pathogens={groundTruthNodeStates?.[nodeId]?.pathogens ?? []} />
             ))}
           </section>
         )}
@@ -394,7 +396,7 @@ function OverviewPanel({
             <div className="px-3 py-1.5 text-yellow-800 uppercase tracking-wider">Warnings ({warningNodes.length})</div>
             {warningNodes.map(nodeId => (
               <NodeSummaryRow key={nodeId} nodeId={nodeId} level="warning" onSelect={onSelectNode}
-                entities={perceivedState?.foreignEntitiesByNode?.[nodeId] ?? []} />
+                pathogens={groundTruthNodeStates?.[nodeId]?.pathogens ?? []} />
             ))}
           </section>
         )}
@@ -439,17 +441,28 @@ function OverviewPanel({
   );
 }
 
-function NodeSummaryRow({ nodeId, entities, level, onSelect }) {
+function NodeSummaryRow({ nodeId, pathogens, level, onSelect }) {
   const node = NODES[nodeId];
   if (!node) return null;
   const color = level === 'alert' ? 'text-red-500 hover:bg-red-950' : 'text-yellow-600 hover:bg-yellow-950';
-  const activeEntity = entities.find(e => !e.isDismissed && !e.isResolved);
+  // Show label for the most-detected pathogen
+  const topPathogen = pathogens
+    .filter(i => i.detected_level !== 'none')
+    .sort((a, b) => {
+      const order = { classified: 4, misclassified: 3, threat: 2, unknown: 1 };
+      return (order[b.detected_level] ?? 0) - (order[a.detected_level] ?? 0);
+    })[0];
+  const sublabel =
+    topPathogen?.detected_level === 'classified' || topPathogen?.detected_level === 'misclassified'
+      ? (PATHOGEN_DISPLAY_NAMES[topPathogen.perceived_type] ?? '?')
+      : topPathogen?.detected_level === 'threat' ? 'Unknown threat'
+      : 'Anomaly';
   return (
     <button onClick={() => onSelect(nodeId)}
       className={`w-full text-left flex items-center gap-2 px-3 py-1.5 transition-colors ${color}`}>
       <span className="font-mono text-xs font-bold">{level === 'alert' ? '!' : '?'}</span>
       <span className="text-xs font-mono flex-1">{node.label}</span>
-      {activeEntity && <span className="text-xs opacity-60 truncate max-w-20">{activeEntity.displayLabel}</span>}
+      {topPathogen && <span className="text-xs opacity-60 truncate max-w-20">{sublabel}</span>}
     </button>
   );
 }

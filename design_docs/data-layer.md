@@ -37,10 +37,11 @@ Single source of truth for all per-type cell properties.
 | `displayName` | UI label |
 | `deployCost` | Tokens held for cell's lifetime |
 | `clearanceRate` | Pathogen clearance power per turn |
+| `detectionRolls` | Number of detection rolls per node visit (recon cells only: macrophage=1, neutrophil=2, dendritic=3) |
 | `isRecon` / `isAttack` / `isPatrol` | Role flags |
-| `requiresScoutConfirmation` | Killer T: cannot deploy without scout confirmation |
-| `effectivenessWithBacking` | Clearance effectiveness when scout has confirmed threat |
-| `effectivenessWithoutBacking` | Clearance effectiveness without scout confirmation (null = N/A) |
+| `requiresScoutConfirmation` | Killer T: cannot deploy without a classified pathogen at target |
+| `effectivenessWithBacking` | Clearance effectiveness when node has a classified pathogen |
+| `effectivenessWithoutBacking` | Clearance effectiveness without classification (null = N/A) |
 
 **Derived tables:** `DEPLOY_COSTS`, `CLEARANCE_RATES`, `CELL_DISPLAY_NAMES` — re-exported from `cells.js` for backward compat.
 
@@ -164,23 +165,40 @@ SPLEEN (HQ) ─── BLOOD ─── BONE_MARROW
 Static registry of all pathogen types: growth models, damage rates, clearable-by lists.
 
 **Exports used:**
-- `PATHOGEN_REGISTRY` — full per-type configuration
+- `PATHOGEN_REGISTRY` — full per-type configuration (includes `detectionModifier` per type)
 - `PATHOGEN_TYPES` — string constants
-- `PATHOGEN_SIGNAL_TYPE` — maps pathogen type → signal vocabulary (`'bacterial'`, `'viral'`, etc.)
 - `PATHOGEN_DISPLAY_NAMES` — UI labels
 - `isInstanceCleared(inst)` — returns true if tracked value ≤ 0
 - `getPrimaryLoad(inst)` — reads the tracked value from an instance
-- `getDominantPathogen(nodeState)` — returns the highest-load pathogen at a node
-- `nodeHasActivePathogen(nodeState)` — true if any pathogen is present
+- `getDominantPathogen(nodeState)` — returns the highest-load pathogen at a node (iterates array)
+- `nodeHasActivePathogen(nodeState)` — true if any pathogen is present (`nodeState.pathogens.some(...)`)
 - `allNodesClear(nodeStates)` — true if no active pathogens anywhere
 
 **PathogenInstance shape:**
 ```js
-{ type: 'extracellular_bacteria', infectionLoad: 45 }
-{ type: 'virus', cellularCompromise: 30 }
-{ type: 'fungi', hyphaeLoad: 20, isWalledOff: false }
+{
+  uid: 'path_7',                   // unique ID; inherited by spread children
+  type: 'extracellular_bacteria',
+  infectionLoad: 45,               // primary tracked value (name varies by type)
+  detected_level: 'none',          // 'none' | 'unknown' | 'threat' | 'classified' | 'misclassified'
+  perceived_type: null,            // string | null — set when classified/misclassified
+}
 ```
-Each type tracks exactly one primary value (`trackedValue` from registry). Stored at `nodeStates[nodeId].pathogens[pathogenType]`.
+Each type tracks exactly one primary value (`trackedValue` from registry). Stored in `nodeStates[nodeId].pathogens[]` (array — multiple pathogens of the same type can coexist).
+
+**`detectionModifier` per pathogen type** (scales detection upgrade probability):
+| Type | Modifier |
+|---|---|
+| extracellular_bacteria | 1.0 |
+| intracellular_bacteria | 0.8 |
+| virus | 0.8 |
+| fungi | 1.0 |
+| parasite | 0.9 |
+| toxin_producer | 0.9 |
+| prion | 0.5 |
+| cancer | 0.6 |
+| autoimmune | 0.7 |
+| benign | 0.7 |
 
 ---
 
@@ -195,13 +213,30 @@ Minimal constants retained for `memory.js`. No signal objects exist at runtime.
 ---
 
 ## `detection.js`
-Detection probability matrix and roll logic. Pure data + one function.
+Detection probability tables and the `performDetection` pure function. Operates directly on pathogen instances — no perceived state involved.
 
-**`rollDetection(cellType, threatType, threatStrength, inflammation, modifiers?)`** → `{ outcome, reportedType }`
+**`performDetection(cellType, nodePathogens, nodeInflammation, modifiers?)`** → updated `nodePathogens[]`
 
-**Outcomes (`DETECTION_OUTCOMES`):** `MISS`, `ANOMALY`, `THREAT_UNCLASSIFIED`, `CORRECT_ID`, `WRONG_ID`, `CLEAR`, `FALSE_ALARM`
+Each recon cell gets N rolls (from `CELL_DETECTION_ROLLS`). Each roll targets the highest-priority unclassified pathogen and attempts to upgrade its `detected_level`. Returns a new array with updated detection state on affected instances.
 
-Used directly by `actions.js` (handleEndTurn) for all detection rolls — arrived patrols, en-route visits, and scout arrivals.
+**Detection rolls per cell type (`CELL_DETECTION_ROLLS`):**
+| Cell type | Rolls |
+|---|---|
+| macrophage | 1 |
+| neutrophil | 2 |
+| dendritic | 3 |
+
+**Level priority** (rolls target highest-priority first): `misclassified` > `threat` > `unknown` > `none` > `classified` (already done).
+
+**Upgrade probability tables (`DETECTION_UPGRADE_PROBS`)** — per cell type × current `detected_level`:
+- `none → unknown`: base chance modified by `detectionModifier` and inflammation bonus
+- `unknown → threat`: higher base chance
+- `threat → classified`: highest base chance; `misclassifyChance` may instead produce `misclassified`
+- `misclassified → classified`: correction attempt
+
+**`WRONG_ID_MAP`** — per pathogen type, likely misidentification targets (other type strings).
+
+Used by `actions.js` (`runDetectionPhase`) for all detection — arrived recon cells, macrophage adjacents, and en-route visits.
 
 ---
 

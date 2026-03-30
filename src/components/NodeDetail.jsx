@@ -3,8 +3,7 @@
 
 import { NODES } from '../data/nodes.js';
 import { computePathCost } from '../data/nodes.js';
-import { ENTITY_CLASS } from '../state/perceivedState.js';
-import { PATHOGEN_DISPLAY_NAMES, PATHOGEN_SIGNAL_TYPE, getPrimaryLoad } from '../data/pathogens.js';
+import { PATHOGEN_DISPLAY_NAMES, getPrimaryLoad } from '../data/pathogens.js';
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
@@ -76,92 +75,58 @@ function SiteStatusPanel({ gt, liveIntegrity = null, isStale = false }) {
   );
 }
 
-// ── Perceived threat section ──────────────────────────────────────────────────
+// ── Pathogen threat section ───────────────────────────────────────────────────
 
-const CLASSIFIED_TYPE_NAMES = {
-  bacterial: 'Bacterial pathogen',
-  viral:     'Viral infection',
-  fungal:    'Fungal infection',
-  parasitic: 'Parasitic infection',
-  toxin:     'Toxin producer',
-  prion:     'Prion',
-  cancer:    'Malignant growth',
-  benign:    'Benign variation',
-};
-
-function PathogenPanel({ nodeId, perceivedState, groundTruthNodeState, currentTurn }) {
-  const entities = (perceivedState.foreignEntitiesByNode?.[nodeId] ?? [])
-    .filter(e => !e.isDismissed
-      && !e.isResolved
-      && e.perceivedClass !== ENTITY_CLASS.SELF_LIKE
-      && e.perceivedClass !== ENTITY_CLASS.BENIGN);
+function PathogenPanel({ groundTruthNodeState }) {
+  const pathogens = (groundTruthNodeState?.pathogens ?? [])
+    .filter(inst => inst.detected_level !== 'none');
 
   return (
     <section className="border-b border-gray-800 px-4 py-3 space-y-2">
       <div className="text-xs text-gray-600 uppercase tracking-wider">Threats</div>
 
-      {entities.map(entity => {
-        const cls = entity.perceivedClass;
-        const isClassified = cls === ENTITY_CLASS.CLASSIFIED;
+      {pathogens.length === 0 && (
+        <div className="text-xs text-gray-800 italic">No surveillance data.</div>
+      )}
 
-        // Determine display properties
-        let label, barColor, labelColor, isGhost;
+      {pathogens.map(inst => {
+        const level = inst.detected_level;
+        const isKnown = level === 'classified' || level === 'misclassified';
 
-        if (cls === ENTITY_CLASS.UNKNOWN) {
-          label      = 'Possible threat';
-          barColor   = 'bg-yellow-600';
-          labelColor = 'text-yellow-600';
-          isGhost    = true;
-        } else if (cls === ENTITY_CLASS.PATHOGEN) {
-          label      = 'Confirmed threat';
+        let label, barColor, labelColor;
+
+        if (level === 'unknown') {
+          label      = 'Unknown anomaly';
+          barColor   = 'bg-gray-600';
+          labelColor = 'text-gray-500';
+        } else if (level === 'threat') {
+          label      = 'Unclassified threat';
           barColor   = 'bg-orange-600';
           labelColor = 'text-orange-500';
-          isGhost    = true;
         } else {
-          // CLASSIFIED — show actual type and load
-          const signalType = entity.classifiedType;
-          if (signalType === 'benign') {
-            label      = 'Benign variation';
-            barColor   = 'bg-gray-500';
-            labelColor = 'text-gray-500';
-          } else {
-            label      = CLASSIFIED_TYPE_NAMES[signalType] ?? signalType ?? 'Unknown type';
-            barColor   = 'bg-red-600';
-            labelColor = 'text-red-400';
-          }
-          isGhost = false;
+          // classified or misclassified — show perceived_type (may be wrong if misclassified)
+          const displayType = inst.perceived_type ?? inst.type;
+          label      = PATHOGEN_DISPLAY_NAMES[displayType] ?? displayType;
+          barColor   = displayType === 'benign' ? 'bg-gray-500' : 'bg-red-600';
+          labelColor = displayType === 'benign' ? 'text-gray-500' : 'text-red-400';
         }
 
-        // For classified: look up real GT load
-        let gtLoad = 0;
-        if (isClassified) {
-          for (const inst of (groundTruthNodeState?.pathogens ?? [])) {
-            if (PATHOGEN_SIGNAL_TYPE[inst.type] === entity.classifiedType) {
-              gtLoad = Math.max(gtLoad, getPrimaryLoad(inst));
-            }
-          }
-        }
-
-        // Turns at current visibility level
-        const levelSince = entity.levelSince ?? entity.firstSeenTurn ?? 0;
-        const turnsAtLevel = Math.max(0, currentTurn - levelSince);
+        const load = isKnown ? getPrimaryLoad(inst) : 0;
 
         return (
-          <div key={entity.id}>
+          <div key={inst.uid ?? inst.type}>
             <div className="flex justify-between text-xs mb-0.5">
               <span className={labelColor}>{label}</span>
-              {isGhost ? (
-                <span className="text-gray-600">{turnsAtLevel}T</span>
-              ) : (
-                <span className="text-gray-400">{Math.round(gtLoad)}</span>
-              )}
+              {isKnown
+                ? <span className="text-gray-400">{Math.round(load)}</span>
+                : null}
             </div>
-            {isGhost ? (
+            {isKnown ? (
+              <BarFill value={load} color={barColor} />
+            ) : (
               <div className="h-1.5 w-full rounded bg-gray-800 overflow-hidden">
                 <div className={`h-full w-full rounded ${barColor} opacity-20`} />
               </div>
-            ) : (
-              <BarFill value={gtLoad} color={barColor} />
             )}
           </div>
         );
@@ -186,7 +151,6 @@ const CELL_CONFIG = {
 
 export default function NodeDetail({
   nodeId,
-  perceivedState,
   groundTruthNodeState,
   deployedCells,
   currentTurn,
@@ -231,8 +195,8 @@ export default function NodeDetail({
           isStale={!isVisible && !!lastKnown}
         />
 
-        {/* Perceived threat state */}
-        <PathogenPanel nodeId={nodeId} perceivedState={perceivedState} groundTruthNodeState={groundTruthNodeState} currentTurn={currentTurn} />
+        {/* Pathogen threat state */}
+        <PathogenPanel groundTruthNodeState={groundTruthNodeState} />
 
         {/* Friendly cells */}
         <section className="border-b border-gray-800">

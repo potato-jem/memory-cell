@@ -46,7 +46,7 @@ Cell config and modifier-aware accessors live in `src/data/cellConfig.js`. `cell
 | `advanceCells(deployedCells, tick, modifiers?)` | **Main tick function.** Returns `{updatedCells, events, nodesVisited}` |
 | `startReturnForClearedNodes(..., modifiers?)` | Auto-returns attack cells when their node is clear |
 | `computeTokensInUse(deployedCells, modifiers?)` | Sum of effective token costs across all cells |
-| `hasDendriticConfirmation(nodeId, ps)` | Check perceived state for scout confirmation |
+| `nodeHasClassifiedPathogen(nodeId, nodeStates)` | True if any pathogen at node has `detected_level === 'classified'` (replaces `hasDendriticConfirmation`) |
 
 **`advanceCells` returns:**
 - `updatedCells` — new deployedCells dict
@@ -80,7 +80,8 @@ Hidden simulation. Advances all pathogen instances, inflammation, tissue integri
 **Site state shape:**
 ```js
 {
-  pathogens: {},                  // { [pathogenType]: PathogenInstance }
+  pathogens: [],                  // PathogenInstance[] — each has uid, type, tracked value, detected_level, perceived_type
+  immune: [],                     // uid[] — cleared pathogen lineages; blocks re-spread of same uid
   inflammation: 0,                // 0-100
   tissueIntegrity: 100,           // 0-100
   tissueIntegrityCeiling: 100,    // permanent cap after scarring
@@ -99,9 +100,10 @@ Per-instance pathogen advancement and spread. Called by `groundTruth.js`.
 **Key exports:**
 | Function | Purpose |
 |---|---|
+| `generatePathogenUid()` | Returns a unique `'path_N'` string; used when creating new instances |
 | `getClearancePower(pathogenType, nodeId, cells, nodeState, modifiers?)` | Clearance power filtered by `clearableBy`; scales by modifier `clearanceRateMultiplier` |
 | `advanceInstance(instance, nodeId, cells, nodeState, stress, modifiers?)` | One-turn advancement: growth, clearance, damage output; respects all pathogen modifiers |
-| `computeSpreads(nodeStates, modifiers?)` | Determine spread events; respects `spreadThresholdDelta` |
+| `computeSpreads(nodeStates, modifiers?)` | Determine spread events; child inherits parent `uid`; checks target `immune[]` to block re-spread |
 | `shouldWallOff(instance)` | True if fungi above granuloma threshold |
 
 **Growth models:**
@@ -112,7 +114,7 @@ Per-instance pathogen advancement and spread. Called by `groundTruth.js`.
 ---
 
 ## `signalGenerator.js`
-Removed. Detection outcomes now update `perceivedState` directly — see `src/state/actions.js` (`handleEndTurn`) and `src/state/perceivedState.js`.
+Removed. Detection state now lives directly on pathogen instances (`detected_level`, `perceived_type`). See `src/data/detection.js` (`performDetection`) and `src/state/actions.js` (`runDetectionPhase`).
 
 ---
 
