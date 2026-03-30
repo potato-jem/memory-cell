@@ -1,15 +1,10 @@
 // Central game configuration — all tunable constants in one place.
 
-export const TICKS_PER_TURN = 5;             // ticks per simulation turn (ground truth / signal cadence)
+export const TICKS_PER_TURN = 5;             // ticks per simulation turn
 
 // Cell timing (in ticks)
 export const PATROL_DWELL_TICKS = 10;       // how long a patrol cell stays at a node before moving to an adjacent one
 export const SCOUT_DWELL_TICKS = 10;        // how long a scout dwells at destination before auto-returning (2 turns)
-
-// Signal timeouts (in ticks = seconds). null = never auto-expire.
-export const WARNING_SIGNAL_TIMEOUT = 60;   // anomaly_detected / collateral_damage expire after 60s if unactioned
-export const ALERT_SIGNAL_TIMEOUT = null;   // threat_confirmed / threat_expanding never expire automatically
-export const INFO_SIGNAL_TIMEOUT = null;    // patrol_clear / false_alarm: keep latest, no expiry
 
 // ── Cell manufacturing ────────────────────────────────────────────────────────
 // tokenCapacity starts at INITIAL_TOKEN_CAPACITY and grows by 1 every

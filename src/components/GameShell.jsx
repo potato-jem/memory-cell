@@ -6,6 +6,7 @@ import { useReducer, useCallback, useState } from 'react';
 import { initGameState, GAME_PHASES } from '../state/gameState.js';
 import { gameReducer, ACTION_TYPES } from '../state/actions.js';
 import { initMemoryBank, getMemoryBankSummary } from '../engine/memory.js';
+import { THREAT_LEVELS } from '../state/perceivedState.js';
 import { DEFAULT_RUN_CONFIG } from '../data/runConfig.js';
 import { CELL_TYPES, CELL_DISPLAY_NAMES, DEPLOY_COSTS } from '../engine/cells.js';
 import { NODES, computeVisibility } from '../data/nodes.js';
@@ -67,8 +68,6 @@ export default function GameShell() {
   const handleSelectNode = useCallback((nodeId) => {
     dispatch({ type: ACTION_TYPES.SELECT_NODE, nodeId });
   }, []);
-
-  // ── Signal decisions ────────────────────────────────────────────────────────
 
   const handleRecall = useCallback((cellId) => {
     dispatch({ type: ACTION_TYPES.RECALL_UNIT, cellId });
@@ -304,7 +303,6 @@ export default function GameShell() {
         ) : (
           <div className="w-64 shrink-0 border-l border-gray-800 overflow-y-auto">
             <OverviewPanel
-             activeSignals={state.activeSignals}
               deployedCells={state.deployedCells}
               systemicStress={stress}
               systemicIntegrity={integrity}
@@ -335,23 +333,15 @@ export default function GameShell() {
 // ── Overview panel ─────────────────────────────────────────────────────────────
 
 function OverviewPanel({
-  activeSignals, deployedCells, systemicStress, systemicIntegrity,
-  stressHistory, fever, scars, memoryBank, groundTruthNodeStates, onSelectNode,perceivedState,
+  deployedCells, systemicStress, systemicIntegrity,
+  stressHistory, fever, scars, memoryBank, groundTruthNodeStates, onSelectNode, perceivedState,
 }) {
-  console.log(activeSignals)
-  const nodeSignalMap = {};
-  for (const sig of activeSignals.filter(s => !s.routed)) {
-    if (!nodeSignalMap[sig.nodeId]) nodeSignalMap[sig.nodeId] = [];
-    nodeSignalMap[sig.nodeId].push(sig);
-  }
-  console.log(perceivedState)
-
-  const alertNodes = Object.entries(nodeSignalMap)
-    .filter(([, sigs]) => sigs.some(s => s.type === 'threat_expanding' || s.type === 'threat_confirmed'))
+  const alertNodes = Object.entries(perceivedState?.nodes ?? {})
+    .filter(([, n]) => n.threatLevel >= THREAT_LEVELS.CONFIRMED)
     .map(([nodeId]) => nodeId);
 
-  const warningNodes = Object.entries(nodeSignalMap)
-    .filter(([nodeId]) => !alertNodes.includes(nodeId))
+  const warningNodes = Object.entries(perceivedState?.nodes ?? {})
+    .filter(([, n]) => n.threatLevel === THREAT_LEVELS.SUSPECTED)
     .map(([nodeId]) => nodeId);
 
   const totalDeployed = Object.keys(deployedCells).length;
@@ -397,7 +387,8 @@ function OverviewPanel({
           <section className="border-b border-gray-800">
             <div className="px-3 py-1.5 text-red-700 uppercase tracking-wider">Alerts ({alertNodes.length})</div>
             {alertNodes.map(nodeId => (
-              <NodeSummaryRow key={nodeId} nodeId={nodeId} signals={nodeSignalMap[nodeId]} level="alert" onSelect={onSelectNode} />
+              <NodeSummaryRow key={nodeId} nodeId={nodeId} level="alert" onSelect={onSelectNode}
+                entities={perceivedState?.foreignEntitiesByNode?.[nodeId] ?? []} />
             ))}
           </section>
         )}
@@ -407,13 +398,14 @@ function OverviewPanel({
           <section className="border-b border-gray-800">
             <div className="px-3 py-1.5 text-yellow-800 uppercase tracking-wider">Warnings ({warningNodes.length})</div>
             {warningNodes.map(nodeId => (
-              <NodeSummaryRow key={nodeId} nodeId={nodeId} signals={nodeSignalMap[nodeId]} level="warning" onSelect={onSelectNode} />
+              <NodeSummaryRow key={nodeId} nodeId={nodeId} level="warning" onSelect={onSelectNode}
+                entities={perceivedState?.foreignEntitiesByNode?.[nodeId] ?? []} />
             ))}
           </section>
         )}
 
         {alertNodes.length === 0 && warningNodes.length === 0 && (
-          <div className="px-3 py-3 text-gray-800 italic border-b border-gray-800">No active signals.</div>
+          <div className="px-3 py-3 text-gray-800 italic border-b border-gray-800">No active threats detected.</div>
         )}
 
         {/* Deployed cells */}
@@ -465,16 +457,17 @@ function OverviewPanel({
   );
 }
 
-function NodeSummaryRow({ nodeId, signals, level, onSelect }) {
+function NodeSummaryRow({ nodeId, entities, level, onSelect }) {
   const node = NODES[nodeId];
   if (!node) return null;
   const color = level === 'alert' ? 'text-red-500 hover:bg-red-950' : 'text-yellow-600 hover:bg-yellow-950';
+  const activeEntity = entities.find(e => !e.isDismissed && !e.isResolved);
   return (
     <button onClick={() => onSelect(nodeId)}
       className={`w-full text-left flex items-center gap-2 px-3 py-1.5 transition-colors ${color}`}>
       <span className="font-mono text-xs font-bold">{level === 'alert' ? '!' : '?'}</span>
       <span className="text-xs font-mono flex-1">{node.label}</span>
-      <span className="text-xs opacity-60">{signals.length}×</span>
+      {activeEntity && <span className="text-xs opacity-60 truncate max-w-20">{activeEntity.displayLabel}</span>}
     </button>
   );
 }

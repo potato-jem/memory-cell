@@ -2,7 +2,8 @@
 // Turn-based endless run. Health model: SystemicStress + SystemicIntegrity + Fever.
 
 import { advanceGroundTruth } from '../engine/groundTruth.js';
-import { generateSignals, generateSignalsForVisits, makeDendriticReturnSignal, generateSilenceNotices } from '../engine/signalGenerator.js';
+import { rollDetection, DETECTION_OUTCOMES } from '../data/detection.js';
+import { getDominantPathogen, PATHOGEN_SIGNAL_TYPE } from '../data/pathogens.js';
 import { computeSystemicStress, applySystemicIntegrityHits, computeNewScars, isSystemCollapsed, identifyFailureMode } from '../engine/systemicValues.js';
 import { rollSpawns } from '../engine/spawner.js';
 import {
@@ -15,16 +16,17 @@ import {
   computeTokensInUse,
 } from '../engine/cells.js';
 import {
-  applySignalToPerceivedState,
+  applyDetectionOutcome,
+  applyCollateralDamageObservation,
   applyDendriticReturn,
   applyResponderDeployed,
   applyNeutrophilDeployed,
 } from './perceivedState.js';
+import { NODES, computeVisibility } from '../data/nodes.js';
 import { TICKS_PER_TURN, GAME_PHASES, LOSS_REASONS } from './gameState.js';
 import { TOKEN_CAPACITY_MAX, TOKEN_CAPACITY_REGEN_INTERVAL } from '../data/gameConfig.js';
 import { recordEncounter } from '../engine/memory.js';
 import { applyModifierPatch } from '../data/runModifiers.js';
-import { computeVisibility } from '../data/nodes.js';
 
 export const ACTION_TYPES = {
   END_TURN:           'END_TURN',
@@ -78,15 +80,17 @@ function handleEndTurn(state) {
   // 2. Advance cells (training, transit, patrol, returns)
   let { updatedCells, events: cellEvents, nodesVisited } = advanceCells(state.deployedCells, newTick, mods);
 
-  // 3. Handle scout arrivals (generate return signals before ground truth advances)
-  const scoutReturnSignals = [];
+  // 3. Scout arrivals: roll detection against current ground truth before it advances
+  const scoutDetections = [];
   for (const event of cellEvents) {
     if (event.type !== 'scout_arrived') continue;
     const cell = updatedCells[event.cellId];
     if (!cell) continue;
-    const sig = makeDendriticReturnSignal(cell, state.groundTruth, state.runConfig, newTick, newTurn, 'primary', mods);
-    if (!sig) continue;
-    scoutReturnSignals.push(sig);
+    const nodeState = state.groundTruth.nodeStates?.[cell.nodeId] ?? {};
+    const { actualThreatType, threatStrength } = dominantForDetection(nodeState);
+    const inflammation = nodeState.inflammation ?? 0;
+    const { outcome, reportedType } = rollDetection('dendritic', actualThreatType, threatStrength, inflammation, mods);
+    scoutDetections.push({ nodeId: cell.nodeId, outcome, reportedType });
   }
 
   // 4. Probabilistic spawning
@@ -124,32 +128,58 @@ function handleEndTurn(state) {
     };
   }
 
-  // 7. Generate patrol/macrophage signals + en-route detection
-  const newSignals = generateSignals(
-    newGroundTruth, updatedCells, state.runConfig, newTurn, state.memoryBank, 'primary', newTick, mods
-  );
-  const visitSignals = generateSignalsForVisits(nodesVisited, newGroundTruth, newTurn, newTick, 'primary', mods);
-
-  // 8. Update perceived state
+  // 7. Detection rolls → perceived state updates
   let perceivedState = state.perceivedState;
-  for (const sig of [...newSignals, ...visitSignals, ...scoutReturnSignals]) {
-    perceivedState = applySignalToPerceivedState(perceivedState, sig);
-  }
-  for (const sig of scoutReturnSignals) {
-    const perceivedThreat = sig.type === 'threat_confirmed';
-    perceivedState = applyDendriticReturn(perceivedState, sig.nodeId, perceivedThreat, sig.reportedThreatType ?? null, newTurn);
+  const RECON_TYPES = new Set(['neutrophil', 'macrophage', 'dendritic']);
+
+  // 7a. Arrived patrol/macrophage cells
+  const coveredNodes = new Set();
+  for (const cell of Object.values(updatedCells)) {
+    if (cell.phase !== 'arrived') continue;
+    if (!['neutrophil', 'macrophage'].includes(cell.type)) continue;
+    const nodeId = cell.nodeId;
+    if (coveredNodes.has(nodeId)) continue;
+
+    const nodeState = newGroundTruth.nodeStates?.[nodeId] ?? {};
+    const { actualThreatType, threatStrength } = dominantForDetection(nodeState);
+    const inflammation = nodeState.inflammation ?? 0;
+
+    const { outcome, reportedType } = rollDetection(cell.type, actualThreatType, threatStrength, inflammation, mods);
+    if (outcome !== DETECTION_OUTCOMES.MISS) {
+      perceivedState = applyDetectionOutcome(perceivedState, nodeId, outcome, reportedType, newTurn);
+      coveredNodes.add(nodeId);
+    } else if (inflammation >= 40) {
+      // No threat detected but high inflammation is itself informative
+      perceivedState = applyCollateralDamageObservation(perceivedState, nodeId, newTurn);
+      coveredNodes.add(nodeId);
+    }
   }
 
-  // 9. Signals
-  let activeSignals = state.activeSignals.filter(s =>
-    s.expiresAtTick == null || newTick < s.expiresAtTick
-  );
-  const allNewSignals = [...newSignals, ...visitSignals, ...scoutReturnSignals];
-  activeSignals = [...activeSignals, ...allNewSignals];
-  const signalHistory = [...state.signalHistory, ...allNewSignals];
-  const silenceNotices = generateSilenceNotices(newGroundTruth, updatedCells, newTurn);
+  // 7b. En-route detection at intermediate nodes
+  const visitedNodes = new Set();
+  for (const { cellType, nodeId } of nodesVisited) {
+    if (!RECON_TYPES.has(cellType)) continue;
+    if (visitedNodes.has(nodeId)) continue;
+    if (!NODES[nodeId]) continue;
 
-  // 10. Systemic values
+    const nodeState = newGroundTruth.nodeStates?.[nodeId] ?? {};
+    const { actualThreatType, threatStrength } = dominantForDetection(nodeState);
+    const inflammation = nodeState.inflammation ?? 0;
+
+    const { outcome, reportedType } = rollDetection(cellType, actualThreatType, threatStrength, inflammation, mods);
+    if (outcome !== DETECTION_OUTCOMES.MISS) {
+      perceivedState = applyDetectionOutcome(perceivedState, nodeId, outcome, reportedType, newTurn);
+      visitedNodes.add(nodeId);
+    }
+  }
+
+  // 7c. Scout arrival detections
+  for (const { nodeId, outcome, reportedType } of scoutDetections) {
+    const foundThreat = outcome !== DETECTION_OUTCOMES.MISS && outcome !== DETECTION_OUTCOMES.CLEAR;
+    perceivedState = applyDendriticReturn(perceivedState, nodeId, foundThreat, reportedType ?? null, newTurn);
+  }
+
+  // 8. Systemic values
   const { stress: newStress } = computeSystemicStress(
     newGroundTruth.nodeStates, perSiteOutputs, state.fever, state.systemicStress, mods
   );
@@ -163,7 +193,7 @@ function handleEndTurn(state) {
     { turn: newTurn, stress: newStress, integrity: newIntegrity },
   ];
 
-  // 11. Memory bank — record cleared pathogens
+  // 9. Memory bank — record cleared pathogens
   let memoryBank = state.memoryBank;
   for (const event of gtEvents) {
     if (event.type === 'pathogen_cleared') {
@@ -171,11 +201,11 @@ function handleEndTurn(state) {
     }
   }
 
-  // 12. Token pool
+  // 10. Token pool
   const tokensInUse = computeTokensInUse(updatedCells, mods);
   const attentionTokens = tokenCapacity - tokensInUse;
 
-  // 13. Loss check
+  // 11. Loss check
   let phase = state.phase;
   let lossReason = null;
   let postMortem = null;
@@ -196,9 +226,6 @@ function handleEndTurn(state) {
     deployedCells: updatedCells,
     attentionTokens,
     tokensInUse,
-    activeSignals,
-    signalHistory,
-    silenceNotices,
     systemicStress: newStress,
     systemicIntegrity: newIntegrity,
     systemicStressHistory,
@@ -280,18 +307,6 @@ function handleRecallUnit(state, cellId) {
 }
 
 // ── Modifier application ───────────────────────────────────────────────────────
-// Dispatched by upgrades, scars, and narrative decisions.
-// action.patch is a partial runModifiers object (deep-merged into current modifiers).
-//
-// Example patches:
-//   Upgrade — boost responder clearance 50%:  { cells: { responder: { clearanceRateMultiplier: 1.5 } } }
-//   Scar    — slow scout training:            { cells: { dendritic: { trainingTicksDelta: 10 } } }
-//   Decision — open a new route:              { nodes: { LIVER: { addedConnections: ['CHEST'] } } }
-//   Upgrade — improve dendritic vs virus:     { detection: { dendritic: { viral: { accuracyBonus: 0.15 } } } }
-//
-// For stacking numeric upgrades, read the current value first:
-//   const current = state.runModifiers.cells?.responder?.clearanceRateMultiplier ?? 1.0;
-//   dispatch({ type: ACTION_TYPES.APPLY_MODIFIER, patch: { cells: { responder: { clearanceRateMultiplier: current * 1.3 } } } });
 
 function handleApplyModifier(state, patch) {
   const runModifiers = applyModifierPatch(state.runModifiers, patch);
@@ -311,4 +326,13 @@ function buildPostMortem(state, groundTruth, stressHistory, scars, outcome) {
     turnsPlayed: state.turn,
     memoryBank: state.memoryBank,
   };
+}
+
+// ── Helper: dominant threat for detection rolls ────────────────────────────────
+
+function dominantForDetection(nodeState) {
+  const dominant = getDominantPathogen(nodeState);
+  if (!dominant) return { actualThreatType: null, threatStrength: 0 };
+  const signalType = PATHOGEN_SIGNAL_TYPE[dominant.type] ?? dominant.type;
+  return { actualThreatType: signalType, threatStrength: dominant.load };
 }

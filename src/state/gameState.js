@@ -75,11 +75,6 @@ export function initGameState(runConfig = DEFAULT_RUN_CONFIG, existingMemoryBank
     // Dispatch APPLY_MODIFIER with a patch to modify cell/node/pathogen/detection/systemic/spawn behavior
     runModifiers: makeRunModifiers(),
 
-    // Signals
-    activeSignals:  [],
-    signalHistory:  [],
-    silenceNotices: [],
-
     // Fog-of-war — last observed ground-truth snapshot per node
     lastKnownNodeStates: {},
 

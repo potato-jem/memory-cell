@@ -3,7 +3,6 @@
 // Layer 2: within-session memory. Cross-session persistence deferred to Layer 5.
 
 import { THREAT_TYPES } from '../data/signals.js';
-import { bumpConfidence } from '../data/signals.js';
 
 /**
  * Initial memory bank — no prior exposure to any threat type.
@@ -42,32 +41,6 @@ export function recordEncounter(memoryBank, threatType, resolvedCleanly) {
       bonus: newBonus,
       lastEncounteredResult: resolvedCleanly ? 'clean' : 'messy',
     },
-  };
-}
-
-/**
- * Apply memory bank to a signal — bumps confidence if threat type is recognized.
- * @param {Object} signal - the signal to modify
- * @param {Object} memoryBank
- * @param {string|null} threatType - the actual threat type (from ground truth, if known to player)
- * @returns {Object} modified signal
- */
-export function applyMemoryBonus(signal, memoryBank, threatType) {
-  if (!threatType) return signal;
-
-  const memory = memoryBank[threatType];
-  if (!memory || !memory.recognized) return signal;
-
-  // Memory bonus: bump confidence up one level
-  // Only applies if the signal is actually threat-related (not patrol_clear)
-  const threatSignalTypes = ['anomaly_detected', 'threat_confirmed', 'threat_expanding'];
-  if (!threatSignalTypes.includes(signal.type)) return signal;
-
-  return {
-    ...signal,
-    confidence: bumpConfidence(signal.confidence),
-    hasMemoryBonus: true,
-    memoryBonusNote: `Prior ${threatType} exposure — signal clarity enhanced`,
   };
 }
 

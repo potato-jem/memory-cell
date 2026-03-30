@@ -1,6 +1,5 @@
 // Perceived state — the player's working model of the body.
-// Tracks foreign entity signatures detected at each node.
-// "Coherence" is now called "health" throughout.
+// Detection outcomes update this directly; there are no intermediate signal objects.
 
 export const THREAT_LEVELS = {
   NONE: 0,
@@ -11,8 +10,8 @@ export const THREAT_LEVELS = {
 
 // Foreign entity classes — what the player thinks is at a node
 export const ENTITY_CLASS = {
-  UNKNOWN: 'unknown',           // anomalous signal, unclassified
-  PATHOGEN: 'pathogen',         // confirmed threat
+  UNKNOWN: 'unknown',           // anomalous, unclassified
+  PATHOGEN: 'pathogen',         // confirmed threat, type unknown
   SELF_LIKE: 'self_like',       // appears normal (mimic hiding, or genuinely clean)
   BENIGN: 'benign',             // false alarm confirmed
   INFLAMMATORY: 'inflammatory', // collateral / autoimmune activity
@@ -29,8 +28,7 @@ export function initPerceivedState(nodeIds) {
   }
   return {
     nodes,
-    signalsByNode: {},
-    foreignEntitiesByNode: {}, // { [nodeId]: ForeignEntity[] }
+    foreignEntitiesByNode: {},
     overallAssessment: 'monitoring',
   };
 }
@@ -40,98 +38,79 @@ function makeCleanNode() {
     threatLevel: THREAT_LEVELS.NONE,
     responseLevel: 0,
     scoutConfirmed: false,
-    signalsReceived: [],
-    lastSignalTurn: null,
-    quarantinedSignalIds: [],
-    dismissedSignalIds: [],
+    lastSeenTurn: null,
   };
 }
 
-// ── Signal → perceived state ──────────────────────────────────────────────────
+// ── Detection outcome → perceived state ───────────────────────────────────────
+// Called directly from the turn handler after each detection roll.
+// `outcome` is a DETECTION_OUTCOMES value (string); `reportedType` is null or a
+// pathogen signal type string (what the cell thinks it is — may be wrong for WRONG_ID).
 
-export function applySignalToPerceivedState(perceivedState, signal) {
-  const nodeId = signal.nodeId;
+export function applyDetectionOutcome(perceivedState, nodeId, outcome, reportedType, turn) {
   const current = perceivedState.nodes[nodeId] ?? makeCleanNode();
 
-  const newThreatLevel = signalTypeToThreatLevel(signal.type, current.threatLevel);
+  let newThreatLevel = current.threatLevel;
+  let entityClass = null;
+  let classifiedType = null;
 
-  const updatedNode = {
-    ...current,
-    threatLevel: newThreatLevel,
-    signalsReceived: [...current.signalsReceived, signal.id],
-    lastSignalTurn: signal.arrivedOnTurn,
-  };
+  switch (outcome) {
+    case 'anomaly':
+    case 'false_alarm':
+      newThreatLevel = Math.max(current.threatLevel, THREAT_LEVELS.SUSPECTED);
+      entityClass = ENTITY_CLASS.UNKNOWN;
+      break;
+    case 'threat_unclassified':
+      newThreatLevel = Math.max(current.threatLevel, THREAT_LEVELS.CONFIRMED);
+      entityClass = ENTITY_CLASS.PATHOGEN;
+      break;
+    case 'correct_id':
+    case 'wrong_id':
+      newThreatLevel = Math.max(current.threatLevel, THREAT_LEVELS.CONFIRMED);
+      entityClass = ENTITY_CLASS.CLASSIFIED;
+      classifiedType = reportedType;
+      break;
+    case 'clear':
+      newThreatLevel = THREAT_LEVELS.NONE;
+      break;
+    default:
+      return perceivedState;
+  }
 
-  // Update foreign entities
-  const updatedEntities = applySignalToEntities(
-    perceivedState.foreignEntitiesByNode[nodeId] ?? [],
-    signal
-  );
+  const updatedNode = { ...current, threatLevel: newThreatLevel, lastSeenTurn: turn };
+
+  let entities = perceivedState.foreignEntitiesByNode[nodeId] ?? [];
+  if (outcome === 'clear') {
+    entities = entities.map(e => e.isDismissed ? e : { ...e, isResolved: true });
+  } else if (entityClass) {
+    entities = updateOrCreateEntity(entities, nodeId, entityClass, classifiedType, turn);
+  }
 
   return {
     ...perceivedState,
     nodes: { ...perceivedState.nodes, [nodeId]: updatedNode },
-    signalsByNode: {
-      ...perceivedState.signalsByNode,
-      [nodeId]: [...(perceivedState.signalsByNode[nodeId] ?? []), signal.id],
-    },
-    foreignEntitiesByNode: {
-      ...perceivedState.foreignEntitiesByNode,
-      [nodeId]: updatedEntities,
-    },
+    foreignEntitiesByNode: { ...perceivedState.foreignEntitiesByNode, [nodeId]: entities },
   };
 }
 
-// Rank used to determine if an entity should be upgraded
-function classRank(cls) {
-  const ranks = {
-    [ENTITY_CLASS.UNKNOWN]: 1,
-    [ENTITY_CLASS.INFLAMMATORY]: 1,
-    [ENTITY_CLASS.PATHOGEN]: 2,
-    [ENTITY_CLASS.CLASSIFIED]: 3,
-    [ENTITY_CLASS.BENIGN]: 3,
-    [ENTITY_CLASS.SELF_LIKE]: 0,
+// Called when a patrol/macrophage at an inflamed node sees no threat.
+// Only adds an INFLAMMATORY entity if no active threat entity already exists.
+export function applyCollateralDamageObservation(perceivedState, nodeId, turn) {
+  const current = perceivedState.nodes[nodeId] ?? makeCleanNode();
+  const entities = perceivedState.foreignEntitiesByNode[nodeId] ?? [];
+
+  const hasActiveThreat = entities.some(e =>
+    !e.isDismissed && !e.isResolved &&
+    (e.perceivedClass === ENTITY_CLASS.PATHOGEN || e.perceivedClass === ENTITY_CLASS.CLASSIFIED)
+  );
+  if (hasActiveThreat) return perceivedState;
+
+  const updatedEntities = updateOrCreateEntity(entities, nodeId, ENTITY_CLASS.INFLAMMATORY, null, turn);
+  return {
+    ...perceivedState,
+    nodes: { ...perceivedState.nodes, [nodeId]: { ...current, lastSeenTurn: turn } },
+    foreignEntitiesByNode: { ...perceivedState.foreignEntitiesByNode, [nodeId]: updatedEntities },
   };
-  return ranks[cls] ?? 0;
-}
-
-function applySignalToEntities(existing, signal) {
-  const turn = signal.arrivedOnTurn;
-  const impliedClass = signalTypeToEntityClass(signal.type);
-  if (!impliedClass || impliedClass === ENTITY_CLASS.SELF_LIKE) return existing;
-
-  const impliedRank = classRank(impliedClass);
-
-  // Find any active (non-dismissed, non-resolved) entity to potentially upgrade
-  const existingIdx = existing.findIndex(e => !e.isDismissed && !e.isResolved);
-
-  if (existingIdx >= 0) {
-    const e = existing[existingIdx];
-    const currentRank = classRank(e.perceivedClass);
-    const isUpgrade = impliedRank > currentRank;
-    const updated = {
-      ...e,
-      ...(isUpgrade ? { perceivedClass: impliedClass, levelSince: turn } : {}),
-      lastUpdatedTurn: turn,
-      signalIds: [...e.signalIds, signal.id],
-    };
-    return existing.map((item, i) => i === existingIdx ? updated : item);
-  }
-
-  // Create new entity
-  return [...existing, {
-    id: nextEntityId(),
-    nodeId: signal.nodeId,
-    perceivedClass: impliedClass,
-    classifiedType: null,
-    firstSeenTurn: turn,
-    levelSince: turn,
-    lastUpdatedTurn: turn,
-    signalIds: [signal.id],
-    isDismissed: false,
-    isResolved: false,
-    displayLabel: entityDisplayLabel(impliedClass, null, null),
-  }];
 }
 
 // ── Dendritic return ──────────────────────────────────────────────────────────
@@ -143,13 +122,13 @@ export function applyDendriticReturn(perceivedState, nodeId, foundThreat, threat
     ...current,
     scoutConfirmed: true,
     threatLevel: foundThreat ? THREAT_LEVELS.CONFIRMED : THREAT_LEVELS.NONE,
+    lastSeenTurn: turn,
   };
 
   const newClass = foundThreat ? ENTITY_CLASS.CLASSIFIED : ENTITY_CLASS.BENIGN;
 
-  // Resolve all active entities with the scout's findings
   const existingEntities = perceivedState.foreignEntitiesByNode[nodeId] ?? [];
-  const resolvedEntities = existingEntities.map(e => {
+  let resolvedEntities = existingEntities.map(e => {
     if (e.isDismissed) return e;
     return {
       ...e,
@@ -158,13 +137,12 @@ export function applyDendriticReturn(perceivedState, nodeId, foundThreat, threat
       levelSince: turn,
       lastUpdatedTurn: turn,
       isResolved: !foundThreat,
-      displayLabel: entityDisplayLabel(newClass, foundThreat ? threatType : null, null),
+      displayLabel: entityDisplayLabel(newClass, foundThreat ? threatType : null),
     };
   });
 
-  // If found threat but no prior entity, create one
   if (foundThreat && resolvedEntities.length === 0) {
-    resolvedEntities.push({
+    resolvedEntities = [{
       id: nextEntityId(),
       nodeId,
       perceivedClass: ENTITY_CLASS.CLASSIFIED,
@@ -172,11 +150,10 @@ export function applyDendriticReturn(perceivedState, nodeId, foundThreat, threat
       firstSeenTurn: turn,
       levelSince: turn,
       lastUpdatedTurn: turn,
-      signalIds: [],
       isDismissed: false,
       isResolved: false,
-      displayLabel: entityDisplayLabel(ENTITY_CLASS.CLASSIFIED, threatType, null),
-    });
+      displayLabel: entityDisplayLabel(ENTITY_CLASS.CLASSIFIED, threatType),
+    }];
   }
 
   return {
@@ -197,10 +174,7 @@ export function applyResponderDeployed(perceivedState, nodeId) {
     ...perceivedState,
     nodes: {
       ...perceivedState.nodes,
-      [nodeId]: {
-        ...current,
-        responseLevel: Math.min(3, (current.responseLevel ?? 0) + 1),
-      },
+      [nodeId]: { ...current, responseLevel: Math.min(3, (current.responseLevel ?? 0) + 1) },
     },
   };
 }
@@ -211,10 +185,7 @@ export function applyNeutrophilDeployed(perceivedState, nodeId) {
     ...perceivedState,
     nodes: {
       ...perceivedState.nodes,
-      [nodeId]: {
-        ...current,
-        responseLevel: Math.max(1, current.responseLevel ?? 0),
-      },
+      [nodeId]: { ...current, responseLevel: Math.max(1, current.responseLevel ?? 0) },
     },
   };
 }
@@ -232,30 +203,45 @@ export function dismissEntity(perceivedState, nodeId, entityId) {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function signalTypeToEntityClass(signalType) {
-  const map = {
-    anomaly_detected: ENTITY_CLASS.UNKNOWN,
-    threat_confirmed: ENTITY_CLASS.PATHOGEN,
-    threat_expanding: ENTITY_CLASS.PATHOGEN,
-    collateral_damage: ENTITY_CLASS.INFLAMMATORY,
-    patrol_clear: ENTITY_CLASS.SELF_LIKE,  // mimic hides behind these
-    false_alarm: null,                     // don't add entity for explicit false alarms
-    resolution: null,
-  };
-  return map[signalType] ?? null;
+// Rank used to determine if an entity should be upgraded
+function classRank(cls) {
+  return { unknown: 1, inflammatory: 1, pathogen: 2, classified: 3, benign: 3, self_like: 0 }[cls] ?? 0;
 }
 
-function signalTypeToThreatLevel(signalType, currentLevel) {
-  const escalation = {
-    patrol_clear: THREAT_LEVELS.NONE,
-    anomaly_detected: Math.max(currentLevel, THREAT_LEVELS.SUSPECTED),
-    threat_confirmed: Math.max(currentLevel, THREAT_LEVELS.CONFIRMED),
-    threat_expanding: THREAT_LEVELS.CRITICAL,
-    collateral_damage: currentLevel,
-    false_alarm: THREAT_LEVELS.NONE,
-    resolution: THREAT_LEVELS.NONE,
-  };
-  return escalation[signalType] ?? currentLevel;
+function updateOrCreateEntity(existing, nodeId, impliedClass, classifiedType, turn) {
+  if (!impliedClass || impliedClass === ENTITY_CLASS.SELF_LIKE) return existing;
+
+  const impliedRank = classRank(impliedClass);
+  const existingIdx = existing.findIndex(e => !e.isDismissed && !e.isResolved);
+
+  if (existingIdx >= 0) {
+    const e = existing[existingIdx];
+    const isUpgrade = impliedRank > classRank(e.perceivedClass);
+    const updated = {
+      ...e,
+      ...(isUpgrade ? {
+        perceivedClass: impliedClass,
+        classifiedType: classifiedType ?? e.classifiedType,
+        levelSince: turn,
+        displayLabel: entityDisplayLabel(impliedClass, classifiedType ?? e.classifiedType),
+      } : {}),
+      lastUpdatedTurn: turn,
+    };
+    return existing.map((item, i) => i === existingIdx ? updated : item);
+  }
+
+  return [...existing, {
+    id: nextEntityId(),
+    nodeId,
+    perceivedClass: impliedClass,
+    classifiedType: classifiedType ?? null,
+    firstSeenTurn: turn,
+    levelSince: turn,
+    lastUpdatedTurn: turn,
+    isDismissed: false,
+    isResolved: false,
+    displayLabel: entityDisplayLabel(impliedClass, classifiedType ?? null),
+  }];
 }
 
 export function entityDisplayLabel(perceivedClass, classifiedType) {
@@ -269,13 +255,12 @@ export function entityDisplayLabel(perceivedClass, classifiedType) {
     };
     return typeNames[classifiedType] ?? `Pathogen (${classifiedType})`;
   }
-  const classLabels = {
+  return {
     [ENTITY_CLASS.UNKNOWN]: 'Unknown signature',
     [ENTITY_CLASS.PATHOGEN]: 'Unclassified pathogen',
     [ENTITY_CLASS.SELF_LIKE]: 'Normal tissue',
     [ENTITY_CLASS.BENIGN]: 'Benign variation',
     [ENTITY_CLASS.INFLAMMATORY]: 'Inflammatory activity',
     [ENTITY_CLASS.CLASSIFIED]: 'Pathogen (classified)',
-  };
-  return classLabels[perceivedClass] ?? 'Unknown';
+  }[perceivedClass] ?? 'Unknown';
 }
