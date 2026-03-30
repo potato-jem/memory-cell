@@ -68,17 +68,20 @@ export function initGameState(runConfig = DEFAULT_RUN_CONFIG, existingMemoryBank
     // Scars — permanent negative modifiers from serious damage
     scars: [],
 
-    // Signals
-    activeSignals: [],
-    signalHistory: [],
-    silenceNotices: [],
-
     // Memory bank — carries across runs
     memoryBank: existingMemoryBank ?? initMemoryBank(),
 
     // Runtime modifiers — accumulate upgrades, scars, decisions
     // Dispatch APPLY_MODIFIER with a patch to modify cell/node/pathogen/detection/systemic/spawn behavior
     runModifiers: makeRunModifiers(),
+
+    // Signals
+    activeSignals:  [],
+    signalHistory:  [],
+    silenceNotices: [],
+
+    // Fog-of-war — last observed ground-truth snapshot per node
+    lastKnownNodeStates: {},
 
     // Phase
     phase: GAME_PHASES.PLAYING,

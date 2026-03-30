@@ -8,7 +8,7 @@ import { gameReducer, ACTION_TYPES } from '../state/actions.js';
 import { initMemoryBank, getMemoryBankSummary } from '../engine/memory.js';
 import { DEFAULT_RUN_CONFIG } from '../data/runConfig.js';
 import { CELL_TYPES, CELL_DISPLAY_NAMES, DEPLOY_COSTS } from '../engine/cells.js';
-import { NODES } from '../data/nodes.js';
+import { NODES, computeVisibility } from '../data/nodes.js';
 import BodyMap from './BodyMap.jsx';
 import CellRoster from './CellRoster.jsx';
 import NodeDetail from './NodeDetail.jsx';
@@ -178,6 +178,8 @@ export default function GameShell() {
   const selectedNodeId = state.selectedNodeId;
   const stress = state.systemicStress ?? 0;
   const integrity = state.systemicIntegrity ?? 100;
+  const visibleNodes = computeVisibility(state.deployedCells);
+  const lastKnownNodeStates = state.lastKnownNodeStates ?? {};
 
   return (
     <div className="flex flex-col h-screen bg-gray-950 text-gray-300 overflow-hidden">
@@ -279,6 +281,8 @@ export default function GameShell() {
             selectedNodeId={selectedNodeId}
             onSelectNode={handleSelectNode}
             onNodeContextMenu={handleNodeContextMenu}
+            visibleNodes={visibleNodes}
+            lastKnownNodeStates={lastKnownNodeStates}
           />
         </div>
 
@@ -293,12 +297,14 @@ export default function GameShell() {
               currentTurn={state.turn}
               onRecall={handleRecall}
               onClose={() => handleSelectNode(null)}
+              visibleNodes={visibleNodes}
+              lastKnownNodeStates={lastKnownNodeStates}
             />
           </div>
         ) : (
           <div className="w-64 shrink-0 border-l border-gray-800 overflow-y-auto">
             <OverviewPanel
-              activeSignals={state.activeSignals}
+             activeSignals={state.activeSignals}
               deployedCells={state.deployedCells}
               systemicStress={stress}
               systemicIntegrity={integrity}
@@ -308,6 +314,7 @@ export default function GameShell() {
               memoryBank={state.memoryBank}
               groundTruthNodeStates={state.groundTruth.nodeStates}
               onSelectNode={handleSelectNode}
+              perceivedState={state.perceivedState}
             />
           </div>
         )}
@@ -329,13 +336,15 @@ export default function GameShell() {
 
 function OverviewPanel({
   activeSignals, deployedCells, systemicStress, systemicIntegrity,
-  stressHistory, fever, scars, memoryBank, groundTruthNodeStates, onSelectNode,
+  stressHistory, fever, scars, memoryBank, groundTruthNodeStates, onSelectNode,perceivedState,
 }) {
+  console.log(activeSignals)
   const nodeSignalMap = {};
   for (const sig of activeSignals.filter(s => !s.routed)) {
     if (!nodeSignalMap[sig.nodeId]) nodeSignalMap[sig.nodeId] = [];
     nodeSignalMap[sig.nodeId].push(sig);
   }
+  console.log(perceivedState)
 
   const alertNodes = Object.entries(nodeSignalMap)
     .filter(([, sigs]) => sigs.some(s => s.type === 'threat_expanding' || s.type === 'threat_confirmed'))

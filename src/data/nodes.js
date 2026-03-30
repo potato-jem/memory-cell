@@ -236,3 +236,23 @@ export function computePathCostWithModifiers(path, modifiers, fromIndex = 0) {
   return cost;
 }
 
+// ── Fog-of-war visibility ─────────────────────────────────────────────────────
+// Returns a Set of nodeIds currently visible based on deployed cell positions.
+// Scouts (dendritic) and patrols (neutrophil): current node only.
+// Macrophages: current node + all adjacent nodes.
+// Only 'arrived' cells grant visibility — transit cells do not.
+
+export function computeVisibility(deployedCells) {
+  const visible = new Set();
+  for (const cell of Object.values(deployedCells)) {
+    if (cell.phase !== 'arrived') continue;
+    visible.add(cell.nodeId);
+    if (cell.type === 'macrophage') {
+      for (const adjId of (NODES[cell.nodeId]?.connections ?? [])) {
+        visible.add(adjId);
+      }
+    }
+  }
+  return visible;
+}
+

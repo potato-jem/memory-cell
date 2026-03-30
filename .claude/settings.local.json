@@ -10,7 +10,8 @@
       "Bash(git -C \"C:\\\\Users\\\\Jeremy\\\\Documents\\\\Code\\\\memory-cell\" commit -m \"Fix: pathogenType undefined after seeded events removal:*)",
       "Bash(git -C \"C:\\\\Users\\\\Jeremy\\\\Documents\\\\Code\\\\memory-cell\" add src/data/nodes.js)",
       "Bash(git -C:*)",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "Bash(npx vite:*)"
     ]
   }
 }

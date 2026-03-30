@@ -61,7 +61,6 @@ Player's working model of the body. Updated by signals and routing decisions.
 **Perceived node state shape:**
 ```js
 {
-  status: 'suspected',          // NODE_STATUSES
   threatLevel: 1,               // THREAT_LEVELS (0-3)
   responseLevel: 0,
   scoutConfirmed: false,

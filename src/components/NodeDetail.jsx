@@ -17,39 +17,46 @@ function BarFill({ value, max = 100, color, bg = 'bg-gray-800' }) {
   );
 }
 
-function SiteStatusPanel({ gt }) {
-  if (!gt) return null;
-  const inflammation = gt.inflammation ?? 0;
-  const integrity    = gt.tissueIntegrity ?? 100;
-  const ceiling      = gt.tissueIntegrityCeiling ?? 100;
-  const walled       = gt.isWalledOff ?? false;
-  const suppressed   = gt.immuneSuppressed ?? false;
-  const transitPen   = gt.transitPenalty ?? 0;
-  const inflColor = inflammation > 70 ? 'bg-red-500' : inflammation > 40 ? 'bg-orange-500' : 'bg-yellow-600';
-  const intgColor = integrity < 30 ? 'bg-red-600' : integrity < 60 ? 'bg-orange-500' : 'bg-green-600';
+function SiteStatusPanel({ gt, liveIntegrity = null, isStale = false }) {
+  // Show if we have fog-aware site data OR at least live tissue integrity
+  if (!gt && liveIntegrity == null) return null;
+
+  const inflammation = gt?.inflammation ?? 0;
+  const integrity    = liveIntegrity ?? gt?.tissueIntegrity ?? 100;
+  const ceiling      = gt?.tissueIntegrityCeiling ?? 100;
+  const walled       = gt?.isWalledOff ?? false;
+  const suppressed   = gt?.immuneSuppressed ?? false;
+  const transitPen   = gt?.transitPenalty ?? 0;
+  const inflColor    = inflammation > 70 ? 'bg-red-500' : inflammation > 40 ? 'bg-orange-500' : 'bg-yellow-600';
+  const intgColor    = integrity < 30 ? 'bg-red-600' : integrity < 60 ? 'bg-orange-500' : 'bg-green-600';
 
   return (
     <section className="border-b border-gray-800 px-4 py-3 space-y-2">
-      <div className="text-xs text-gray-600 uppercase tracking-wider">Site Status</div>
-
-      <div>
-        <div className="flex justify-between text-xs mb-0.5">
-          <span className="text-gray-500">Inflammation</span>
-          <span className={inflammation > 40 ? 'text-orange-500' : 'text-gray-600'}>{Math.round(inflammation)}</span>
-        </div>
-        <BarFill value={inflammation} color={inflColor} />
+      <div className="flex items-center justify-between">
+        <div className="text-xs text-gray-600 uppercase tracking-wider">Site Status</div>
+        {isStale && <span className="text-xs text-gray-700 italic">last known</span>}
       </div>
+
+      {gt && (
+        <div>
+          <div className="flex justify-between text-xs mb-0.5">
+            <span className="text-gray-500">Inflammation</span>
+            <span className={inflammation > 40 ? 'text-orange-500' : 'text-gray-600'}>{Math.round(inflammation)}</span>
+          </div>
+          <BarFill value={inflammation} color={inflColor} />
+        </div>
+      )}
 
       <div>
         <div className="flex justify-between text-xs mb-0.5">
           <span className="text-gray-500">Tissue Integrity</span>
           <span className={integrity < 40 ? 'text-red-400' : 'text-gray-400'}>
             {Math.round(integrity)}
-            {ceiling < 100 && <span className="text-gray-700"> / {Math.round(ceiling)} max</span>}
+            {gt && ceiling < 100 && <span className="text-gray-700"> / {Math.round(ceiling)} max</span>}
           </span>
         </div>
         <div className="relative h-1.5 w-full rounded bg-gray-800 overflow-hidden">
-          {ceiling < 100 && (
+          {gt && ceiling < 100 && (
             <div className="absolute inset-y-0 bg-gray-700 opacity-40"
               style={{ left: `${ceiling}%`, right: 0 }} />
           )}
@@ -58,7 +65,7 @@ function SiteStatusPanel({ gt }) {
         </div>
       </div>
 
-      {(walled || suppressed || transitPen > 0) && (
+      {gt && (walled || suppressed || transitPen > 0) && (
         <div className="flex flex-wrap gap-1 pt-0.5">
           {walled     && <span className="text-xs font-mono px-1 py-0.5 bg-amber-950 border border-amber-800 text-amber-400">WALLED OFF</span>}
           {suppressed && <span className="text-xs font-mono px-1 py-0.5 bg-purple-950 border border-purple-800 text-purple-400">SUPPRESSED</span>}
@@ -83,97 +90,83 @@ const CLASSIFIED_TYPE_NAMES = {
 };
 
 function PathogenPanel({ nodeId, perceivedState, groundTruthNodeState, currentTurn }) {
-  const psNode = perceivedState.nodes?.[nodeId] ?? {};
   const entities = (perceivedState.foreignEntitiesByNode?.[nodeId] ?? [])
     .filter(e => !e.isDismissed
       && !e.isResolved
       && e.perceivedClass !== ENTITY_CLASS.SELF_LIKE
       && e.perceivedClass !== ENTITY_CLASS.BENIGN);
 
-  const hasHistory = (psNode.signalsReceived?.length ?? 0) > 0 || entities.length > 0;
-
   return (
     <section className="border-b border-gray-800 px-4 py-3 space-y-2">
       <div className="text-xs text-gray-600 uppercase tracking-wider">Threats</div>
 
-      {!hasHistory ? (
-        <div className="text-xs text-gray-700 italic">
-          No surveillance data — deploy patrol or scout.
-        </div>
-      ) : entities.length === 0 ? (
-        <div className="text-xs text-gray-600 flex items-center gap-1.5">
-          <span className="text-green-800">○</span>
-          <span>Clear</span>
-        </div>
-      ) : (
-        entities.map(entity => {
-          const cls = entity.perceivedClass;
-          const isClassified = cls === ENTITY_CLASS.CLASSIFIED;
+      {entities.map(entity => {
+        const cls = entity.perceivedClass;
+        const isClassified = cls === ENTITY_CLASS.CLASSIFIED;
 
-          // Determine display properties
-          let label, barColor, labelColor, isGhost;
+        // Determine display properties
+        let label, barColor, labelColor, isGhost;
 
-          if (cls === ENTITY_CLASS.UNKNOWN) {
-            label      = 'Possible threat';
-            barColor   = 'bg-yellow-600';
-            labelColor = 'text-yellow-600';
-            isGhost    = true;
-          } else if (cls === ENTITY_CLASS.PATHOGEN) {
-            label      = 'Confirmed threat';
-            barColor   = 'bg-orange-600';
-            labelColor = 'text-orange-500';
-            isGhost    = true;
+        if (cls === ENTITY_CLASS.UNKNOWN) {
+          label      = 'Possible threat';
+          barColor   = 'bg-yellow-600';
+          labelColor = 'text-yellow-600';
+          isGhost    = true;
+        } else if (cls === ENTITY_CLASS.PATHOGEN) {
+          label      = 'Confirmed threat';
+          barColor   = 'bg-orange-600';
+          labelColor = 'text-orange-500';
+          isGhost    = true;
+        } else {
+          // CLASSIFIED — show actual type and load
+          const signalType = entity.classifiedType;
+          if (signalType === 'benign') {
+            label      = 'Benign variation';
+            barColor   = 'bg-gray-500';
+            labelColor = 'text-gray-500';
           } else {
-            // CLASSIFIED — show actual type and load
-            const signalType = entity.classifiedType;
-            if (signalType === 'benign') {
-              label      = 'Benign variation';
-              barColor   = 'bg-gray-500';
-              labelColor = 'text-gray-500';
-            } else {
-              label      = CLASSIFIED_TYPE_NAMES[signalType] ?? signalType ?? 'Unknown type';
-              barColor   = 'bg-red-600';
-              labelColor = 'text-red-400';
-            }
-            isGhost = false;
+            label      = CLASSIFIED_TYPE_NAMES[signalType] ?? signalType ?? 'Unknown type';
+            barColor   = 'bg-red-600';
+            labelColor = 'text-red-400';
           }
+          isGhost = false;
+        }
 
-          // For classified: look up real GT load
-          let gtLoad = 0;
-          if (isClassified) {
-            const gtPathogens = groundTruthNodeState?.pathogens ?? {};
-            for (const [pt, inst] of Object.entries(gtPathogens)) {
-              if (PATHOGEN_SIGNAL_TYPE[pt] === entity.classifiedType) {
-                gtLoad = Math.max(gtLoad, getPrimaryLoad(inst));
-              }
+        // For classified: look up real GT load
+        let gtLoad = 0;
+        if (isClassified) {
+          const gtPathogens = groundTruthNodeState?.pathogens ?? {};
+          for (const [pt, inst] of Object.entries(gtPathogens)) {
+            if (PATHOGEN_SIGNAL_TYPE[pt] === entity.classifiedType) {
+              gtLoad = Math.max(gtLoad, getPrimaryLoad(inst));
             }
           }
+        }
 
-          // Turns at current visibility level
-          const levelSince = entity.levelSince ?? entity.firstSeenTurn ?? 0;
-          const turnsAtLevel = Math.max(0, currentTurn - levelSince);
+        // Turns at current visibility level
+        const levelSince = entity.levelSince ?? entity.firstSeenTurn ?? 0;
+        const turnsAtLevel = Math.max(0, currentTurn - levelSince);
 
-          return (
-            <div key={entity.id}>
-              <div className="flex justify-between text-xs mb-0.5">
-                <span className={labelColor}>{label}</span>
-                {isGhost ? (
-                  <span className="text-gray-600">{turnsAtLevel}T</span>
-                ) : (
-                  <span className="text-gray-400">{Math.round(gtLoad)}</span>
-                )}
-              </div>
+        return (
+          <div key={entity.id}>
+            <div className="flex justify-between text-xs mb-0.5">
+              <span className={labelColor}>{label}</span>
               {isGhost ? (
-                <div className="h-1.5 w-full rounded bg-gray-800 overflow-hidden">
-                  <div className={`h-full w-full rounded ${barColor} opacity-20`} />
-                </div>
+                <span className="text-gray-600">{turnsAtLevel}T</span>
               ) : (
-                <BarFill value={gtLoad} color={barColor} />
+                <span className="text-gray-400">{Math.round(gtLoad)}</span>
               )}
             </div>
-          );
-        })
-      )}
+            {isGhost ? (
+              <div className="h-1.5 w-full rounded bg-gray-800 overflow-hidden">
+                <div className={`h-full w-full rounded ${barColor} opacity-20`} />
+              </div>
+            ) : (
+              <BarFill value={gtLoad} color={barColor} />
+            )}
+          </div>
+        );
+      })}
     </section>
   );
 }
@@ -200,9 +193,15 @@ export default function NodeDetail({
   currentTurn,
   onRecall,
   onClose,
+  visibleNodes,
+  lastKnownNodeStates,
 }) {
   const node = NODES[nodeId];
   if (!node) return null;
+
+  const isVisible  = visibleNodes?.has(nodeId) ?? false;
+  const lastKnown  = lastKnownNodeStates?.[nodeId] ?? null;
+  const siteGt     = isVisible ? groundTruthNodeState : lastKnown;
 
   const cellsHere      = Object.values(deployedCells).filter(c => c.nodeId === nodeId && c.phase === 'arrived');
   const cellsTransit   = Object.values(deployedCells).filter(c =>
@@ -226,8 +225,12 @@ export default function NodeDetail({
 
       <div className="flex-1 overflow-y-auto">
 
-        {/* Ground truth site status */}
-        <SiteStatusPanel gt={groundTruthNodeState} />
+        {/* Site status — fog-aware: real-time when visible, last-known when not */}
+        <SiteStatusPanel
+          gt={siteGt}
+          liveIntegrity={groundTruthNodeState?.tissueIntegrity ?? null}
+          isStale={!isVisible && !!lastKnown}
+        />
 
         {/* Perceived threat state */}
         <PathogenPanel nodeId={nodeId} perceivedState={perceivedState} groundTruthNodeState={groundTruthNodeState} currentTurn={currentTurn} />

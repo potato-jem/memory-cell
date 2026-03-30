@@ -9,16 +9,6 @@ export const THREAT_LEVELS = {
   CRITICAL: 3,
 };
 
-export const NODE_STATUSES = {
-  CLEAN: 'clean',
-  WATCHING: 'watching',
-  INVESTIGATING: 'investigating',
-  SUSPECTED: 'suspected',
-  CONFIRMED: 'confirmed',
-  RESPONDING: 'responding',
-  RESOLVED: 'resolved',
-};
-
 // Foreign entity classes — what the player thinks is at a node
 export const ENTITY_CLASS = {
   UNKNOWN: 'unknown',           // anomalous signal, unclassified
@@ -47,7 +37,6 @@ export function initPerceivedState(nodeIds) {
 
 function makeCleanNode() {
   return {
-    status: NODE_STATUSES.CLEAN,
     threatLevel: THREAT_LEVELS.NONE,
     responseLevel: 0,
     scoutConfirmed: false,
@@ -65,12 +54,10 @@ export function applySignalToPerceivedState(perceivedState, signal) {
   const current = perceivedState.nodes[nodeId] ?? makeCleanNode();
 
   const newThreatLevel = signalTypeToThreatLevel(signal.type, current.threatLevel);
-  const newStatus = threatLevelToStatus(newThreatLevel, current);
 
   const updatedNode = {
     ...current,
     threatLevel: newThreatLevel,
-    status: newStatus,
     signalsReceived: [...current.signalsReceived, signal.id],
     lastSignalTurn: signal.arrivedOnTurn,
   };
@@ -147,50 +134,6 @@ function applySignalToEntities(existing, signal) {
   }];
 }
 
-// ── Routing decisions ─────────────────────────────────────────────────────────
-
-function applyDismissSignal(perceivedState, signal) {
-  const nodeId = signal.nodeId;
-  const current = perceivedState.nodes[nodeId] ?? makeCleanNode();
-
-  // Downgrade threat level
-  const newThreatLevel = Math.max(THREAT_LEVELS.NONE, current.threatLevel - 1);
-  const updatedNode = {
-    ...current,
-    threatLevel: newThreatLevel,
-    status: newThreatLevel === THREAT_LEVELS.NONE ? NODE_STATUSES.CLEAN : current.status,
-    dismissedSignalIds: [...(current.dismissedSignalIds ?? []), signal.id],
-  };
-
-  return {
-    ...perceivedState,
-    nodes: { ...perceivedState.nodes, [nodeId]: updatedNode },
-  };
-}
-
-function applyHoldSignal(perceivedState, signal) {
-  const nodeId = signal.nodeId;
-  const current = perceivedState.nodes[nodeId] ?? makeCleanNode();
-  const updatedNode = {
-    ...current,
-    status: current.status === NODE_STATUSES.CLEAN ? NODE_STATUSES.WATCHING : current.status,
-    quarantinedSignalIds: [...(current.quarantinedSignalIds ?? []), signal.id],
-  };
-  return {
-    ...perceivedState,
-    nodes: { ...perceivedState.nodes, [nodeId]: updatedNode },
-  };
-}
-
-export function applyRoutingDecision(perceivedState, signal, decision) {
-  if (decision === 'dismiss') return applyDismissSignal(perceivedState, signal);
-  if (decision === 'hold') return applyHoldSignal(perceivedState, signal);
-  // Legacy support
-  if (decision === 'suppress') return applyDismissSignal(perceivedState, signal);
-  if (decision === 'quarantine') return applyHoldSignal(perceivedState, signal);
-  return perceivedState;
-}
-
 // ── Dendritic return ──────────────────────────────────────────────────────────
 
 export function applyDendriticReturn(perceivedState, nodeId, foundThreat, threatType, turn = 0) {
@@ -199,7 +142,6 @@ export function applyDendriticReturn(perceivedState, nodeId, foundThreat, threat
   const updatedNode = {
     ...current,
     scoutConfirmed: true,
-    status: foundThreat ? NODE_STATUSES.CONFIRMED : NODE_STATUSES.RESOLVED,
     threatLevel: foundThreat ? THREAT_LEVELS.CONFIRMED : THREAT_LEVELS.NONE,
   };
 
@@ -257,7 +199,6 @@ export function applyResponderDeployed(perceivedState, nodeId) {
       ...perceivedState.nodes,
       [nodeId]: {
         ...current,
-        status: NODE_STATUSES.RESPONDING,
         responseLevel: Math.min(3, (current.responseLevel ?? 0) + 1),
       },
     },
@@ -272,7 +213,6 @@ export function applyNeutrophilDeployed(perceivedState, nodeId) {
       ...perceivedState.nodes,
       [nodeId]: {
         ...current,
-        status: current.status === NODE_STATUSES.CLEAN ? NODE_STATUSES.WATCHING : current.status,
         responseLevel: Math.max(1, current.responseLevel ?? 0),
       },
     },
@@ -316,18 +256,6 @@ function signalTypeToThreatLevel(signalType, currentLevel) {
     resolution: THREAT_LEVELS.NONE,
   };
   return escalation[signalType] ?? currentLevel;
-}
-
-function threatLevelToStatus(threatLevel, current) {
-  if (current.scoutConfirmed) return NODE_STATUSES.CONFIRMED;
-  if (current.responseLevel > 0) return NODE_STATUSES.RESPONDING;
-  switch (threatLevel) {
-    case THREAT_LEVELS.NONE: return NODE_STATUSES.CLEAN;
-    case THREAT_LEVELS.SUSPECTED: return NODE_STATUSES.SUSPECTED;
-    case THREAT_LEVELS.CONFIRMED: return NODE_STATUSES.CONFIRMED;
-    case THREAT_LEVELS.CRITICAL: return NODE_STATUSES.CONFIRMED;
-    default: return NODE_STATUSES.CLEAN;
-  }
 }
 
 export function entityDisplayLabel(perceivedClass, classifiedType) {

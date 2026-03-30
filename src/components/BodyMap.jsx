@@ -148,6 +148,8 @@ export default function BodyMap({
   selectedNodeId,
   onSelectNode,
   onNodeContextMenu,
+  visibleNodes = new Set(),
+  lastKnownNodeStates = {},
 }) {
   const nodeList = Object.values(NODES);
 
@@ -220,8 +222,11 @@ export default function BodyMap({
         {nodeList.map(node => {
           const cx = node.position.x;
           const cy = node.position.y;
-          const gt  = groundTruthNodeStates?.[node.id];
-          const inflammPct = (gt?.inflammation ?? 0) / 100;
+          const gt = groundTruthNodeStates?.[node.id];
+          const isVisible = visibleNodes.has(node.id);
+          // Use last-known inflammation data when not currently visible
+          const fogGt = isVisible ? gt : (lastKnownNodeStates?.[node.id] ?? null);
+          const inflammPct = (fogGt?.inflammation ?? 0) / 100;
           const { fill, stroke } = inflammationStyle(inflammPct);
           const isSelected = node.id === selectedNodeId;
           const rings = getPathogenRings(node.id, perceivedState, groundTruthNodeStates);
@@ -245,26 +250,7 @@ export default function BodyMap({
               onContextMenu={e => { e.preventDefault(); onNodeContextMenu?.(node.id); }}
               className="cursor-pointer"
             >
-              {/* Pathogen arc rings */}
-              {rings.map((ring, i) => {
-                const r = ringBase + i * ringStep;
-                const d = arcPath(cx, cy, r, ring.loadPct);
-                return d ? (
-                  <path
-                    key={ring.pathogenType}
-                    d={d}
-                    fill="none"
-                    stroke={ring.color}
-                    strokeWidth="2.5"
-                    strokeLinecap="round"
-                    strokeDasharray={ring.dashed ? '4 3' : undefined}
-                    opacity={ring.dashed ? 0.6 : 0.85}
-                    filter={`url(#glow-${ring.color.slice(1)})`}
-                  />
-                ) : null;
-              })}
-
-              {/* Selection ring */}
+              {/* Selection ring — outside fog layer so it's always crisp when selected */}
               {isSelected && (
                 <circle
                   cx={cx} cy={cy} r={selectR}
@@ -276,31 +262,120 @@ export default function BodyMap({
                 />
               )}
 
-              {/* HQ outer ring */}
-              {node.isHQ && (
-                <circle cx={cx} cy={cy} r={NODE_R + 3}
-                  fill="none" stroke="#7c3aed" strokeWidth="1" opacity="0.5" />
-              )}
+              {/* Fog layer — dims everything when no visibility (cell dots and selection excluded) */}
+              <g opacity={isVisible ? 1 : 0.35}>
 
-              {/* Dark background circle */}
-              <circle cx={cx} cy={cy} r={NODE_R} fill="#050d18" />
+                {/* Pathogen arc rings */}
+                {rings.map((ring, i) => {
+                  const r = ringBase + i * ringStep;
+                  const d = arcPath(cx, cy, r, ring.loadPct);
+                  return d ? (
+                    <path
+                      key={ring.pathogenType}
+                      d={d}
+                      fill="none"
+                      stroke={ring.color}
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      strokeDasharray={ring.dashed ? '4 3' : undefined}
+                      opacity={ring.dashed ? 0.6 : 0.85}
+                      filter={`url(#glow-${ring.color.slice(1)})`}
+                    />
+                  ) : null;
+                })}
 
-              {/* Inflammation fill, clipped to integrity level from bottom */}
-              <circle
-                cx={cx} cy={cy} r={NODE_R - 0.75}
-                fill={fill}
-                clipPath={`url(#clip-${node.id})`}
-              />
+                {/* HQ outer ring */}
+                {node.isHQ && (
+                  <circle cx={cx} cy={cy} r={NODE_R + 3}
+                    fill="none" stroke="#7c3aed" strokeWidth="1" opacity="0.5" />
+                )}
 
-              {/* Border (drawn last so it's always crisp on top) */}
-              <circle
-                cx={cx} cy={cy} r={NODE_R}
-                fill="none"
-                stroke={stroke}
-                strokeWidth={node.isBottleneck ? 2.5 : 1.5}
-              />
+                {/* Dark background circle */}
+                <circle cx={cx} cy={cy} r={NODE_R} fill="#050d18" />
 
-              {/* Friendly cell dots around inner edge */}
+                {/* Inflammation fill (fog-aware colour), clipped to tissue integrity level (always GT) */}
+                <circle
+                  cx={cx} cy={cy} r={NODE_R - 0.75}
+                  fill={fill}
+                  clipPath={`url(#clip-${node.id})`}
+                />
+
+                {/* Border */}
+                <circle
+                  cx={cx} cy={cy} r={NODE_R}
+                  fill="none"
+                  stroke={stroke}
+                  strokeWidth={node.isBottleneck ? 2.5 : 1.5}
+                />
+
+                {/* Node label — split "Bone Marrow" onto two lines */}
+                {words.length > 1 ? (
+                  <text
+                    textAnchor="middle"
+                    fontFamily="monospace"
+                    fontWeight={node.isHQ ? '600' : '500'}
+                    fill={node.isHQ ? '#a78bfa' : stroke}
+                    className="pointer-events-none select-none"
+                  >
+                    <tspan x={cx} y={cy - 3} fontSize="6.5">{words[0]}</tspan>
+                    <tspan x={cx} dy="9"     fontSize="6.5">{words[1]}</tspan>
+                  </text>
+                ) : (
+                  <text
+                    x={cx} y={cy + 1}
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    fontSize="7"
+                    fontFamily="monospace"
+                    fontWeight={node.isHQ ? '600' : '500'}
+                    fill={node.isHQ ? '#a78bfa' : stroke}
+                    className="pointer-events-none select-none"
+                  >
+                    {node.label}
+                  </text>
+                )}
+
+                {/* Orange badge — possible / unclassified threats */}
+                {possible > 0 && (
+                  <g>
+                    <circle
+                      cx={cx - NODE_R + 4} cy={cy - NODE_R + 3}
+                      r={6} fill="#92400e" stroke="#f59e0b" strokeWidth="0.75"
+                    />
+                    <text
+                      x={cx - NODE_R + 4} y={cy - NODE_R + 3}
+                      textAnchor="middle" dominantBaseline="middle"
+                      fontSize="6" fontFamily="monospace" fontWeight="bold"
+                      fill="#fde68a"
+                      className="pointer-events-none select-none"
+                    >
+                      {possible}
+                    </text>
+                  </g>
+                )}
+
+                {/* Red badge — confirmed untyped threats */}
+                {confirmed > 0 && (
+                  <g>
+                    <circle
+                      cx={cx + NODE_R - 4} cy={cy - NODE_R + 3}
+                      r={6} fill="#7f1d1d" stroke="#ef4444" strokeWidth="0.75"
+                    />
+                    <text
+                      x={cx + NODE_R - 4} y={cy - NODE_R + 3}
+                      textAnchor="middle" dominantBaseline="middle"
+                      fontSize="6" fontFamily="monospace" fontWeight="bold"
+                      fill="#fca5a5"
+                      className="pointer-events-none select-none"
+                    >
+                      {confirmed}
+                    </text>
+                  </g>
+                )}
+
+              </g>{/* end fog layer */}
+
+              {/* Friendly cell dots — always full opacity (globally visible) */}
               {/* Arrived = full opacity; outbound/returning = dimmed (passing through) */}
               {cellDots.map((cell, i) => {
                 const angle = (i / Math.max(1, cellDots.length)) * 2 * Math.PI - Math.PI / 2;
@@ -317,71 +392,6 @@ export default function BodyMap({
                   />
                 );
               })}
-
-              {/* Node label — split "Bone Marrow" onto two lines */}
-              {words.length > 1 ? (
-                <text
-                  textAnchor="middle"
-                  fontFamily="monospace"
-                  fontWeight={node.isHQ ? '600' : '500'}
-                  fill={node.isHQ ? '#a78bfa' : stroke}
-                  className="pointer-events-none select-none"
-                >
-                  <tspan x={cx} y={cy - 3} fontSize="6.5">{words[0]}</tspan>
-                  <tspan x={cx} dy="9"     fontSize="6.5">{words[1]}</tspan>
-                </text>
-              ) : (
-                <text
-                  x={cx} y={cy + 1}
-                  textAnchor="middle"
-                  dominantBaseline="middle"
-                  fontSize="7"
-                  fontFamily="monospace"
-                  fontWeight={node.isHQ ? '600' : '500'}
-                  fill={node.isHQ ? '#a78bfa' : stroke}
-                  className="pointer-events-none select-none"
-                >
-                  {node.label}
-                </text>
-              )}
-
-              {/* Orange badge — possible / unclassified threats */}
-              {possible > 0 && (
-                <g>
-                  <circle
-                    cx={cx - NODE_R + 4} cy={cy - NODE_R + 3}
-                    r={6} fill="#92400e" stroke="#f59e0b" strokeWidth="0.75"
-                  />
-                  <text
-                    x={cx - NODE_R + 4} y={cy - NODE_R + 3}
-                    textAnchor="middle" dominantBaseline="middle"
-                    fontSize="6" fontFamily="monospace" fontWeight="bold"
-                    fill="#fde68a"
-                    className="pointer-events-none select-none"
-                  >
-                    {possible}
-                  </text>
-                </g>
-              )}
-
-              {/* Red badge — confirmed untyped threats */}
-              {confirmed > 0 && (
-                <g>
-                  <circle
-                    cx={cx + NODE_R - 4} cy={cy - NODE_R + 3}
-                    r={6} fill="#7f1d1d" stroke="#ef4444" strokeWidth="0.75"
-                  />
-                  <text
-                    x={cx + NODE_R - 4} y={cy - NODE_R + 3}
-                    textAnchor="middle" dominantBaseline="middle"
-                    fontSize="6" fontFamily="monospace" fontWeight="bold"
-                    fill="#fca5a5"
-                    className="pointer-events-none select-none"
-                  >
-                    {confirmed}
-                  </text>
-                </g>
-              )}
             </g>
           );
         })}

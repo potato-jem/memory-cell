@@ -24,6 +24,7 @@ import { TICKS_PER_TURN, GAME_PHASES, LOSS_REASONS } from './gameState.js';
 import { TOKEN_CAPACITY_MAX, TOKEN_CAPACITY_REGEN_INTERVAL } from '../data/gameConfig.js';
 import { recordEncounter } from '../engine/memory.js';
 import { applyModifierPatch } from '../data/runModifiers.js';
+import { computeVisibility } from '../data/nodes.js';
 
 export const ACTION_TYPES = {
   END_TURN:           'END_TURN',
@@ -81,7 +82,7 @@ function handleEndTurn(state) {
   const scoutReturnSignals = [];
   for (const event of cellEvents) {
     if (event.type !== 'scout_arrived') continue;
-    const cell = state.deployedCells[event.cellId];
+    const cell = updatedCells[event.cellId];
     if (!cell) continue;
     const sig = makeDendriticReturnSignal(cell, state.groundTruth, state.runConfig, newTick, newTurn, 'primary', mods);
     if (!sig) continue;
@@ -103,6 +104,25 @@ function handleEndTurn(state) {
 
   // 6. Auto-return attack cells from cleared nodes
   updatedCells = startReturnForClearedNodes(updatedCells, newGroundTruth.nodeStates, newTick, mods);
+
+  // 6b. Snapshot currently-visible nodes for fog-of-war last-known display
+  const visibleThisTurn = computeVisibility(updatedCells);
+  let lastKnownNodeStates = state.lastKnownNodeStates ?? {};
+  for (const nodeId of visibleThisTurn) {
+    const gtNode = newGroundTruth.nodeStates[nodeId];
+    if (!gtNode) continue;
+    lastKnownNodeStates = {
+      ...lastKnownNodeStates,
+      [nodeId]: {
+        inflammation:           gtNode.inflammation ?? 0,
+        tissueIntegrity:        gtNode.tissueIntegrity ?? 100,
+        tissueIntegrityCeiling: gtNode.tissueIntegrityCeiling ?? 100,
+        isWalledOff:            gtNode.isWalledOff ?? false,
+        immuneSuppressed:       gtNode.immuneSuppressed ?? false,
+        transitPenalty:         gtNode.transitPenalty ?? 0,
+      },
+    };
+  }
 
   // 7. Generate patrol/macrophage signals + en-route detection
   const newSignals = generateSignals(
@@ -184,6 +204,7 @@ function handleEndTurn(state) {
     systemicStressHistory,
     scars,
     memoryBank,
+    lastKnownNodeStates,
     phase,
     lossReason,
     postMortem,
