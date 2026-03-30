@@ -35,7 +35,7 @@ Each failure is legible in retrospect. Each teaches something true about how com
 Slow, expensive, high-value. Travels to a specific node, dwells for 2 turns sampling it, returns with definitive intelligence — a single high-accuracy detection roll that upgrades the entity to **classified** (full type identification). Does not fight. Scouts provide en-route visibility at intermediate nodes on the way to their destination.
 
 ### Patrol (Neutrophil)
-Fast, cheap, continuous. Deploys to a node and cycles through adjacent nodes. Generates signals each turn from wherever it currently is — broad coverage, moderate accuracy. Also provides en-route detection when travelling.
+Fast, cheap, continuous. Deploys to a node and cycles through adjacent nodes. Makes a detection roll each turn from wherever it currently is — broad coverage, moderate accuracy. Also makes en-route detection rolls when travelling through intermediate nodes.
 
 ### Macrophage
 Static coverage with adjacent node awareness. Higher detection quality than patrol. Can provide en-route detection when redeployed.
@@ -69,14 +69,14 @@ Cells are always visible at their current intermediate position on the body map,
 
 ## Turn Structure
 
-1. **Player phase** — review signals, deploy/recall cells, toggle fever
+1. **Player phase** — review perceived state, deploy/recall cells, toggle fever
 2. **End turn** — player clicks End Turn; the following sequence runs automatically:
-   - Cells advance along paths; intermediate node visits generate en-route detection signals
-   - Scout arrivals fire a definitive detection roll
+   - Cells advance along paths; recon cells passing through nodes fire en-route detection rolls
+   - Scout arrivals fire a definitive detection roll against current ground truth
    - Pathogens spawn (probabilistic)
    - Ground truth advances: pathogen growth/clearance, inflammation, tissue integrity
    - Cleared-node attack cells begin returning
-   - Arrived recon cells generate detection signals
+   - Arrived patrol/macrophage cells fire detection rolls; outcomes update perceived state directly
    - Systemic stress and integrity update
    - Loss check
 
@@ -169,13 +169,13 @@ The player never sees ground truth directly. Visibility at a node is determined 
 | Level | Condition | Display |
 |---|---|---|
 | **A — No data** | No cell has ever visited | "No surveillance data" |
-| **B — Possible threat** | Anomaly signal received | Ghost bar + turns-at-level counter |
-| **C — Confirmed threat** | Threat-confirmed signal received | Ghost bar + turns-at-level counter |
-| **D — Identified** | Scout returned with result | Type name + actual GT load bar |
+| **B — Possible threat** | Detection outcome: ANOMALY or FALSE_ALARM | Ghost bar + turns-at-level counter |
+| **C — Confirmed threat** | Detection outcome: THREAT_UNCLASSIFIED | Ghost bar + turns-at-level counter |
+| **D — Identified** | Scout returned (CORRECT_ID/WRONG_ID) | Type name + actual GT load bar |
 
-Entity classes degrade gracefully — UNKNOWN → PATHOGEN → CLASSIFIED — and never downgrade. A scout that finds nothing resolves existing entities to BENIGN.
+Entity classes upgrade — UNKNOWN → PATHOGEN → CLASSIFIED — and never downgrade. A scout returning CLEAR resolves existing entities to BENIGN.
 
-**En-route detection:** Recon cells (patrol, macrophage, scout) generate signals at every intermediate node they pass through in transit, not just at their final destination. This creates genuine strategic value in routing cells through high-risk areas.
+**En-route detection:** Recon cells (patrol, macrophage, scout) make detection rolls at every intermediate node they pass through in transit, not just at their final destination. Outcomes update perceived state directly. This creates genuine strategic value in routing cells through high-risk areas.
 
 ---
 
@@ -245,9 +245,9 @@ Pathogens spawn probabilistically each turn via a two-layer system:
 
 ## Design Notes & Decisions
 
-**Information routing as the core action:** The original design imagined explicit signal routing (forward/amplify/suppress/quarantine) as the primary action surface. The current implementation simplifies this — routing is dismiss/hold — but the underlying philosophy is preserved: responding to a signal is always a commitment, never neutral.
+**Information routing as the core action:** The original design imagined explicit signal routing (forward/amplify/suppress/quarantine) as the primary action surface. Signals as objects have been removed — detection outcomes now update perceived state directly. The philosophy is preserved: where you send cells and which nodes they cover is always a commitment.
 
-**Silence is information:** Patrols that find nothing still report. The absence of a threat signal from a covered node is meaningful data. Implemented via silence notices.
+**Silence is information:** Patrols that roll CLEAR or MISS at a clean node leave no mark on perceived state — which is itself meaningful. Covered nodes with no entity are more trustworthy than uncovered ones.
 
 **Responder effectiveness without backing:** 60% effectiveness when deployed without prior scout confirmation. Makes scouts genuinely valuable without making unconfirmed responses useless.
 

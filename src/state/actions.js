@@ -206,7 +206,8 @@ function handleEndTurn(state) {
     lossReason = LOSS_REASONS.SYSTEMIC_COLLAPSE;
     postMortem = buildPostMortem(state, newGroundTruth, systemicStressHistory, scars, 'systemic_collapse');
   }
-
+  console.log(newGroundTruth)
+  console.log(perceivedState)
   return {
     ...state,
     tick: newTick,

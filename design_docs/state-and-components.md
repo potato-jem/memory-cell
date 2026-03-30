@@ -19,10 +19,9 @@ Game state shape and `initGameState(runConfig)`.
   systemicStressHistory,       // [{turn, stress, integrity}] — for charts/postmortem
   fever: { active: bool },
   scars,                       // [{nodeId, integrityFloor, turn}]
-  activeSignals,               // unactioned signals
-  signalHistory,               // all signals ever seen
-  silenceNotices,              // informational patrol messages
+  memoryBank,                  // cross-run immune memory
   runModifiers,                // accumulated upgrades/scars/decisions — see data-layer.md
+  lastKnownNodeStates,         // fog-of-war snapshot per node
   phase,                       // 'playing' | 'lost'
   lossReason,
   postMortem,
@@ -33,40 +32,45 @@ Game state shape and `initGameState(runConfig)`.
 ---
 
 ### `perceivedState.js`
-Player's working model of the body. Updated by signals and routing decisions.
+Player's working model of the body. Detection outcomes update this directly — there are no signal objects.
 
 **Key exports:**
 | Function | Purpose |
 |---|---|
 | `initPerceivedState(nodeIds)` | All nodes start clean |
-| `applySignalToPerceivedState(ps, signal)` | Update threat level + entity list from a signal |
-| `applyRoutingDecision(ps, signal, decision)` | 'dismiss' or 'hold' — adjusts threat levels |
+| `applyDetectionOutcome(ps, nodeId, outcome, reportedType, turn)` | Map a `DETECTION_OUTCOMES` value directly to threat level + entity list |
+| `applyCollateralDamageObservation(ps, nodeId, turn)` | Mark high-inflammation node when no threat is detected |
 | `applyDendriticReturn(ps, nodeId, foundThreat, threatType, turn)` | Scout result upgrades entity to CLASSIFIED or resolves to BENIGN |
-| `applyResponderDeployed(ps, nodeId)` | Marks node as RESPONDING |
-| `applyNeutrophilDeployed(ps, nodeId)` | Marks node as WATCHING |
+| `applyResponderDeployed(ps, nodeId)` | Increments responseLevel |
+| `applyNeutrophilDeployed(ps, nodeId)` | Sets minimum responseLevel |
 | `dismissEntity(ps, nodeId, entityId)` | Player manually dismisses an entity |
-| `entityDisplayLabel(perceivedClass, classifiedType, confidence)` | UI label for an entity |
+| `entityDisplayLabel(perceivedClass, classifiedType)` | UI label for an entity |
+
+**Detection outcome → perceived state mapping:**
+| Outcome | threatLevel | Entity class |
+|---|---|---|
+| `anomaly` / `false_alarm` | SUSPECTED | UNKNOWN |
+| `threat_unclassified` | CONFIRMED | PATHOGEN |
+| `correct_id` / `wrong_id` | CONFIRMED | CLASSIFIED (reportedType, may be wrong) |
+| `clear` | NONE | existing entities resolved |
 
 **Foreign entity classes (ENTITY_CLASS):**
-- `UNKNOWN` — anomaly signal only (visibility level B)
-- `PATHOGEN` — confirmed threat, unclassified (visibility level C)
-- `CLASSIFIED` — scout-confirmed; has `classifiedType` (visibility level D)
-- `SELF_LIKE` — appears normal (patrol_clear result)
+- `UNKNOWN` — anomaly detected, unclassified (visibility B)
+- `PATHOGEN` — confirmed threat, type unknown (visibility C)
+- `CLASSIFIED` — has `classifiedType`; set by CORRECT_ID/WRONG_ID rolls or scout return (visibility D)
+- `SELF_LIKE` — appears normal (clear result)
 - `BENIGN` — scout confirmed no threat
-- `INFLAMMATORY` — collateral damage signal
+- `INFLAMMATORY` — high inflammation, no active threat
 
-**Entity upgrade path:** UNKNOWN → PATHOGEN → CLASSIFIED (via `classRank` ordering; never downgrades).
+**Entity upgrade path:** UNKNOWN → PATHOGEN → CLASSIFIED (via `classRank`; never downgrades).
 
 **Perceived node state shape:**
 ```js
 {
-  threatLevel: 1,               // THREAT_LEVELS (0-3)
+  threatLevel: 1,       // THREAT_LEVELS enum (0-3)
   responseLevel: 0,
   scoutConfirmed: false,
-  signalsReceived: ['sig_1'],
-  lastSignalTurn: 3,
-  quarantinedSignalIds: [],
-  dismissedSignalIds: [],
+  lastSeenTurn: 3,
 }
 ```
 
@@ -78,10 +82,8 @@ The `gameReducer` and all action handlers. **This is the only place state mutati
 **Actions:**
 | Action | Handler |
 |---|---|
-| `END_TURN` | Full simulation tick: advance cells, spawn, advance GT, generate signals, update perceived state, compute systemic values |
+| `END_TURN` | Full simulation tick: advance cells, detection rolls → perceived state, spawn, advance GT, systemic values |
 | `TOGGLE_FEVER` | Toggle fever on/off |
-| `DISMISS_SIGNAL` / `HOLD_SIGNAL` | Route a signal; update perceived state |
-| `DISMISS_ENTITY` | Player dismisses a foreign entity |
 | `TRAIN_CELL` | Add cell to roster in training |
 | `DEPLOY_FROM_ROSTER` | Deploy cell to a node |
 | `DECOMMISSION_CELL` | Remove cell from roster |
@@ -93,17 +95,18 @@ The `gameReducer` and all action handlers. **This is the only place state mutati
 **END_TURN sequence:**
 1. Token capacity regen
 2. `advanceCells` → updatedCells + events + nodesVisited
-3. Scout arrival events → `makeDendriticReturnSignal` for each
+3. Detection rolls for scout arrivals (against current GT, before it advances)
 4. `rollSpawns`
 5. `advanceGroundTruth`
 6. `startReturnForClearedNodes`
-7. `generateSignals` (arrived recon cells) + `generateSignalsForVisits` (en-route via nodesVisited)
-8. `applySignalToPerceivedState` for all new signals + `applyDendriticReturn` for scout returns
-9. Expire old signals, append new ones to history
-10. `computeSystemicStress`, `applySystemicIntegrityHits`, `computeNewScars`
-11. `recordEncounter` for cleared pathogens
-12. Token accounting
-13. Loss check (`isSystemCollapsed`)
+7. Fog-of-war snapshot of visible nodes → `lastKnownNodeStates`
+8. Detection rolls for arrived patrol/macrophage → `applyDetectionOutcome` / `applyCollateralDamageObservation`
+9. Detection rolls for en-route visits (nodesVisited) → `applyDetectionOutcome`
+10. `applyDendriticReturn` for scout arrivals
+11. `computeSystemicStress`, `applySystemicIntegrityHits`, `computeNewScars`
+12. `recordEncounter` for cleared pathogens
+13. Token accounting
+14. Loss check (`isSystemCollapsed`)
 
 ---
 
@@ -112,9 +115,11 @@ The `gameReducer` and all action handlers. **This is the only place state mutati
 ### `GameShell.jsx`
 Top-level game shell. Owns the `useReducer` with `gameReducer`. Handles:
 - Start screen with unit picker (per-type +/- controls, token total)
-- Playing layout: `BodyMap` (left) + `SignalConsole` panels + `CellRoster` (right) + `NodeDetail` (slide-in)
+- Playing layout: `CellRoster` (left) + `BodyMap` (centre) + `OverviewPanel` or `NodeDetail` (right)
 - Lost screen → `PostMortem`
 - Dispatches all player actions
+
+**`OverviewPanel`** (inline component): derives alert/warning node lists from `perceivedState.nodes[x].threatLevel` (≥ CONFIRMED = alert, SUSPECTED = warning). Shows node label + active entity display label per row.
 
 **Key props passed down:**
 - `state` — full game state (read-only to children)

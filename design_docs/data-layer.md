@@ -21,7 +21,6 @@ Key constants:
 | `STRESS_*` | `systemicValues.js` | All stress computation parameters |
 | `INTEGRITY_HIT_STRESS_*` | `systemicValues.js` | Integrity damage at stress thresholds |
 | `SPAWN_*` | `spawner.js` | Pathogen spawn probability parameters |
-| `WARNING/ALERT/INFO_SIGNAL_TIMEOUT` | `signalGenerator.js` | Signal expiry in ticks |
 | `INFLAMMATION_DECAY_RATE_*` | `groundTruth.js` | How fast inflammation decays per turn (infected vs clear) |
 | `ATTACK_CELL_INFLAMMATION_*` | `groundTruth.js` | Inflammation added by attack cells each turn |
 | `KILLER_T_INFLAMMATION_ON_CLEAN` | `groundTruth.js` | Killer T cascade risk on clean sites |
@@ -186,22 +185,23 @@ Each type tracks exactly one primary value (`trackedValue` from registry). Store
 ---
 
 ## `signals.js`
-Signal type constants and confidence levels. No logic.
+Minimal constants retained for `memory.js`. No signal objects exist at runtime.
 
 **Exports used:**
-- `SIGNAL_TYPES` — `anomaly_detected`, `threat_confirmed`, `patrol_clear`, `collateral_damage`, etc.
-- `SIGNAL_SOURCES` — `neutrophil`, `macrophage`, `dendritic`
+- `THREAT_TYPES` — `bacterial`, `viral`, `cancer`, `autoimmune`, `mimic`
 - `CONFIDENCE_LEVELS` — `low`, `medium`, `high`
-- `ROUTING_COSTS` — used by `SignalConsole` to show cost hints
+- `bumpConfidence(confidence)` — bumps up one band (used by memory bonus)
 
 ---
 
 ## `detection.js`
-Detection roll logic — given cell type, threat type, threat strength, and inflammation, returns an outcome.
+Detection probability matrix and roll logic. Pure data + one function.
 
-**Outcomes:** `MISS`, `ANOMALY`, `THREAT_UNCLASSIFIED`, `CORRECT_ID`, `WRONG_ID`, `CLEAR`, `FALSE_ALARM`
+**`rollDetection(cellType, threatType, threatStrength, inflammation, modifiers?)`** → `{ outcome, reportedType }`
 
-Only used by `signalGenerator.js` (via `rollDetection`).
+**Outcomes (`DETECTION_OUTCOMES`):** `MISS`, `ANOMALY`, `THREAT_UNCLASSIFIED`, `CORRECT_ID`, `WRONG_ID`, `CLEAR`, `FALSE_ALARM`
+
+Used directly by `actions.js` (handleEndTurn) for all detection rolls — arrived patrols, en-route visits, and scout arrivals.
 
 ---
 

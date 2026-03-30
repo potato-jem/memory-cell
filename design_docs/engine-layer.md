@@ -112,36 +112,7 @@ Per-instance pathogen advancement and spread. Called by `groundTruth.js`.
 ---
 
 ## `signalGenerator.js`
-Translates ground truth into signals the player receives.
-
-**Key exports:**
-| Function | Purpose |
-|---|---|
-| `generateSignals(gt, cells, config, turn, situationId, tick, modifiers?)` | Per-turn: arrived patrol/macrophage detection + collateral damage |
-| `generateSignalsForVisits(nodesVisited, gt, turn, tick, situationId, modifiers?)` | En-route: detection at intermediate nodes |
-| `makeDendriticReturnSignal(cell, gt, config, tick, turn, situationId, modifiers?)` | One-shot detection roll when scout arrives at destination |
-| `generateSilenceNotices(gt, cells, turn)` | Informational-only notices when patrol reports nothing |
-
-**Signal shape:**
-```js
-{
-  id: 'sig_12',
-  nodeId: 'LIVER',
-  text: 'Liver — bacterial confirmed',
-  type: 'threat_confirmed',          // from SIGNAL_TYPES
-  confidence: 'high',                // low/medium/high
-  source: 'dendritic',               // cell type that generated it
-  isFalseAlarm: false,
-  reportedThreatType: 'bacterial',   // may be wrong (WRONG_ID outcome)
-  detectionOutcome: 'correct_id',    // raw detection roll result
-  isDendriticReturn: true,
-  arrivedOnTurn: 4,
-  arrivedAtTick: 20,
-  expiresAtTick: null,               // null = never expires
-  routed: false,
-  routingDecision: null
-}
-```
+Removed. Detection outcomes now update `perceivedState` directly — see `src/state/actions.js` (`handleEndTurn`) and `src/state/perceivedState.js`.
 
 ---
 
