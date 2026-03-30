@@ -92,7 +92,7 @@ function getPathogenRings(nodeId, perceivedState, gtNodeStates) {
     const pathTypes = SIG_TO_PATHOGEN[entity.classifiedType] ?? [];
     for (const pt of pathTypes) {
       if (seenPathogenTypes.has(pt)) continue;
-      const inst = gtNode.pathogens?.[pt];
+      const inst = gtNode.pathogens?.find(i => i.type === pt);
       if (!inst) continue;
       const load = getPrimaryLoad(inst);
       if (load <= 0) continue;
@@ -106,10 +106,10 @@ function getPathogenRings(nodeId, perceivedState, gtNodeStates) {
   if (hasUntyped) {
     // Find highest-load GT pathogen not already shown as a classified ring
     let bestLoad = 0, bestType = null;
-    for (const [pt, inst] of Object.entries(gtNode.pathogens ?? {})) {
-      if (seenPathogenTypes.has(pt)) continue;
+    for (const inst of (gtNode.pathogens ?? [])) {
+      if (seenPathogenTypes.has(inst.type)) continue;
       const load = getPrimaryLoad(inst);
-      if (load > bestLoad) { bestLoad = load; bestType = pt; }
+      if (load > bestLoad) { bestLoad = load; bestType = inst.type; }
     }
     if (bestType && bestLoad > 0) {
       rings.push({ pathogenType: bestType, loadPct: Math.min(0.999, bestLoad / 100), color: '#f97316', dashed: true });

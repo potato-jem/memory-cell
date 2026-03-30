@@ -2,8 +2,7 @@
 // Turn-based endless run. Health model: SystemicStress + SystemicIntegrity + Fever.
 
 import { advanceGroundTruth } from '../engine/groundTruth.js';
-import { rollDetection, DETECTION_OUTCOMES } from '../data/detection.js';
-import { getDominantPathogen, PATHOGEN_SIGNAL_TYPE } from '../data/pathogens.js';
+import { performDetection } from '../data/detection.js';
 import { computeSystemicStress, applySystemicIntegrityHits, computeNewScars, isSystemCollapsed, identifyFailureMode } from '../engine/systemicValues.js';
 import { rollSpawns } from '../engine/spawner.js';
 import {
@@ -15,13 +14,7 @@ import {
   startReturnForClearedNodes,
   computeTokensInUse,
 } from '../engine/cells.js';
-import {
-  applyDetectionOutcome,
-  applyCollateralDamageObservation,
-  applyDendriticReturn,
-  applyResponderDeployed,
-  applyNeutrophilDeployed,
-} from './perceivedState.js';
+import { RECON_CELL_TYPES } from '../data/cellConfig.js';
 import { NODES, computeVisibility } from '../data/nodes.js';
 import { TICKS_PER_TURN, GAME_PHASES, LOSS_REASONS } from './gameState.js';
 import { TOKEN_CAPACITY_MAX, TOKEN_CAPACITY_REGEN_INTERVAL } from '../data/gameConfig.js';
@@ -79,25 +72,18 @@ function handleEndTurn(state) {
   // 2. Advance cells (training, transit, patrol, returns)
   let { updatedCells, events: cellEvents, nodesVisited } = advanceCells(state.deployedCells, newTick, mods);
 
-  // 3. Scout arrivals: roll detection against current ground truth before it advances
-  const scoutDetections = [];
-  for (const event of cellEvents) {
-    if (event.type !== 'scout_arrived') continue;
-    const cell = updatedCells[event.cellId];
-    if (!cell) continue;
-    const nodeState = state.groundTruth.nodeStates?.[cell.nodeId] ?? {};
-    const { actualThreatType, threatStrength } = dominantForDetection(nodeState);
-    const inflammation = nodeState.inflammation ?? 0;
-    const { outcome, reportedType } = rollDetection('dendritic', actualThreatType, threatStrength, inflammation, mods);
-    scoutDetections.push({ nodeId: cell.nodeId, outcome, reportedType });
-  }
+  // 3. Detection phase: run before ground truth advances so cells see current pathogen state.
+  //    Updates detected_level on pathogen instances directly.
+  const groundTruthAfterDetection = runDetectionPhase(
+    updatedCells, nodesVisited, state.groundTruth, mods
+  );
 
   // 4. Probabilistic spawning
-  const pendingSpawns = rollSpawns(state.groundTruth.nodeStates, newTurn, state.systemicStress, Math.random, mods);
+  const pendingSpawns = rollSpawns(groundTruthAfterDetection.nodeStates, newTurn, state.systemicStress, Math.random, mods);
 
   // 5. Advance ground truth (pathogens, inflammation, tissue integrity)
   const { newGroundTruth, events: gtEvents, perSiteOutputs } = advanceGroundTruth(
-    state.groundTruth,
+    groundTruthAfterDetection,
     updatedCells,
     newTurn,
     state.systemicStress,
@@ -127,58 +113,7 @@ function handleEndTurn(state) {
     };
   }
 
-  // 7. Detection rolls → perceived state updates
-  let perceivedState = state.perceivedState;
-  const RECON_TYPES = new Set(['neutrophil', 'macrophage', 'dendritic']);
-
-  // 7a. Arrived patrol/macrophage cells
-  const coveredNodes = new Set();
-  for (const cell of Object.values(updatedCells)) {
-    if (cell.phase !== 'arrived') continue;
-    if (!['neutrophil', 'macrophage'].includes(cell.type)) continue;
-    const nodeId = cell.nodeId;
-    if (coveredNodes.has(nodeId)) continue;
-
-    const nodeState = newGroundTruth.nodeStates?.[nodeId] ?? {};
-    const { actualThreatType, threatStrength } = dominantForDetection(nodeState);
-    const inflammation = nodeState.inflammation ?? 0;
-
-    const { outcome, reportedType } = rollDetection(cell.type, actualThreatType, threatStrength, inflammation, mods);
-    if (outcome !== DETECTION_OUTCOMES.MISS) {
-      perceivedState = applyDetectionOutcome(perceivedState, nodeId, outcome, reportedType, newTurn);
-      coveredNodes.add(nodeId);
-    } else if (inflammation >= 40) {
-      // No threat detected but high inflammation is itself informative
-      perceivedState = applyCollateralDamageObservation(perceivedState, nodeId, newTurn);
-      coveredNodes.add(nodeId);
-    }
-  }
-
-  // 7b. En-route detection at intermediate nodes
-  const visitedNodes = new Set();
-  for (const { cellType, nodeId } of nodesVisited) {
-    if (!RECON_TYPES.has(cellType)) continue;
-    if (visitedNodes.has(nodeId)) continue;
-    if (!NODES[nodeId]) continue;
-
-    const nodeState = newGroundTruth.nodeStates?.[nodeId] ?? {};
-    const { actualThreatType, threatStrength } = dominantForDetection(nodeState);
-    const inflammation = nodeState.inflammation ?? 0;
-
-    const { outcome, reportedType } = rollDetection(cellType, actualThreatType, threatStrength, inflammation, mods);
-    if (outcome !== DETECTION_OUTCOMES.MISS) {
-      perceivedState = applyDetectionOutcome(perceivedState, nodeId, outcome, reportedType, newTurn);
-      visitedNodes.add(nodeId);
-    }
-  }
-
-  // 7c. Scout arrival detections
-  for (const { nodeId, outcome, reportedType } of scoutDetections) {
-    const foundThreat = outcome !== DETECTION_OUTCOMES.MISS && outcome !== DETECTION_OUTCOMES.CLEAR;
-    perceivedState = applyDendriticReturn(perceivedState, nodeId, foundThreat, reportedType ?? null, newTurn);
-  }
-
-  // 8. Systemic values
+  // 7. Systemic values
   const { stress: newStress } = computeSystemicStress(
     newGroundTruth.nodeStates, perSiteOutputs, state.fever, state.systemicStress, mods
   );
@@ -206,15 +141,12 @@ function handleEndTurn(state) {
     lossReason = LOSS_REASONS.SYSTEMIC_COLLAPSE;
     postMortem = buildPostMortem(state, newGroundTruth, systemicStressHistory, scars, 'systemic_collapse');
   }
-  console.log(newGroundTruth)
-  console.log(perceivedState)
   return {
     ...state,
     tick: newTick,
     turn: newTurn,
     tokenCapacity,
     groundTruth: newGroundTruth,
-    perceivedState,
     deployedCells: updatedCells,
     attentionTokens,
     tokensInUse,
@@ -250,24 +182,12 @@ function handleTrainCell(state, cellType) {
 }
 
 function handleDeployFromRoster(state, cellId, nodeId) {
-  const result = deployFromRoster(cellId, nodeId, state.deployedCells, state.tick, state.perceivedState, state.runModifiers);
+  const result = deployFromRoster(cellId, nodeId, state.deployedCells, state.tick, state.groundTruth.nodeStates, state.runModifiers);
   if (!result.success) return state;
-
-  const cell = state.deployedCells[cellId];
-  let perceivedState = state.perceivedState;
-  if (cell) {
-    if (cell.type === 'neutrophil') {
-      perceivedState = applyNeutrophilDeployed(perceivedState, nodeId);
-    } else if (['responder', 'killer_t', 'b_cell', 'nk_cell'].includes(cell.type)) {
-      perceivedState = applyResponderDeployed(perceivedState, nodeId);
-    }
-  }
-
   const tokensInUse = computeTokensInUse(result.newDeployedCells, state.runModifiers);
   return {
     ...state,
     deployedCells: result.newDeployedCells,
-    perceivedState,
     tokensInUse,
     attentionTokens: state.tokenCapacity - tokensInUse,
   };
@@ -318,11 +238,57 @@ function buildPostMortem(state, groundTruth, stressHistory, scars, outcome) {
   };
 }
 
-// ── Helper: dominant threat for detection rolls ────────────────────────────────
+// ── Detection phase ────────────────────────────────────────────────────────────
 
-function dominantForDetection(nodeState) {
-  const dominant = getDominantPathogen(nodeState);
-  if (!dominant) return { actualThreatType: null, threatStrength: 0 };
-  const signalType = PATHOGEN_SIGNAL_TYPE[dominant.type] ?? dominant.type;
-  return { actualThreatType: signalType, threatStrength: dominant.load };
+/**
+ * Run all detection rolls for this turn.
+ * Each recon cell detects at every node it has visibility over.
+ * Updates detected_level / perceived_type on pathogen instances in-place (immutably).
+ * Runs BEFORE advanceGroundTruth so cells see the current pathogen state.
+ */
+function runDetectionPhase(deployedCells, nodesVisited, groundTruth, modifiers) {
+  // Build nodeId → [cellType, ...] mapping for all detecting cells this turn
+  const detectorsByNode = {};
+
+  const addDetector = (nodeId, cellType) => {
+    if (!NODES[nodeId]) return;
+    (detectorsByNode[nodeId] ??= []).push(cellType);
+  };
+
+  // Arrived recon cells; macrophages also cover adjacent nodes
+  for (const cell of Object.values(deployedCells)) {
+    if (cell.phase !== 'arrived') continue;
+    if (!RECON_CELL_TYPES.has(cell.type)) continue;
+    addDetector(cell.nodeId, cell.type);
+    if (cell.coversAdjacentNodes) {
+      for (const adjId of (NODES[cell.nodeId]?.connections ?? [])) {
+        addDetector(adjId, cell.type);
+      }
+    }
+  }
+
+  // En-route cells visiting intermediate nodes
+  for (const { cellType, nodeId } of nodesVisited) {
+    if (RECON_CELL_TYPES.has(cellType)) addDetector(nodeId, cellType);
+  }
+
+  if (Object.keys(detectorsByNode).length === 0) return groundTruth;
+
+  let nodeStates = { ...groundTruth.nodeStates };
+
+  for (const [nodeId, cellTypes] of Object.entries(detectorsByNode)) {
+    const ns = nodeStates[nodeId];
+    if (!ns?.pathogens?.length) continue;
+
+    let pathogens = ns.pathogens;
+    const inflammation = ns.inflammation ?? 0;
+
+    for (const cellType of cellTypes) {
+      pathogens = performDetection(cellType, pathogens, inflammation, modifiers);
+    }
+
+    nodeStates = { ...nodeStates, [nodeId]: { ...ns, pathogens } };
+  }
+
+  return { ...groundTruth, nodeStates };
 }

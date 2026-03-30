@@ -62,6 +62,7 @@ export const PATHOGEN_REGISTRY = {
     trackedValue:      'infectionLoad',
     growthModel:       'logistic',
     replicationRate:   0.30,          // moderate logistic growth
+    detectionModifier: 1.0,           // standard detectability
     spreadThreshold:   80,            // spreads when infectionLoad > 80
     spreadStrength:    10,            // new site starts at this load
     // Damage per turn (at full load 100; scaled linearly by load/100)
@@ -74,6 +75,7 @@ export const PATHOGEN_REGISTRY = {
     trackedValue:      'cellularCompromise',
     growthModel:       'exponential',
     replicationRate:   0.50,          // fast: compromise × rate per turn
+    detectionModifier: 0.8,           // hides inside cells
     spreadThreshold:   60,            // spreads when cellularCompromise > 60
     spreadStrength:    8,
     // Viruses don't damage tissue directly — clearing does (handled in groundTruth)
@@ -87,6 +89,7 @@ export const PATHOGEN_REGISTRY = {
     trackedValue:      'infectionLoad',
     growthModel:       'logistic',
     replicationRate:   0.12,          // slow
+    detectionModifier: 1.0,           // visible structures
     spreadThreshold:   null,          // does not spread between sites
     granulomaThreshold: 60,           // above this: site becomes Walled Off
     tissueDamageRate:  5,
@@ -99,6 +102,7 @@ export const PATHOGEN_REGISTRY = {
     trackedValue:      'parasiticBurden',
     growthModel:       'logistic',
     replicationRate:   0.15,
+    detectionModifier: 0.9,           // somewhat hidden
     spreadThreshold:   null,
     tissueDamageRate:  4,             // slow direct damage
     inflammationRate:  5,
@@ -112,6 +116,7 @@ export const PATHOGEN_REGISTRY = {
     trackedValue:      'infectionLoad',
     growthModel:       'logistic',
     replicationRate:   0.08,          // very slow growth
+    detectionModifier: 0.9,           // detected via indirect toxin evidence
     spreadThreshold:   null,
     tissueDamageRate:  2,
     inflammationRate:  4,
@@ -123,6 +128,7 @@ export const PATHOGEN_REGISTRY = {
     trackedValue:      'corruptionLevel',
     growthModel:       'linear',
     replicationRate:   8,             // flat +8 corruption per turn
+    detectionModifier: 0.5,           // very hard to detect — protein misfolding
     spreadThreshold:   null,
     hiddenUntil:       50,            // invisible to player below this
     tissueDamageRate:  0,
@@ -137,6 +143,7 @@ export const PATHOGEN_REGISTRY = {
     trackedValue:      'cellularCompromise',
     growthModel:       'logistic',
     replicationRate:   0.10,
+    detectionModifier: 0.8,           // hides inside host cells
     spreadThreshold:   null,
     tissueDamageRate:  6,
     inflammationRate:  6,
@@ -147,6 +154,7 @@ export const PATHOGEN_REGISTRY = {
     trackedValue:      'cellularCompromise',
     growthModel:       'linear',
     replicationRate:   4,             // flat +4 per turn
+    detectionModifier: 0.6,           // mimics normal cells
     spreadThreshold:   null,
     tissueDamageRate:  3,
     inflammationRate:  3,
@@ -159,6 +167,7 @@ export const PATHOGEN_REGISTRY = {
     trackedValue:      'infectionLoad',
     growthModel:       'linear',
     replicationRate:   -4,            // decays 4/turn naturally (gone in ~25T without cells)
+    detectionModifier: 0.7,           // looks like normal cell activity
     spreadThreshold:   null,
     tissueDamageRate:  0,
     inflammationRate:  3,             // just enough to look suspicious
@@ -169,6 +178,7 @@ export const PATHOGEN_REGISTRY = {
     trackedValue:      'infectionLoad',  // represents self-tissue reactivity
     growthModel:       'logistic',
     replicationRate:   0.20,
+    detectionModifier: 0.7,           // appears self-like; hard to distinguish from normal immune response
     spreadThreshold:   null,
     tissueDamageRate:  10,           // high self-damage
     inflammationRate:  20,
@@ -197,7 +207,7 @@ export function getPrimaryLoad(instance) {
 /** True if any pathogen is active at this node state. */
 export function nodeHasActivePathogen(nodeState) {
   if (!nodeState?.pathogens) return false;
-  return Object.values(nodeState.pathogens).some(inst => !isInstanceCleared(inst));
+  return nodeState.pathogens.some(inst => !isInstanceCleared(inst));
 }
 
 /** True if all nodes are clear. */
@@ -205,14 +215,14 @@ export function allNodesClear(nodeStates) {
   return Object.values(nodeStates).every(ns => !nodeHasActivePathogen(ns));
 }
 
-/** Returns the dominant (highest-load) pathogen type at a node, or null. */
+/** Returns the dominant (highest-load) pathogen instance at a node, or null. */
 export function getDominantPathogen(nodeState) {
-  if (!nodeState?.pathogens) return null;
+  if (!nodeState?.pathogens?.length) return null;
   let best = null;
   let bestLoad = 0;
-  for (const [type, inst] of Object.entries(nodeState.pathogens)) {
+  for (const inst of nodeState.pathogens) {
     const load = getPrimaryLoad(inst);
-    if (load > bestLoad) { best = type; bestLoad = load; }
+    if (load > bestLoad) { best = inst; bestLoad = load; }
   }
-  return best ? { type: best, load: bestLoad } : null;
+  return best ? { type: best.type, load: bestLoad } : null;
 }

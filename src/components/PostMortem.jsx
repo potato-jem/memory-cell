@@ -2,7 +2,7 @@
 // Shows: failure mode, stress/integrity trajectory, site status at end, scars.
 
 import { NODES } from '../data/nodes.js';
-import { PATHOGEN_DISPLAY_NAMES } from '../data/pathogens.js';
+import { PATHOGEN_DISPLAY_NAMES, getPrimaryLoad } from '../data/pathogens.js';
 
 const FAILURE_MODE_DESCRIPTIONS = {
   systemic_collapse: {
@@ -186,8 +186,8 @@ function SiteGrid({ nodeStates, spreadHistory }) {
     <div className="grid grid-cols-2 gap-1">
       {Object.entries(NODES).map(([nodeId, node]) => {
         const ns = nodeStates[nodeId] ?? {};
-        const pathogens = ns.pathogens ?? {};
-        const hasPathogen = Object.keys(pathogens).length > 0;
+        const pathogens = ns.pathogens ?? [];
+        const hasPathogen = pathogens.length > 0;
         const inflammation = ns.inflammation ?? 0;
         const integrity = ns.tissueIntegrity ?? 100;
         const wasSpreadTarget = spreadHistory?.some(s => s.to === nodeId);
@@ -207,11 +207,11 @@ function SiteGrid({ nodeStates, spreadHistory }) {
 
             {hasPathogen ? (
               <div className="space-y-0.5">
-                {Object.entries(pathogens).map(([type, inst]) => {
-                  const load = inst.infectionLoad ?? inst.cellularCompromise ?? inst.parasiticBurden ?? inst.corruptionLevel ?? 0;
+                {pathogens.map(inst => {
+                  const load = getPrimaryLoad(inst);
                   return (
-                    <div key={type} className="text-red-600">
-                      {PATHOGEN_DISPLAY_NAMES[type] ?? type}: {Math.round(load)}
+                    <div key={inst.uid ?? inst.type} className="text-red-600">
+                      {PATHOGEN_DISPLAY_NAMES[inst.type] ?? inst.type}: {Math.round(load)}
                     </div>
                   );
                 })}

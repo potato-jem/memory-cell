@@ -135,9 +135,8 @@ function PathogenPanel({ nodeId, perceivedState, groundTruthNodeState, currentTu
         // For classified: look up real GT load
         let gtLoad = 0;
         if (isClassified) {
-          const gtPathogens = groundTruthNodeState?.pathogens ?? {};
-          for (const [pt, inst] of Object.entries(gtPathogens)) {
-            if (PATHOGEN_SIGNAL_TYPE[pt] === entity.classifiedType) {
+          for (const inst of (groundTruthNodeState?.pathogens ?? [])) {
+            if (PATHOGEN_SIGNAL_TYPE[inst.type] === entity.classifiedType) {
               gtLoad = Math.max(gtLoad, getPrimaryLoad(inst));
             }
           }

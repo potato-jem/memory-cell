@@ -1,13 +1,20 @@
 // Pathogen engine — per-instance advancement, clearance, spread, and damage output.
 // Pure functions. No React, no UI.
 //
-// A PathogenInstance lives at nodeStates[nodeId].pathogens[pathogenType].
-// Each type tracks exactly one primary value (infectionLoad, cellularCompromise, etc.).
+// A PathogenInstance lives in nodeStates[nodeId].pathogens[] (array).
+// Each instance has a uid, type, tracked value, detected_level, and perceived_type.
 //
 // All functions accept an optional `modifiers` (runModifiers) parameter.
 // When null/undefined, base config values are used (fully backward compatible).
 
 import { NODES } from '../data/nodes.js';
+
+// ── UID generation ─────────────────────────────────────────────────────────────
+
+let _uidCounter = 0;
+export function generatePathogenUid() {
+  return `path_${++_uidCounter}`;
+}
 import { PATHOGEN_REGISTRY, isInstanceCleared, getPrimaryLoad } from '../data/pathogens.js';
 import { CLEARANCE_RATES, getEffectiveClearanceRate } from '../data/cellConfig.js';
 import {
@@ -138,35 +145,42 @@ function computeGrowth(def, currentLoad, systemicStress, pathogenType, modifiers
 
 /**
  * Check all infected nodes and return any new spreads.
- * Returns an array of { type, fromNodeId, toNodeId, initialLoad }.
+ * Returns an array of { type, uid, fromNodeId, toNodeId, initialLoad }.
+ * uid is inherited from the source instance so target nodes can track immunity lineage.
  */
 export function computeSpreads(nodeStates, modifiers = null) {
   const spreads = [];
 
   for (const [nodeId, ns] of Object.entries(nodeStates)) {
-    if (!ns.pathogens) continue;
+    if (!ns.pathogens?.length) continue;
     const node = NODES[nodeId];
     if (!node) continue;
 
-    for (const [pathogenType, instance] of Object.entries(ns.pathogens)) {
+    for (const instance of ns.pathogens) {
       if (isInstanceCleared(instance)) continue;
 
-      const def = PATHOGEN_REGISTRY[pathogenType];
+      const def = PATHOGEN_REGISTRY[instance.type];
       if (!def || def.spreadThreshold == null) continue;
 
-      const effectiveThreshold = getEffectiveSpreadThreshold(pathogenType, def.spreadThreshold, modifiers);
+      const effectiveThreshold = getEffectiveSpreadThreshold(instance.type, def.spreadThreshold, modifiers);
       if (effectiveThreshold == null) continue;
 
       const load = getPrimaryLoad(instance);
       if (load < effectiveThreshold) continue;
 
-      // Find adjacent nodes that don't already have this pathogen
+      // Find adjacent nodes that don't already have this pathogen lineage
       for (const targetId of node.connections) {
         const targetNs = nodeStates[targetId];
         if (!targetNs) continue;
-        if (targetNs.pathogens?.[pathogenType] && !isInstanceCleared(targetNs.pathogens[pathogenType])) continue;
+        // Block if target already has an active pathogen of the same type
+        if (targetNs.pathogens?.some(i => i.type === instance.type && !isInstanceCleared(i))) continue;
+        // Block if target is immune to this lineage uid
+        if (instance.uid && targetNs.immune?.includes(instance.uid)) continue;
+        // Block if target already has this uid active (same lineage, already spread here)
+        if (instance.uid && targetNs.pathogens?.some(i => i.uid === instance.uid)) continue;
         spreads.push({
-          type: pathogenType,
+          type: instance.type,
+          uid: instance.uid,
           fromNodeId: nodeId,
           toNodeId: targetId,
           initialLoad: def.spreadStrength ?? 10,

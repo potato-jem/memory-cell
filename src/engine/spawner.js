@@ -6,7 +6,7 @@
 // Scheduled spikes make "something probably happens early" without guaranteeing it.
 
 import { NODE_IDS } from '../data/nodes.js';
-import { nodeHasActivePathogen } from '../data/pathogens.js';
+import { nodeHasActivePathogen, getPrimaryLoad } from '../data/pathogens.js';
 import {
   SPAWN_BASE_CHANCE,
   SPAWN_FLOOR_CHANCE,
@@ -90,11 +90,7 @@ function buildNodeWeights(pathogenType, nodeStates, systemicStress, modifiers) {
     if (!ns) continue;
 
     // Don't spawn same type at already-infected node
-    const existingInstance = ns.pathogens?.[pathogenType];
-    if (existingInstance) {
-      const load = existingInstance[Object.keys(existingInstance).find(k => k !== 'type')] ?? 0;
-      if (load > 0) continue;
-    }
+    if (ns.pathogens?.some(i => i.type === pathogenType && getPrimaryLoad(i) > 0)) continue;
 
     if ((pathogenType === 'extracellular_bacteria' || pathogenType === 'fungi') && ns.inflammation > 30) {
       w *= 1.5;

@@ -1,220 +1,181 @@
-// Detection probability matrix.
-// Pure data — no flavour text, no signal construction.
+// Detection system — per-pathogen level-upgrade detection.
+// Pure data + pure functions. No React, no UI.
 //
-// When a patrol cell (neutrophil/macrophage) visits a node, or a scout (dendritic) arrives,
-// we roll against this matrix to determine what — if anything — they perceive.
+// Each pathogen instance has a detected_level:
+//   'none'          — not yet detected
+//   'unknown'       — something anomalous, type not known
+//   'threat'        — confirmed threat, type not yet identified
+//   'misclassified' — classified but with wrong perceived_type
+//   'classified'    — correctly identified; perceived_type matches true type
 //
-// Outcomes:
-//   MISS                — cell finds nothing, no signal generated
-//   ANOMALY             — something is off, but the cell can't characterise it
-//   THREAT_UNCLASSIFIED — a threat is present but type unknown
-//   CORRECT_ID          — threat correctly identified (reportedType === actualType)
-//   WRONG_ID            — threat misidentified (reportedType !== actualType)
-//   CLEAR               — clean node confirmed (generates patrol_clear)
-//   FALSE_ALARM         — cell thinks something is wrong on a clean node
-//
-// Each profile { miss, anomaly, threatUnclassified, correctId, wrongId } must sum to 1.
-// Clean profiles { miss, clear, falseAlarm } must also sum to 1.
+// Detection runs once per turn. Each recon cell has N rolls per node visited.
+// Rolls target the highest-level pathogens first (upgrade before discover).
+// Each roll has a probability of upgrading a pathogen's detected_level by one step.
 
+import { getPrimaryLoad, PATHOGEN_REGISTRY } from './pathogens.js';
 import { getDetectionAccuracyBonus } from './runModifiers.js';
 
-export const DETECTION_OUTCOMES = {
-  MISS: 'miss',
-  ANOMALY: 'anomaly',
-  THREAT_UNCLASSIFIED: 'threat_unclassified',
-  CORRECT_ID: 'correct_id',
-  WRONG_ID: 'wrong_id',
-  CLEAR: 'clear',
-  FALSE_ALARM: 'false_alarm',
+// ── Detection rolls per cell type ─────────────────────────────────────────────
+
+export const CELL_DETECTION_ROLLS = {
+  macrophage: 1,
+  neutrophil: 2,
+  dendritic:  3,
 };
 
-// ── Threat detection profiles ─────────────────────────────────────────────────
-// Rows: cell type.  Columns: actual threat type.
-// All rows sum to 1.0.
+// ── Upgrade probabilities ─────────────────────────────────────────────────────
+// [cellType][detected_level] → { upgradeChance, misclassifyChance? }
 //
-// Design notes:
-//   bacterial  — neutrophils are optimised for bacteria; dendritic reliable
-//   viral      — hides inside cells; patrol mostly blind; dendritic reasonable
-//   cancer     — resembles self; neutrophil essentially useless; even dendritic poor
-//   autoimmune — looks like normal immune activity; high false classification rate
-//   mimic      — intentionally deceptive; high wrong_id even for dendritic
+// upgradeChance:    probability this roll increases detected_level by one step
+// misclassifyChance: (only for threat→classified) probability of wrong classification
+//
+// Design intent:
+//   Patrols (neutrophil) are good at discovery (none→unknown) but weak at classification
+//   Macrophages are decent all-round; reasonable at threat recognition
+//   Scouts (dendritic) are excellent at all levels, especially classification
 
-export const THREAT_DETECTION_PROFILES = {
-
-  neutrophil: {
-    //               miss   anomaly  unclassified  correctId  wrongId
-    bacterial:   { miss: 0.25, anomaly: 0.30, threatUnclassified: 0.20, correctId: 0.20, wrongId: 0.05 },
-    viral:       { miss: 0.60, anomaly: 0.25, threatUnclassified: 0.10, correctId: 0.03, wrongId: 0.02 },
-    cancer:      { miss: 0.97, anomaly: 0.03, threatUnclassified: 0.00, correctId: 0.00, wrongId: 0.00 },
-    autoimmune:  { miss: 0.30, anomaly: 0.40, threatUnclassified: 0.20, correctId: 0.05, wrongId: 0.05 },
-    mimic:       { miss: 0.75, anomaly: 0.15, threatUnclassified: 0.07, correctId: 0.01, wrongId: 0.02 },
-  },
-
+export const DETECTION_UPGRADE_PROBS = {
   macrophage: {
-    bacterial:   { miss: 0.15, anomaly: 0.25, threatUnclassified: 0.25, correctId: 0.30, wrongId: 0.05 },
-    viral:       { miss: 0.40, anomaly: 0.30, threatUnclassified: 0.20, correctId: 0.07, wrongId: 0.03 },
-    cancer:      { miss: 0.85, anomaly: 0.10, threatUnclassified: 0.04, correctId: 0.01, wrongId: 0.00 },
-    autoimmune:  { miss: 0.25, anomaly: 0.35, threatUnclassified: 0.25, correctId: 0.10, wrongId: 0.05 },
-    mimic:       { miss: 0.65, anomaly: 0.20, threatUnclassified: 0.10, correctId: 0.02, wrongId: 0.03 },
+    none:          { upgradeChance: 0.40 },
+    unknown:       { upgradeChance: 0.45 },
+    threat:        { upgradeChance: 0.30, misclassifyChance: 0.40 },
+    misclassified: { upgradeChance: 0.20 },
   },
-
+  neutrophil: {
+    none:          { upgradeChance: 0.50 },
+    unknown:       { upgradeChance: 0.50 },
+    threat:        { upgradeChance: 0.20, misclassifyChance: 0.50 },
+    misclassified: { upgradeChance: 0.15 },
+  },
   dendritic: {
-    bacterial:   { miss: 0.05, anomaly: 0.05, threatUnclassified: 0.10, correctId: 0.75, wrongId: 0.05 },
-    viral:       { miss: 0.10, anomaly: 0.15, threatUnclassified: 0.20, correctId: 0.50, wrongId: 0.05 },
-    cancer:      { miss: 0.55, anomaly: 0.20, threatUnclassified: 0.15, correctId: 0.07, wrongId: 0.03 },
-    autoimmune:  { miss: 0.15, anomaly: 0.20, threatUnclassified: 0.30, correctId: 0.15, wrongId: 0.20 },
-    mimic:       { miss: 0.35, anomaly: 0.20, threatUnclassified: 0.20, correctId: 0.10, wrongId: 0.15 },
+    none:          { upgradeChance: 0.70 },
+    unknown:       { upgradeChance: 0.75 },
+    threat:        { upgradeChance: 0.60, misclassifyChance: 0.15 },
+    misclassified: { upgradeChance: 0.50 },
   },
-};
-
-// ── Clean-node profiles ───────────────────────────────────────────────────────
-// Used when no threat is present at the node.
-// falseAlarm: cell reports something wrong on a clean node.
-
-export const CLEAN_DETECTION_PROFILES = {
-  neutrophil: { miss: 0.60, clear: 0.35, falseAlarm: 0.05 },
-  macrophage: { miss: 0.50, clear: 0.45, falseAlarm: 0.05 },
-  dendritic:  { miss: 0.20, clear: 0.75, falseAlarm: 0.05 },
 };
 
 // ── Wrong-ID table ────────────────────────────────────────────────────────────
-// When a cell misidentifies, what type does it report instead?
-// First entry = most likely misidentification.
+// When classification is wrong, what does the cell report instead?
+// First entry = most likely misidentification (70% probability).
 
 export const WRONG_ID_MAP = {
-  bacterial:  ['viral', 'autoimmune'],
-  viral:      ['bacterial', 'mimic'],
-  cancer:     ['autoimmune', 'bacterial'],
-  autoimmune: ['bacterial', 'viral'],
-  mimic:      ['bacterial', 'viral'],
+  extracellular_bacteria: ['virus',                 'autoimmune'],
+  intracellular_bacteria: ['virus',                 'extracellular_bacteria'],
+  virus:                  ['extracellular_bacteria', 'autoimmune'],
+  fungi:                  ['extracellular_bacteria', 'benign'],
+  parasite:               ['extracellular_bacteria', 'fungi'],
+  toxin_producer:         ['extracellular_bacteria', 'virus'],
+  prion:                  ['autoimmune',             'benign'],
+  cancer:                 ['autoimmune',             'benign'],
+  autoimmune:             ['extracellular_bacteria', 'benign'],
+  benign:                 ['autoimmune',             'extracellular_bacteria'],
 };
 
-// ── Modifiers ─────────────────────────────────────────────────────────────────
+// ── Level priority for roll targeting ─────────────────────────────────────────
+// Higher = targeted first. 'classified' is skipped (already fully known).
 
-// Higher inflammation reduces miss probability (more molecular activity = easier to notice)
-// At inflammation=100, miss probability reduced by up to this fraction.
-export const INFLAMMATION_MISS_REDUCTION = 0.40;
+const LEVEL_PRIORITY = {
+  misclassified: 4,
+  threat:        3,
+  unknown:       2,
+  none:          1,
+  classified:    0,
+};
 
-// Weak pathogens are harder to detect. At strength=0 this adds 30% to miss probability.
-export const WEAK_PATHOGEN_MISS_INCREASE = 0.30;
-
-// ── Detection roll ────────────────────────────────────────────────────────────
+// ── performDetection ──────────────────────────────────────────────────────────
 
 /**
- * Roll detection for a cell visiting a node.
+ * Run detection rolls for one cell visiting a node.
+ * Returns a new pathogens array with potentially upgraded detected_levels.
+ * Does not mutate input.
  *
- * @param {string} cellType        - 'neutrophil' | 'macrophage' | 'dendritic'
- * @param {string|null} threatType - actual threat type, or null if node is clean
- * @param {number} threatStrength  - 0–100 (ignored if no threat)
- * @param {number} inflammation    - 0–100
- * @returns {{ outcome: string, reportedType: string|null }}
+ * @param {string} cellType          - 'macrophage' | 'neutrophil' | 'dendritic'
+ * @param {Array}  nodePathogens     - current pathogens array at the node
+ * @param {number} nodeInflammation  - 0–100; boosts detection chance slightly
+ * @param {Object} modifiers         - run modifiers (optional)
+ * @returns {Array} updated pathogens array
  */
-export function rollDetection(cellType, threatType, threatStrength, inflammation, modifiers = null) {
-  if (!threatType || threatStrength <= 0) {
-    return rollCleanDetection(cellType, inflammation);
+export function performDetection(cellType, nodePathogens, nodeInflammation = 0, modifiers = null) {
+  const rolls = CELL_DETECTION_ROLLS[cellType] ?? 0;
+  if (rolls === 0 || !nodePathogens?.length) return nodePathogens;
+
+  // Build sorted candidate list (highest priority first; skip 'classified')
+  const candidates = nodePathogens
+    .map((inst, idx) => ({ inst, idx }))
+    .filter(({ inst }) => inst.detected_level !== 'classified')
+    .sort((a, b) => {
+      const pa = LEVEL_PRIORITY[a.inst.detected_level] ?? 0;
+      const pb = LEVEL_PRIORITY[b.inst.detected_level] ?? 0;
+      if (pa !== pb) return pb - pa;
+      return getPrimaryLoad(b.inst) - getPrimaryLoad(a.inst); // higher load = easier to detect
+    });
+
+  if (candidates.length === 0) return nodePathogens;
+
+  const updated = [...nodePathogens];
+
+  for (let roll = 0; roll < rolls; roll++) {
+    const candidateSlot = candidates[roll % candidates.length];
+    const currentInst = updated[candidateSlot.idx];
+
+    if (currentInst.detected_level === 'classified') continue;
+
+    const probs = DETECTION_UPGRADE_PROBS[cellType]?.[currentInst.detected_level];
+    if (!probs) continue;
+
+    let chance = probs.upgradeChance;
+
+    // Per-pathogen detection modifier (harder/easier types to detect)
+    const detMod = PATHOGEN_REGISTRY[currentInst.type]?.detectionModifier ?? 1.0;
+    chance *= detMod;
+
+    // Inflammation bonus: inflamed nodes have more molecular activity — easier to notice
+    chance += (nodeInflammation / 100) * 0.10;
+
+    // Run modifier accuracy bonus (upgrades, scars)
+    chance += getDetectionAccuracyBonus(cellType, currentInst.type, modifiers);
+
+    chance = Math.max(0, Math.min(0.98, chance));
+
+    if (Math.random() >= chance) continue;
+
+    // Upgrade this pathogen's detection level
+    const upgraded = upgradeDetectionLevel(currentInst, probs.misclassifyChance ?? 0);
+    updated[candidateSlot.idx] = upgraded;
+    // Keep candidate in sync so repeat-cycle rolls see the updated level
+    candidateSlot.inst = upgraded;
   }
 
-  const baseProfile = THREAT_DETECTION_PROFILES[cellType]?.[threatType];
-  if (!baseProfile) return { outcome: DETECTION_OUTCOMES.MISS, reportedType: null };
-
-  let profile = applyInflammationModifier(baseProfile, inflammation);
-  profile = applyStrengthModifier(profile, threatStrength);
-
-  // Apply detection accuracy bonus from upgrades/scars
-  const accuracyBonus = getDetectionAccuracyBonus(cellType, threatType, modifiers);
-  if (accuracyBonus > 0 && profile.miss > 0) {
-    const transferred = Math.min(profile.miss, accuracyBonus);
-    profile = {
-      ...profile,
-      miss: profile.miss - transferred,
-      correctId: profile.correctId + transferred,
-    };
-  }
-
-  const outcome = pickOutcome([
-    [DETECTION_OUTCOMES.MISS,               profile.miss],
-    [DETECTION_OUTCOMES.ANOMALY,            profile.anomaly],
-    [DETECTION_OUTCOMES.THREAT_UNCLASSIFIED, profile.threatUnclassified],
-    [DETECTION_OUTCOMES.CORRECT_ID,         profile.correctId],
-    [DETECTION_OUTCOMES.WRONG_ID,           profile.wrongId],
-  ]);
-
-  const reportedType =
-    outcome === DETECTION_OUTCOMES.CORRECT_ID ? threatType :
-    outcome === DETECTION_OUTCOMES.WRONG_ID   ? getWrongId(threatType) :
-    null;
-
-  return { outcome, reportedType };
-}
-
-function rollCleanDetection(cellType, inflammation = 0) {
-  const base = CLEAN_DETECTION_PROFILES[cellType];
-  if (!base) return { outcome: DETECTION_OUTCOMES.MISS, reportedType: null };
-
-  // Inflammation on clean nodes increases false alarm risk slightly
-  const falseAlarmBonus = (inflammation / 100) * 0.08;
-  const profile = {
-    miss: Math.max(0, base.miss - falseAlarmBonus),
-    clear: base.clear,
-    falseAlarm: Math.min(0.30, base.falseAlarm + falseAlarmBonus),
-  };
-
-  const outcome = pickOutcome([
-    [DETECTION_OUTCOMES.MISS,        profile.miss],
-    [DETECTION_OUTCOMES.CLEAR,       profile.clear],
-    [DETECTION_OUTCOMES.FALSE_ALARM, profile.falseAlarm],
-  ]);
-
-  return { outcome, reportedType: null };
+  return updated;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function applyInflammationModifier(profile, inflammation) {
-  if (inflammation <= 0) return profile;
-  // Reduce miss by up to INFLAMMATION_MISS_REDUCTION; redistribute to anomaly/unclassified
-  const reductionFactor = (inflammation / 100) * INFLAMMATION_MISS_REDUCTION;
-  const missReduction = profile.miss * reductionFactor;
-  const newMiss = profile.miss - missReduction;
-  const scale = profile.miss > 0 ? (1 - newMiss) / (1 - profile.miss + 0.0001) : 1;
-  return {
-    miss: newMiss,
-    anomaly:            profile.anomaly * scale,
-    threatUnclassified: profile.threatUnclassified * scale,
-    correctId:          profile.correctId * scale,
-    wrongId:            profile.wrongId * scale,
-  };
-}
+function upgradeDetectionLevel(instance, misclassifyChance) {
+  switch (instance.detected_level) {
+    case 'none':
+      return { ...instance, detected_level: 'unknown' };
 
-function applyStrengthModifier(profile, strength) {
-  // strength: 0–100. Weak pathogen → harder to detect → more miss.
-  const strengthFactor = Math.max(0, Math.min(1, strength / 100));
-  const missIncrease = (1 - strengthFactor) * WEAK_PATHOGEN_MISS_INCREASE;
-  const newMiss = Math.min(0.99, profile.miss + missIncrease);
-  const nonMissScale = profile.miss < 1
-    ? (1 - newMiss) / (1 - profile.miss)
-    : 0;
-  return {
-    miss:               newMiss,
-    anomaly:            profile.anomaly * nonMissScale,
-    threatUnclassified: profile.threatUnclassified * nonMissScale,
-    correctId:          profile.correctId * nonMissScale,
-    wrongId:            profile.wrongId * nonMissScale,
-  };
-}
+    case 'unknown':
+      return { ...instance, detected_level: 'threat' };
 
-function pickOutcome(entries) {
-  const roll = Math.random();
-  let cumulative = 0;
-  for (const [outcome, prob] of entries) {
-    cumulative += prob;
-    if (roll < cumulative) return outcome;
+    case 'threat': {
+      if (Math.random() < misclassifyChance) {
+        return { ...instance, detected_level: 'misclassified', perceived_type: getWrongId(instance.type) };
+      }
+      return { ...instance, detected_level: 'classified', perceived_type: instance.type };
+    }
+
+    case 'misclassified':
+      return { ...instance, detected_level: 'classified', perceived_type: instance.type };
+
+    default:
+      return instance;
   }
-  return entries[0][0]; // fallback: first outcome (usually MISS)
 }
 
-function getWrongId(actualType) {
-  const options = WRONG_ID_MAP[actualType] ?? ['bacterial'];
-  // Pick first option most of the time (it's the most plausible misidentification)
+function getWrongId(pathogenType) {
+  const options = WRONG_ID_MAP[pathogenType] ?? ['extracellular_bacteria'];
   return Math.random() < 0.7 ? options[0] : options[Math.min(1, options.length - 1)];
 }

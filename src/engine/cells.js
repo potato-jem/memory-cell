@@ -14,6 +14,7 @@
 // When null/undefined, base config values are used (fully backward compatible).
 
 import { NODES, HQ_NODE_ID, computePathWithModifiers } from '../data/nodes.js';
+import { nodeHasActivePathogen } from '../data/pathogens.js';
 import { PATROL_DWELL_TICKS, SCOUT_DWELL_TICKS, TRAINING_TICKS } from '../data/gameConfig.js';
 import {
   DEPLOY_COSTS,
@@ -105,7 +106,7 @@ export function trainCell(type, deployedCells, tokenCapacity, tick, modifiers = 
 
 // ── Deployment ────────────────────────────────────────────────────────────────
 
-export function deployFromRoster(cellId, nodeId, deployedCells, tick, perceivedState, modifiers = null) {
+export function deployFromRoster(cellId, nodeId, deployedCells, tick, nodeStates, modifiers = null) {
   const cell = deployedCells[cellId];
   if (!cell) return { success: false, error: 'Cell not found' };
   if (cell.phase === 'training') return { success: false, error: 'Cell is still in training' };
@@ -113,8 +114,8 @@ export function deployFromRoster(cellId, nodeId, deployedCells, tick, perceivedS
   const node = NODES[nodeId];
   if (!node) return { success: false, error: `Unknown node: ${nodeId}` };
 
-  if (cell.type === CELL_TYPES.KILLER_T && !hasDendriticConfirmation(nodeId, perceivedState)) {
-    return { success: false, error: 'Killer T requires scout confirmation', requiresDendritic: true };
+  if (cell.type === CELL_TYPES.KILLER_T && !nodeHasClassifiedPathogen(nodeId, nodeStates)) {
+    return { success: false, error: 'Killer T requires classified threat', requiresDendritic: true };
   }
 
   const fromNodeId = (cell.phase === 'arrived' || cell.phase === 'returning')
@@ -122,7 +123,7 @@ export function deployFromRoster(cellId, nodeId, deployedCells, tick, perceivedS
     : HQ_NODE_ID;
 
   const path = computePathWithModifiers(fromNodeId, nodeId, modifiers);
-  const extra = _deployExtra(cell.type, nodeId, perceivedState, modifiers);
+  const extra = _deployExtra(cell.type, nodeId, nodeStates, modifiers);
 
   return {
     success: true,
@@ -145,8 +146,8 @@ export function deployFromRoster(cellId, nodeId, deployedCells, tick, perceivedS
   };
 }
 
-function _deployExtra(type, nodeId, perceivedState, modifiers) {
-  const hasDC = hasDendriticConfirmation(nodeId, perceivedState);
+function _deployExtra(type, nodeId, nodeStates, modifiers) {
+  const hasDC = nodeHasClassifiedPathogen(nodeId, nodeStates);
   switch (type) {
     case CELL_TYPES.NEUTROPHIL:
       return { patrolConnectionIdx: 0, patrolNextMoveTick: null };
@@ -345,10 +346,7 @@ export function startReturnForClearedNodes(deployedCells, nodeStates, tick, modi
     if (!ATTACK_CELL_TYPES.has(cell.type)) continue;
     if (cell.phase !== 'arrived') continue;
     const ns = nodeStates[cell.nodeId];
-    const hasPathogen = ns && Object.values(ns.pathogens ?? {}).some(inst => {
-      const tv = Object.keys(inst).find(k => k !== 'type');
-      return tv ? (inst[tv] ?? 0) > 0 : false;
-    });
+    const hasPathogen = nodeHasActivePathogen(ns);
     if (!hasPathogen) {
       const returnPath = computePathWithModifiers(cell.nodeId, HQ_NODE_ID, modifiers);
       updated[cellId] = {
@@ -366,8 +364,14 @@ export function startReturnForClearedNodes(deployedCells, nodeStates, tick, modi
 
 // ── Queries ───────────────────────────────────────────────────────────────────
 
-export function hasDendriticConfirmation(nodeId, perceivedState) {
-  return perceivedState?.nodes?.[nodeId]?.scoutConfirmed ?? false;
+/**
+ * True if any pathogen at this node has been fully classified.
+ * Replaces the old perceivedState.scoutConfirmed check.
+ * Attack cells use this to determine backing effectiveness.
+ */
+export function nodeHasClassifiedPathogen(nodeId, nodeStates) {
+  const ns = nodeStates?.[nodeId];
+  return ns?.pathogens?.some(i => i.detected_level === 'classified') ?? false;
 }
 
 export function getClearancePower(nodeId, deployedCells, groundTruth, modifiers = null) {

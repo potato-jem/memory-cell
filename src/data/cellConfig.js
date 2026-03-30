@@ -12,6 +12,7 @@ export const CELL_CONFIG = {
     displayName:                 'Scout',
     deployCost:                  2,      // tokens held for cell's lifetime
     clearanceRate:               0,      // recon only — no pathogen clearance
+    detectionRolls:              3,      // rolls per node visit
     isRecon:                     true,
     isAttack:                    false,
     isPatrol:                    false,
@@ -23,6 +24,7 @@ export const CELL_CONFIG = {
     displayName:                 'Patrol',
     deployCost:                  1,
     clearanceRate:               0,      // patrol does not clear pathogens
+    detectionRolls:              2,
     isRecon:                     true,
     isAttack:                    false,
     isPatrol:                    true,
@@ -34,6 +36,7 @@ export const CELL_CONFIG = {
     displayName:                 'Macrophage',
     deployCost:                  1,
     clearanceRate:               4,
+    detectionRolls:              1,
     isRecon:                     true,
     isAttack:                    false,
     isPatrol:                    false,
