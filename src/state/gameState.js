@@ -3,7 +3,6 @@
 
 import { initGroundTruth } from '../engine/groundTruth.js';
 import { initPerceivedState } from './perceivedState.js';
-import { initMemoryBank } from '../engine/memory.js';
 import { makeReadyCell, computeTokensInUse } from '../engine/cells.js';
 import { NODE_IDS } from '../data/nodes.js';
 import { INITIAL_TOKEN_CAPACITY, TICKS_PER_TURN } from '../data/gameConfig.js';
@@ -24,9 +23,8 @@ export const LOSS_REASONS = {
 /**
  * Initialise fresh game state for an endless run.
  * @param {Object} runConfig  — optional override (default: DEFAULT_RUN_CONFIG)
- * @param {Object} existingMemoryBank — carry forward from previous run
  */
-export function initGameState(runConfig = DEFAULT_RUN_CONFIG, existingMemoryBank = null) {
+export function initGameState(runConfig = DEFAULT_RUN_CONFIG) {
   // Build starting roster from runConfig.startingUnits
   const deployedCells = {};
   for (const { type, count } of (runConfig.startingUnits ?? [])) {
@@ -67,9 +65,6 @@ export function initGameState(runConfig = DEFAULT_RUN_CONFIG, existingMemoryBank
 
     // Scars — permanent negative modifiers from serious damage
     scars: [],
-
-    // Memory bank — carries across runs
-    memoryBank: existingMemoryBank ?? initMemoryBank(),
 
     // Runtime modifiers — accumulate upgrades, scars, decisions
     // Dispatch APPLY_MODIFIER with a patch to modify cell/node/pathogen/detection/systemic/spawn behavior

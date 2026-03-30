@@ -3,7 +3,7 @@
 ## State Layer (`src/state/`)
 
 ### `gameState.js`
-Game state shape and `initGameState(runConfig, existingMemoryBank)`.
+Game state shape and `initGameState(runConfig)`.
 
 **Top-level state fields:**
 ```js
@@ -22,7 +22,6 @@ Game state shape and `initGameState(runConfig, existingMemoryBank)`.
   activeSignals,               // unactioned signals
   signalHistory,               // all signals ever seen
   silenceNotices,              // informational patrol messages
-  memoryBank,                  // persists across runs
   runModifiers,                // accumulated upgrades/scars/decisions — see data-layer.md
   phase,                       // 'playing' | 'lost'
   lossReason,

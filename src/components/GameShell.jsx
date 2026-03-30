@@ -5,7 +5,6 @@
 import { useReducer, useCallback, useState } from 'react';
 import { initGameState, GAME_PHASES } from '../state/gameState.js';
 import { gameReducer, ACTION_TYPES } from '../state/actions.js';
-import { initMemoryBank, getMemoryBankSummary } from '../engine/memory.js';
 import { THREAT_LEVELS } from '../state/perceivedState.js';
 import { DEFAULT_RUN_CONFIG } from '../data/runConfig.js';
 import { CELL_TYPES, CELL_DISPLAY_NAMES, DEPLOY_COSTS } from '../engine/cells.js';
@@ -40,7 +39,6 @@ const STARTING_UNIT_COLORS = {
 };
 
 export default function GameShell() {
-  const [sessionMemoryBank, setSessionMemoryBank] = useState(initMemoryBank());
   const [started, setStarted] = useState(false);
   const [startingCounts, setStartingCounts] = useState(DEFAULT_STARTING_COUNTS);
 
@@ -55,12 +53,11 @@ export default function GameShell() {
       .filter(([, count]) => count > 0)
       .map(([type, count]) => ({ type, count }));
     const cfg = { ...DEFAULT_RUN_CONFIG, startingUnits };
-    dispatch({ type: ACTION_TYPES.RESTART, initialState: initGameState(cfg, sessionMemoryBank) });
+    dispatch({ type: ACTION_TYPES.RESTART, initialState: initGameState(cfg,) });
     setStarted(true);
-  }, [sessionMemoryBank, startingCounts]);
+  }, [startingCounts]);
 
   const handleRestart = useCallback(() => {
-    if (state.postMortem?.memoryBank) setSessionMemoryBank(state.postMortem.memoryBank);
     setStarted(false);
   }, [state.postMortem]);
 
@@ -309,7 +306,6 @@ export default function GameShell() {
               stressHistory={state.systemicStressHistory}
               fever={state.fever}
               scars={state.scars}
-              memoryBank={state.memoryBank}
               groundTruthNodeStates={state.groundTruth.nodeStates}
               onSelectNode={handleSelectNode}
               perceivedState={state.perceivedState}
@@ -334,7 +330,7 @@ export default function GameShell() {
 
 function OverviewPanel({
   deployedCells, systemicStress, systemicIntegrity,
-  stressHistory, fever, scars, memoryBank, groundTruthNodeStates, onSelectNode, perceivedState,
+  stressHistory, fever, scars,  groundTruthNodeStates, onSelectNode, perceivedState,
 }) {
   const alertNodes = Object.entries(perceivedState?.nodes ?? {})
     .filter(([, n]) => n.threatLevel >= THREAT_LEVELS.CONFIRMED)
@@ -345,7 +341,6 @@ function OverviewPanel({
     .map(([nodeId]) => nodeId);
 
   const totalDeployed = Object.keys(deployedCells).length;
-  const memorySummary = memoryBank ? getMemoryBankSummary(memoryBank) : [];
 
   return (
     <div className="flex flex-col h-full text-xs">
@@ -439,19 +434,6 @@ function OverviewPanel({
           </section>
         )}
 
-        {/* Memory bank */}
-        {memorySummary.length > 0 && (
-          <section>
-            <div className="px-3 py-1.5 text-purple-800 uppercase tracking-wider">Memory</div>
-            {memorySummary.map(mem => (
-              <div key={mem.type} className="flex items-center gap-2 px-3 py-0.5">
-                <div className="w-1.5 h-1.5 rounded-full bg-purple-800" />
-                <span className="text-purple-700 flex-1">{mem.displayName}</span>
-                <span className="text-purple-900">{mem.strength}</span>
-              </div>
-            ))}
-          </section>
-        )}
       </div>
     </div>
   );

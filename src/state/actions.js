@@ -25,7 +25,6 @@ import {
 import { NODES, computeVisibility } from '../data/nodes.js';
 import { TICKS_PER_TURN, GAME_PHASES, LOSS_REASONS } from './gameState.js';
 import { TOKEN_CAPACITY_MAX, TOKEN_CAPACITY_REGEN_INTERVAL } from '../data/gameConfig.js';
-import { recordEncounter } from '../engine/memory.js';
 import { applyModifierPatch } from '../data/runModifiers.js';
 
 export const ACTION_TYPES = {
@@ -193,14 +192,6 @@ function handleEndTurn(state) {
     { turn: newTurn, stress: newStress, integrity: newIntegrity },
   ];
 
-  // 9. Memory bank — record cleared pathogens
-  let memoryBank = state.memoryBank;
-  for (const event of gtEvents) {
-    if (event.type === 'pathogen_cleared') {
-      memoryBank = recordEncounter(memoryBank, event.pathogenType, true);
-    }
-  }
-
   // 10. Token pool
   const tokensInUse = computeTokensInUse(updatedCells, mods);
   const attentionTokens = tokenCapacity - tokensInUse;
@@ -230,7 +221,6 @@ function handleEndTurn(state) {
     systemicIntegrity: newIntegrity,
     systemicStressHistory,
     scars,
-    memoryBank,
     lastKnownNodeStates,
     phase,
     lossReason,
@@ -324,7 +314,6 @@ function buildPostMortem(state, groundTruth, stressHistory, scars, outcome) {
     systemicStressHistory: stressHistory,
     scars,
     turnsPlayed: state.turn,
-    memoryBank: state.memoryBank,
   };
 }
 

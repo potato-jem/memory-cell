@@ -117,7 +117,7 @@ Translates ground truth into signals the player receives.
 **Key exports:**
 | Function | Purpose |
 |---|---|
-| `generateSignals(gt, cells, config, turn, memory, situationId, tick, modifiers?)` | Per-turn: arrived patrol/macrophage detection + collateral damage |
+| `generateSignals(gt, cells, config, turn, situationId, tick, modifiers?)` | Per-turn: arrived patrol/macrophage detection + collateral damage |
 | `generateSignalsForVisits(nodesVisited, gt, turn, tick, situationId, modifiers?)` | En-route: detection at intermediate nodes |
 | `makeDendriticReturnSignal(cell, gt, config, tick, turn, situationId, modifiers?)` | One-shot detection roll when scout arrives at destination |
 | `generateSilenceNotices(gt, cells, turn)` | Informational-only notices when patrol reports nothing |
@@ -139,8 +139,7 @@ Translates ground truth into signals the player receives.
   arrivedAtTick: 20,
   expiresAtTick: null,               // null = never expires
   routed: false,
-  routingDecision: null,
-  hasMemoryBonus: false,
+  routingDecision: null
 }
 ```
 
@@ -171,8 +170,3 @@ Computes SystemicStress (pressure, not health) and SystemicIntegrity (the actual
 **Integrity hits:** 1/turn at stress 80-89, 3/turn at 90-99, 5/turn at 100.
 
 ---
-
-## `memory.js`
-Cross-run immune memory bank. Records cleared pathogens, applies detection bonuses in future runs.
-
-**Exports used:** `initMemoryBank()`, `recordEncounter(bank, pathogenType, cleared)`, `applyMemoryBonus(signal, bank, threatType)`

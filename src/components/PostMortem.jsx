@@ -3,7 +3,6 @@
 
 import { NODES } from '../data/nodes.js';
 import { PATHOGEN_DISPLAY_NAMES } from '../data/pathogens.js';
-import { getMemoryBankSummary } from '../engine/memory.js';
 
 const FAILURE_MODE_DESCRIPTIONS = {
   systemic_collapse: {
@@ -100,17 +99,6 @@ export default function PostMortem({ postMortem, onRestart }) {
               </div>
             </section>
           )}
-
-          {/* Memory bank */}
-          {postMortem.memoryBank && (
-            <section>
-              <h3 className="text-xs text-gray-600 uppercase tracking-wider mb-3">
-                Immunological Memory (carries forward)
-              </h3>
-              <MemoryBankSummary memoryBank={postMortem.memoryBank} />
-            </section>
-          )}
-
         </div>
 
         {/* Restart */}
@@ -247,25 +235,3 @@ function SiteGrid({ nodeStates, spreadHistory }) {
   );
 }
 
-// ── Memory bank summary ───────────────────────────────────────────────────────
-
-function MemoryBankSummary({ memoryBank }) {
-  const entries = getMemoryBankSummary(memoryBank ?? {});
-  if (entries.length === 0) {
-    return <div className="text-xs text-gray-700 italic">No encounters recorded.</div>;
-  }
-  return (
-    <div className="space-y-1">
-      {entries.map(entry => (
-        <div key={entry.type} className="flex items-center gap-3 text-xs">
-          <span className="font-mono text-purple-400 w-36 shrink-0">{entry.displayName}</span>
-          <span className={`font-mono ${
-            entry.strength === 'Strong' ? 'text-green-600' :
-            entry.strength === 'Moderate' ? 'text-yellow-600' : 'text-gray-600'
-          }`}>{entry.strength}</span>
-          <span className="text-gray-700">{entry.encounterCount}× seen</span>
-        </div>
-      ))}
-    </div>
-  );
-}
