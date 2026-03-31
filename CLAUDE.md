@@ -1,5 +1,13 @@
 Always use git -C <path> instead of cd <path> && git
 
+## Simulation harness
+
+`simulation/` contains a headless balance-testing harness. Before running simulations or writing new strategies, read:
+
+- `simulation/README.md` — how to run simulations, how to interpret the report, how to add strategies, balance levers
+
+Quick start: `node simulation/run.js --strategy random --runs 20`
+
 ## Design docs
 
 If uesful, read the relevant file from `design_docs/`. Please also update the relevant design doc at the conclusion of editing as necessary.
