@@ -13,21 +13,20 @@ All cell lifecycle logic. Pure functions only.
 ```js
 {
   id: 'cell_3',
-  type: 'dendritic',          // see CELL_TYPES
+  type: 'dendritic',          // see CELL_TYPES; all type properties read from CELL_CONFIG
   phase: 'outbound',          // lifecycle phase
   nodeId: 'BLOOD',            // current position (intermediate node during transit)
   destNodeId: 'GUT',          // final destination (outbound/returning only)
   path: ['SPLEEN','BLOOD','LIVER','GUT'],  // full path
   pathIndex: 1,               // position in path (nodeId = path[pathIndex])
   deployedAtTick: 5,
-  scoutDwellUntilTick: null,  // dendritic only: when to stop dwelling
-  patrolConnectionIdx: 0,     // neutrophil only: which connection to move to next
-  patrolNextMoveTick: 10,     // neutrophil only: when to move to next node
-  effectiveness: 0.8,         // attack cells: modified by scout backing
-  hasDendriticBacking: false, // attack cells: whether deployed with scout confirmation
-  coversAdjacentNodes: true,  // macrophage only
+  scoutDwellUntilTick: null,  // isScout cells only: when to stop dwelling (from CELL_CONFIG.isScout)
+  patrolConnectionIdx: 0,     // isPatrol cells only: which connection to move to next
+  patrolNextMoveTick: 10,     // isPatrol cells only: when to move to next node
 }
 ```
+
+Note: `effectiveness` and `hasDendriticBacking` are no longer stored on cell state. Clearance effectiveness is computed dynamically in `pathogen.js` using `CELL_CONFIG[type].effectivenessByLevel[detected_level]` at the time of clearance. `coversAdjacentNodes` is read from `CELL_CONFIG[type].coversAdjacentNodes`.
 
 Cell config and modifier-aware accessors live in `src/data/cellConfig.js`. `cells.js` re-exports `DEPLOY_COSTS`, `CLEARANCE_RATES`, `CELL_DISPLAY_NAMES` for backward compatibility.
 
@@ -46,7 +45,7 @@ Cell config and modifier-aware accessors live in `src/data/cellConfig.js`. `cell
 | `advanceCells(deployedCells, tick, modifiers?)` | **Main tick function.** Returns `{updatedCells, events, nodesVisited}` |
 | `startReturnForClearedNodes(..., modifiers?)` | Auto-returns attack cells when their node is clear |
 | `computeTokensInUse(deployedCells, modifiers?)` | Sum of effective token costs across all cells |
-| `nodeHasClassifiedPathogen(nodeId, nodeStates)` | True if any pathogen at node has `detected_level === 'classified'` (replaces `hasDendriticConfirmation`) |
+| `nodeHasClassifiedPathogen(nodeId, nodeStates)` | True if any pathogen at node has `detected_level === 'classified'` — used to gate deployment of cells with `requiresClassified: true` |
 
 **`advanceCells` returns:**
 - `updatedCells` — new deployedCells dict
@@ -58,8 +57,8 @@ Cell config and modifier-aware accessors live in `src/data/cellConfig.js`. `cell
 - Exit cost = `signalTravelCost` of node being left
 - While budget > 0 and path not complete: subtract exit cost, advance pathIndex, add to nodesVisited
 - 0-cost exit (SPLEEN only) keeps budget at 1, allowing a free extra hop
-- Scouts dwell at destination for `SCOUT_DWELL_TICKS` before auto-computing return path
-- Patrols cycle through adjacent nodes every `PATROL_DWELL_TICKS`
+- `isScout` cells (`CELL_CONFIG[type].isScout`) dwell at destination for `SCOUT_DWELL_TICKS` then auto-return
+- `isPatrol` cells cycle through adjacent nodes every `PATROL_DWELL_TICKS`
 
 ---
 
@@ -101,7 +100,7 @@ Per-instance pathogen advancement and spread. Called by `groundTruth.js`.
 | Function | Purpose |
 |---|---|
 | `generatePathogenUid()` | Returns a unique `'path_N'` string; used when creating new instances |
-| `getClearancePower(pathogenType, nodeId, cells, nodeState, modifiers?)` | Clearance power filtered by `clearableBy`; scales by modifier `clearanceRateMultiplier` |
+| `getClearancePower(instance, nodeId, cells, nodeState, modifiers?)` | Clearance power for a specific pathogen instance. Uses `CELL_CONFIG[type].clearablePathogens[pathogenType]` to check eligibility and `effectivenessByLevel[detected_level]` for the effectiveness factor. |
 | `advanceInstance(instance, nodeId, cells, nodeState, stress, modifiers?)` | One-turn advancement: growth, clearance, damage output; respects all pathogen modifiers |
 | `computeSpreads(nodeStates, modifiers?)` | Determine spread events; child inherits parent `uid`; checks target `immune[]` to block re-spread |
 | `shouldWallOff(instance)` | True if fungi above granuloma threshold |

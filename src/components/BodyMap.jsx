@@ -13,6 +13,7 @@
 
 import { NODES } from '../data/nodes.js';
 import { getPrimaryLoad } from '../data/pathogens.js';
+import { CELL_CONFIG, CELL_TYPE_ORDER } from '../data/cellConfig.js';
 
 const SVG_W = 420;
 const SVG_H = 420;
@@ -31,16 +32,6 @@ const PATHOGEN_RING_COLORS = {
   cancer:                 '#94a3b8',   // slate
 };
 
-const CELL_DOT_COLORS = {
-  neutrophil: '#60a5fa',   // blue
-  macrophage: '#fbbf24',   // amber
-  dendritic:  '#c084fc',   // purple
-  responder:  '#f87171',   // red
-  killer_t:   '#fb7185',   // rose
-  b_cell:     '#4ade80',   // green
-  nk_cell:    '#fb923c',   // orange
-};
-const CELL_TYPE_ORDER = ['neutrophil', 'macrophage', 'dendritic', 'responder', 'killer_t', 'b_cell', 'nk_cell'];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -343,7 +334,7 @@ export default function BodyMap({
                     cx={cx + dr * Math.cos(angle)}
                     cy={cy + dr * Math.sin(angle)}
                     r={inTransit ? 2 : 2.5}
-                    fill={CELL_DOT_COLORS[cell.type] ?? '#888'}
+                    fill={CELL_CONFIG[cell.type]?.color ?? '#888'}
                     opacity={inTransit ? 0.35 : 0.95}
                   />
                 );

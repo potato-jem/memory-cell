@@ -1,6 +1,8 @@
 // Pathogen type registry — all tunable parameters in one place.
-// Each type defines which value it tracks, how it grows, what damages it causes,
-// and which cell types can clear it.
+// Each type defines which value it tracks, how it grows, and what damage it causes.
+//
+// Which cell types can clear each pathogen is defined on the cell side:
+// see CELL_CONFIG[type].clearablePathogens in cellConfig.js.
 
 export const PATHOGEN_TYPES = {
   EXTRACELLULAR_BACTERIA: 'extracellular_bacteria',
@@ -52,9 +54,6 @@ export const PATHOGEN_DISPLAY_NAMES = {
  *   LOGISTIC:    load += load * rate * (1 - load/100)   — slows as cap approaches
  *   EXPONENTIAL: value += value * rate                  — uncapped until clearance
  *   LINEAR:      value += rate                          — flat per turn
- *
- * Clearance: each clearableBy cell type reduces the tracked value by its CLEARANCE_RATE.
- * If clearableBy is empty, the value cannot be reduced by immune cells.
  */
 export const PATHOGEN_REGISTRY = {
 
@@ -68,7 +67,6 @@ export const PATHOGEN_REGISTRY = {
     // Damage per turn (at full load 100; scaled linearly by load/100)
     tissueDamageRate:  8,             // integrity lost/turn at load 100
     inflammationRate:  15,            // inflammation added/turn at load 100
-    clearableBy:       ['neutrophil', 'macrophage', 'responder', 'b_cell'],
   },
 
   virus: {
@@ -82,7 +80,6 @@ export const PATHOGEN_REGISTRY = {
     tissueDamageRate:  0,
     clearanceTissueCost: 0.2,         // integrity lost per unit of compromise cleared
     inflammationRate:  10,
-    clearableBy:       ['killer_t', 'nk_cell'],
   },
 
   fungi: {
@@ -95,7 +92,6 @@ export const PATHOGEN_REGISTRY = {
     tissueDamageRate:  5,
     inflammationRate:  8,
     highStressMultiplier: 2.0,        // replication doubles when systemicStress > 70
-    clearableBy:       ['macrophage', 'responder'],
   },
 
   parasite: {
@@ -109,7 +105,6 @@ export const PATHOGEN_REGISTRY = {
     immuneSuppression: true,          // at burden > 50: inflammation generation halved
     suppressionThreshold: 50,
     movementPenalty:   true,          // transit to/from site +1T per 25 burden
-    clearableBy:       [],            // requires eosinophil (not yet implemented)
   },
 
   toxin_producer: {
@@ -121,7 +116,6 @@ export const PATHOGEN_REGISTRY = {
     tissueDamageRate:  2,
     inflammationRate:  4,
     toxinOutputRate:   0.6,           // toxinOutput = infectionLoad × toxinOutputRate
-    clearableBy:       ['macrophage', 'responder', 'neutrophil'],
   },
 
   prion: {
@@ -134,7 +128,6 @@ export const PATHOGEN_REGISTRY = {
     tissueDamageRate:  0,
     tissueDamageAboveThreshold: 2,    // 2 integrity/turn when corruption > 50
     inflammationRate:  0,             // no inflammation signal
-    clearableBy:       [],            // cannot be cleared
   },
 
   // ── Stubs ──────────────────────────────────────────────────────────────────
@@ -147,7 +140,6 @@ export const PATHOGEN_REGISTRY = {
     spreadThreshold:   null,
     tissueDamageRate:  6,
     inflammationRate:  6,
-    clearableBy:       ['killer_t'],
   },
 
   cancer: {
@@ -158,11 +150,10 @@ export const PATHOGEN_REGISTRY = {
     spreadThreshold:   null,
     tissueDamageRate:  3,
     inflammationRate:  3,
-    clearableBy:       ['nk_cell', 'killer_t'],
   },
 
   // Benign: starts at 100, decays naturally. No tissue damage. Slight inflammation.
-  // Cleared by any immune cell. Creates false-positive signals for the player.
+  // Cleared by any attack cell. Creates false-positive signals for the player.
   benign: {
     trackedValue:      'infectionLoad',
     growthModel:       'linear',
@@ -171,7 +162,6 @@ export const PATHOGEN_REGISTRY = {
     spreadThreshold:   null,
     tissueDamageRate:  0,
     inflammationRate:  3,             // just enough to look suspicious
-    clearableBy:       ['neutrophil', 'macrophage', 'responder', 'killer_t', 'b_cell', 'nk_cell'],
   },
 
   autoimmune: {
@@ -182,7 +172,7 @@ export const PATHOGEN_REGISTRY = {
     spreadThreshold:   null,
     tissueDamageRate:  10,           // high self-damage
     inflammationRate:  20,
-    clearableBy:       [],           // regulatory T-cell ability (future)
+    // cannot be cleared — regulatory T-cell ability (future)
   },
 };
 

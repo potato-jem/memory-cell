@@ -1,4 +1,5 @@
 import { getEffectiveConnections, getEffectiveExitCost } from './runModifiers.js';
+import { CELL_CONFIG } from './cellConfig.js';
 
 export const NODES = {
 
@@ -240,14 +241,15 @@ export function computePathCostWithModifiers(path, modifiers, fromIndex = 0) {
 // Returns a Set of nodeIds currently visible based on deployed cell positions.
 // Scouts (dendritic) and patrols (neutrophil): current node only.
 // Macrophages: current node + all adjacent nodes.
-// Only 'arrived' cells grant visibility — transit cells do not.
+// Only 'arrived' cells grant adjascent visibility — transit cells do not.
 
 export function computeVisibility(deployedCells) {
   const visible = new Set();
   for (const cell of Object.values(deployedCells)) {
-    if (cell.phase !== 'arrived') continue;
     visible.add(cell.nodeId);
-    if (cell.type === 'macrophage') {
+    //only provide adjascent visibility when still
+    if (cell.phase !== 'arrived') continue;
+    if (CELL_CONFIG[cell.type]?.coversAdjacentNodes) {
       for (const adjId of (NODES[cell.nodeId]?.connections ?? [])) {
         visible.add(adjId);
       }

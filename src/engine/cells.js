@@ -15,8 +15,9 @@
 
 import { NODES, HQ_NODE_ID, computePathWithModifiers } from '../data/nodes.js';
 import { nodeHasActivePathogen } from '../data/pathogens.js';
-import { PATROL_DWELL_TICKS, SCOUT_DWELL_TICKS, TRAINING_TICKS } from '../data/gameConfig.js';
+import { PATROL_DWELL_TICKS, SCOUT_DWELL_TICKS } from '../data/gameConfig.js';
 import {
+  CELL_CONFIG,
   DEPLOY_COSTS,
   CLEARANCE_RATES,
   CELL_DISPLAY_NAMES,
@@ -85,8 +86,7 @@ export function trainCell(type, deployedCells, tokenCapacity, tick, modifiers = 
   if (available < cost) {
     return { success: false, error: `Need ${cost} tokens (have ${available})` };
   }
-  const baseTicks = TRAINING_TICKS[type] ?? 15;
-  const trainingTime = getEffectiveTrainingTicks(type, baseTicks, modifiers);
+  const trainingTime = getEffectiveTrainingTicks(type, modifiers);
   const cell = {
     id: nextCellId(),
     type,
@@ -114,8 +114,8 @@ export function deployFromRoster(cellId, nodeId, deployedCells, tick, nodeStates
   const node = NODES[nodeId];
   if (!node) return { success: false, error: `Unknown node: ${nodeId}` };
 
-  if (cell.type === CELL_TYPES.KILLER_T && !nodeHasClassifiedPathogen(nodeId, nodeStates)) {
-    return { success: false, error: 'Killer T requires classified threat', requiresDendritic: true };
+  if (CELL_CONFIG[cell.type]?.requiresClassified && !nodeHasClassifiedPathogen(nodeId, nodeStates)) {
+    return { success: false, error: `${CELL_CONFIG[cell.type].displayName} requires a classified pathogen at target`, requiresClassified: true };
   }
 
   const fromNodeId = (cell.phase === 'arrived' || cell.phase === 'returning')
@@ -123,7 +123,7 @@ export function deployFromRoster(cellId, nodeId, deployedCells, tick, nodeStates
     : HQ_NODE_ID;
 
   const path = computePathWithModifiers(fromNodeId, nodeId, modifiers);
-  const extra = _deployExtra(cell.type, nodeId, nodeStates, modifiers);
+  const extra = _deployExtra(cell.type);
 
   return {
     success: true,
@@ -146,24 +146,13 @@ export function deployFromRoster(cellId, nodeId, deployedCells, tick, nodeStates
   };
 }
 
-function _deployExtra(type, nodeId, nodeStates, modifiers) {
-  const hasDC = nodeHasClassifiedPathogen(nodeId, nodeStates);
-  switch (type) {
-    case CELL_TYPES.NEUTROPHIL:
-      return { patrolConnectionIdx: 0, patrolNextMoveTick: null };
-    case CELL_TYPES.RESPONDER:
-      return { effectiveness: getEffectiveEffectiveness(type, hasDC, modifiers), hasDendriticBacking: hasDC };
-    case CELL_TYPES.KILLER_T:
-      return { effectiveness: getEffectiveEffectiveness(type, true, modifiers), hasDendriticBacking: true };
-    case CELL_TYPES.B_CELL:
-      return { effectiveness: getEffectiveEffectiveness(type, hasDC, modifiers), hasDendriticBacking: hasDC };
-    case CELL_TYPES.NK_CELL:
-      return { effectiveness: getEffectiveEffectiveness(type, false, modifiers), hasDendriticBacking: false };
-    case CELL_TYPES.MACROPHAGE:
-      return { coversAdjacentNodes: true };
-    default:
-      return {};
+// Extra fields set on the cell state at deploy time (type-specific runtime state only).
+// Effectiveness is now computed dynamically per pathogen instance — not stored on cell.
+function _deployExtra(type) {
+  if (CELL_CONFIG[type]?.isPatrol) {
+    return { patrolConnectionIdx: 0, patrolNextMoveTick: null };
   }
+  return {};
 }
 
 // ── Decommission ──────────────────────────────────────────────────────────────
@@ -257,23 +246,21 @@ export function advanceCells(deployedCells, tick, modifiers = null) {
       }
 
       if (c.pathIndex >= c.path.length - 1) {
-        if (c.type === CELL_TYPES.DENDRITIC) {
-          c.phase = 'arrived';
+        c.phase = 'arrived';
+        if (CELL_CONFIG[c.type]?.isScout) {
           c.scoutDwellUntilTick = tick + SCOUT_DWELL_TICKS;
           events.push({ type: 'scout_arrived', cellId, nodeId: c.nodeId });
-        } else if (c.type === CELL_TYPES.NEUTROPHIL) {
-          c.phase = 'arrived';
-          c.patrolNextMoveTick = tick + PATROL_DWELL_TICKS;
-          events.push({ type: 'cell_arrived', cellId, nodeId: c.nodeId, cellType: c.type });
         } else {
-          c.phase = 'arrived';
+          if (CELL_CONFIG[c.type]?.isPatrol) {
+            c.patrolNextMoveTick = tick + PATROL_DWELL_TICKS;
+          }
           events.push({ type: 'cell_arrived', cellId, nodeId: c.nodeId, cellType: c.type });
         }
       }
     }
 
     // ── Scout dwell complete → start return journey ───────────────────────────
-    if (c.type === CELL_TYPES.DENDRITIC && c.phase === 'arrived' &&
+    if (CELL_CONFIG[c.type]?.isScout && c.phase === 'arrived' &&
         c.scoutDwellUntilTick != null && tick >= c.scoutDwellUntilTick) {
       const returnPath = computePathWithModifiers(c.nodeId, HQ_NODE_ID, modifiers);
       c.phase = 'returning';
@@ -284,7 +271,7 @@ export function advanceCells(deployedCells, tick, modifiers = null) {
     }
 
     // ── Patrol movement (cycles adjacent nodes) ───────────────────────────────
-    if (c.type === CELL_TYPES.NEUTROPHIL && c.phase === 'arrived' &&
+    if (CELL_CONFIG[c.type]?.isPatrol && c.phase === 'arrived' &&
         c.patrolNextMoveTick != null && tick >= c.patrolNextMoveTick) {
       const baseConnections = NODES[c.nodeId]?.connections ?? [];
       const connections = getEffectiveConnections(c.nodeId, baseConnections, modifiers);
@@ -366,28 +353,26 @@ export function startReturnForClearedNodes(deployedCells, nodeStates, tick, modi
 
 /**
  * True if any pathogen at this node has been fully classified.
- * Replaces the old perceivedState.scoutConfirmed check.
- * Attack cells use this to determine backing effectiveness.
+ * Used by cells with requiresClassified=true (Killer T) to gate deployment.
  */
 export function nodeHasClassifiedPathogen(nodeId, nodeStates) {
   const ns = nodeStates?.[nodeId];
   return ns?.pathogens?.some(i => i.detected_level === 'classified') ?? false;
 }
 
-export function getClearancePower(nodeId, deployedCells, groundTruth, modifiers = null) {
+/**
+ * Approximate total clearance power at a node — for display/informational use.
+ * Assumes 'classified' level (maximum effectiveness) per cell.
+ * For actual per-pathogen clearance, see pathogen.js getClearancePower.
+ */
+export function getClearancePower(nodeId, deployedCells, modifiers = null) {
   let total = 0;
   for (const cell of Object.values(deployedCells)) {
     if (cell.phase !== 'arrived' || cell.nodeId !== nodeId) continue;
-    const baseRate = CLEARANCE_RATES[cell.type] ?? 0;
-    if (baseRate === 0) continue;
     const effectiveRate = getEffectiveClearanceRate(cell.type, modifiers);
-    const effectiveness = cell.effectiveness ?? 1.0;
-    const nodeState = groundTruth?.nodeStates?.[nodeId];
-    if (cell.type === CELL_TYPES.NK_CELL && nodeState?.isClean) {
-      total += effectiveRate * 0.3;
-    } else {
-      total += effectiveRate * effectiveness;
-    }
+    if (effectiveRate === 0) continue;
+    const effectiveness = getEffectiveEffectiveness(cell.type, 'classified', modifiers);
+    total += effectiveRate * effectiveness;
   }
   return total;
 }

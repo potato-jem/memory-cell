@@ -63,8 +63,8 @@ The `gameReducer` and all action handlers. **This is the only place state mutati
 10. Loss check (`isSystemCollapsed`)
 
 **`runDetectionPhase` logic:**
-- Builds a `nodeId → [cellType, ...]` map: arrived recon cells at their node; macrophages also cover adjacent nodes; en-route cells via `nodesVisited`
-- Calls `performDetection(cellType, nodePathogens, inflammation, modifiers)` per (node, cellType) pair
+- Builds a `nodeId → [cellType, ...]` map: arrived recon cells at their node; cells with `CELL_CONFIG[type].coversAdjacentNodes` also cover adjacent nodes; en-route cells via `nodesVisited`
+- Calls `performDetection(cellType, nodePathogens, inflammation, modifiers)` per (node, cellType) pair — reads `detectionRolls` and `detectionUpgradeProbs` from `CELL_CONFIG`
 - Returns updated groundTruth with mutated `detected_level` / `perceived_type` on instances
 
 ---

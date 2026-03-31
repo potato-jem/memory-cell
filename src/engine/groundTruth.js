@@ -7,6 +7,7 @@
 import { NODE_IDS } from '../data/nodes.js';
 import { advanceInstance, computeSpreads, shouldWallOff, generatePathogenUid } from './pathogen.js';
 import { nodeHasActivePathogen } from '../data/pathogens.js';
+import { CELL_CONFIG } from '../data/cellConfig.js';
 import {
   TISSUE_RECOVERY_RATE,
   TISSUE_SCAR_THRESHOLD,
@@ -226,8 +227,7 @@ function computeImmuneCellInflammation(nodeId, deployedCells, ns) {
   let added = 0;
   for (const cell of Object.values(deployedCells)) {
     if (cell.nodeId !== nodeId || cell.phase !== 'arrived') continue;
-    const isResponder = ['responder', 'killer_t', 'b_cell', 'nk_cell'].includes(cell.type);
-    if (!isResponder) continue;
+    if (!CELL_CONFIG[cell.type]?.isAttack) continue;
     // More inflammation if attacking a clean site (collateral / autoimmune)
     if (!hasInfection) {
       added += cell.type === 'killer_t' ? KILLER_T_INFLAMMATION_ON_CLEAN : ATTACK_CELL_INFLAMMATION_ON_CLEAN;

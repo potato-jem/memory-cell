@@ -15,11 +15,8 @@ export const DEFAULT_RUN_CONFIG = {
   // Cell types the player can deploy (all available in endless mode)
   availableResponders: ['responder', 'killer_t', 'b_cell', 'nk_cell'],
 
-  // Starting roster — provided ready at game start (token cost still applies)
-  startingUnits: [
-    { type: 'neutrophil', count: 2 },
-    { type: 'macrophage', count: 1 },
-  ],
+  // Starting roster: defaults derive from CELL_CONFIG[type].startingCount.
+  // Override here or via the start screen to customise. See gameState.js initGameState.
 
   // Spawn schedule — probability spikes at specific turns.
   // These are defined in spawner.js directly. This field is for documentation

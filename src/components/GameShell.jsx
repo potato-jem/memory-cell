@@ -6,7 +6,8 @@ import { useReducer, useCallback, useState } from 'react';
 import { initGameState, GAME_PHASES } from '../state/gameState.js';
 import { gameReducer, ACTION_TYPES } from '../state/actions.js';
 import { DEFAULT_RUN_CONFIG } from '../data/runConfig.js';
-import { CELL_TYPES, CELL_DISPLAY_NAMES, DEPLOY_COSTS } from '../engine/cells.js';
+import { CELL_DISPLAY_NAMES, DEPLOY_COSTS } from '../engine/cells.js';
+import { CELL_CONFIG, CELL_TYPE_ORDER } from '../data/cellConfig.js';
 import { NODES, computeVisibility } from '../data/nodes.js';
 import { PATHOGEN_DISPLAY_NAMES } from '../data/pathogens.js';
 import BodyMap from './BodyMap.jsx';
@@ -14,33 +15,16 @@ import CellRoster from './CellRoster.jsx';
 import NodeDetail from './NodeDetail.jsx';
 import PostMortem from './PostMortem.jsx';
 
-// Default starting unit counts
-const DEFAULT_STARTING_COUNTS = { neutrophil: 2, macrophage: 1 };
-
-// Cell types available as starting units, in display order
-const STARTING_UNIT_TYPES = [
-  CELL_TYPES.NEUTROPHIL,
-  CELL_TYPES.MACROPHAGE,
-  CELL_TYPES.DENDRITIC,
-  CELL_TYPES.RESPONDER,
-  CELL_TYPES.KILLER_T,
-  CELL_TYPES.B_CELL,
-  CELL_TYPES.NK_CELL,
-];
-
-const STARTING_UNIT_COLORS = {
-  [CELL_TYPES.NEUTROPHIL]: 'text-blue-400',
-  [CELL_TYPES.MACROPHAGE]: 'text-amber-400',
-  [CELL_TYPES.DENDRITIC]:  'text-purple-400',
-  [CELL_TYPES.RESPONDER]:  'text-red-400',
-  [CELL_TYPES.KILLER_T]:   'text-red-300',
-  [CELL_TYPES.B_CELL]:     'text-green-400',
-  [CELL_TYPES.NK_CELL]:    'text-orange-400',
-};
 
 export default function GameShell() {
   const [started, setStarted] = useState(false);
-  const [startingCounts, setStartingCounts] = useState(DEFAULT_STARTING_COUNTS);
+  const [startingCounts, setStartingCounts] = useState(() =>
+    Object.fromEntries(
+      Object.entries(CELL_CONFIG)
+        .filter(([, cfg]) => cfg.startingCount > 0)
+        .map(([type, cfg]) => [type, cfg.startingCount])
+    )
+  );
 
   const [state, dispatch] = useReducer(
     gameReducer,
@@ -125,9 +109,9 @@ export default function GameShell() {
               </span>
             </div>
             <div className="divide-y divide-gray-800">
-              {STARTING_UNIT_TYPES.map(type => {
+              {CELL_TYPE_ORDER.map(type => {
                 const count = startingCounts[type] ?? 0;
-                const color = STARTING_UNIT_COLORS[type] ?? 'text-gray-400';
+                const color = CELL_CONFIG[type]?.textClass ?? 'text-gray-400';
                 const cost = DEPLOY_COSTS[type] ?? 1;
                 return (
                   <div key={type} className="flex items-center gap-3 px-4 py-2">

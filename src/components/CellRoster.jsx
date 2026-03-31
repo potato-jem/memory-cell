@@ -5,10 +5,9 @@
 
 import { useState } from 'react';
 import { CELL_TYPES, CELL_DISPLAY_NAMES, DEPLOY_COSTS } from '../engine/cells.js';
-import { TRAINING_TICKS, TOKEN_CAPACITY_MAX, TOKEN_CAPACITY_REGEN_INTERVAL, TICKS_PER_TURN } from '../data/gameConfig.js';
+import { CELL_CONFIG, RECON_CELL_TYPES } from '../data/cellConfig.js';
+import { TOKEN_CAPACITY_MAX, TOKEN_CAPACITY_REGEN_INTERVAL, TICKS_PER_TURN } from '../data/gameConfig.js';
 import { NODES, computePathCost } from '../data/nodes.js';
-
-const RECON_TYPES = [CELL_TYPES.DENDRITIC, CELL_TYPES.NEUTROPHIL, CELL_TYPES.MACROPHAGE];
 
 const PHASE_LABEL = {
   training: 'training',
@@ -84,7 +83,7 @@ export default function CellRoster({
   const atCap = tokenCapacity >= TOKEN_CAPACITY_MAX;
 
   const availableAttack = runConfig?.availableResponders ?? [];
-  const allTrainable = [...RECON_TYPES, ...availableAttack];
+  const allTrainable = [...RECON_CELL_TYPES, ...availableAttack];
 
   const allCells = Object.values(deployedCells).sort((a, b) => {
     const order = { training: 0, ready: 1, outbound: 2, arrived: 3, returning: 4 };
@@ -166,7 +165,7 @@ export default function CellRoster({
         <div className="space-y-0.5">
           {allTrainable.map(type => {
             const cost = DEPLOY_COSTS[type] ?? 0;
-            const time = TRAINING_TICKS[type] ?? 15;
+            const time = CELL_CONFIG[type]?.trainingTicks ?? 15;
             const canAfford = tokensAvailable >= cost;
             return (
               <button

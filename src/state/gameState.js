@@ -5,6 +5,7 @@ import { initGroundTruth } from '../engine/groundTruth.js';
 import { makeReadyCell, computeTokensInUse } from '../engine/cells.js';
 import { INITIAL_TOKEN_CAPACITY, TICKS_PER_TURN } from '../data/gameConfig.js';
 import { DEFAULT_RUN_CONFIG } from '../data/runConfig.js';
+import { CELL_CONFIG } from '../data/cellConfig.js';
 import { makeRunModifiers } from '../data/runModifiers.js';
 
 export { TICKS_PER_TURN };
@@ -23,9 +24,15 @@ export const LOSS_REASONS = {
  * @param {Object} runConfig  — optional override (default: DEFAULT_RUN_CONFIG)
  */
 export function initGameState(runConfig = DEFAULT_RUN_CONFIG) {
-  // Build starting roster from runConfig.startingUnits
+  // Build starting roster: use runConfig.startingUnits if provided (e.g. from start screen),
+  // otherwise fall back to CELL_CONFIG[type].startingCount defaults.
+  const startingUnits = runConfig.startingUnits ??
+    Object.entries(CELL_CONFIG)
+      .filter(([, cfg]) => cfg.startingCount > 0)
+      .map(([type, cfg]) => ({ type, count: cfg.startingCount }));
+
   const deployedCells = {};
-  for (const { type, count } of (runConfig.startingUnits ?? [])) {
+  for (const { type, count } of startingUnits) {
     for (let i = 0; i < count; i++) {
       const cell = makeReadyCell(type);
       deployedCells[cell.id] = cell;

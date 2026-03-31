@@ -4,6 +4,7 @@
 import { NODES } from '../data/nodes.js';
 import { computePathCost } from '../data/nodes.js';
 import { PATHOGEN_DISPLAY_NAMES, getPrimaryLoad } from '../data/pathogens.js';
+import { CELL_CONFIG as CELL_TYPE_CONFIG } from '../data/cellConfig.js';
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
@@ -135,17 +136,6 @@ function PathogenPanel({ groundTruthNodeState }) {
   );
 }
 
-// ── Cell config ───────────────────────────────────────────────────────────────
-
-const CELL_CONFIG = {
-  dendritic:  { label: 'Scout',      color: 'text-purple-400', dot: 'bg-purple-600' },
-  neutrophil: { label: 'Patrol',     color: 'text-blue-400',   dot: 'bg-blue-600'   },
-  macrophage: { label: 'Macrophage', color: 'text-amber-400',  dot: 'bg-amber-600'  },
-  responder:  { label: 'Responder',  color: 'text-red-400',    dot: 'bg-red-700'    },
-  killer_t:   { label: 'Killer T',   color: 'text-red-300',    dot: 'bg-red-600'    },
-  b_cell:     { label: 'B-Cell',     color: 'text-green-400',  dot: 'bg-green-600'  },
-  nk_cell:    { label: 'NK Cell',    color: 'text-orange-400', dot: 'bg-orange-600' },
-};
 
 // ── Main component ────────────────────────────────────────────────────────────
 
@@ -210,14 +200,11 @@ export default function NodeDetail({
           {cellsHere.length > 0 && (
             <div className="space-y-px pb-1">
               {cellsHere.map(cell => {
-                const cc = CELL_CONFIG[cell.type] ?? { label: cell.type, color: 'text-gray-500', dot: 'bg-gray-700' };
+                const cc = CELL_TYPE_CONFIG[cell.type] ?? { displayName: cell.type, textClass: 'text-gray-500', dotClass: 'bg-gray-700' };
                 return (
                   <div key={cell.id} className="flex items-center gap-2 px-4 py-1 hover:bg-gray-900">
-                    <div className={`w-2 h-2 rounded-full shrink-0 ${cc.dot}`} />
-                    <span className={`text-xs font-mono ${cc.color} flex-1`}>{cc.label}</span>
-                    {cell.type === 'responder' && !cell.hasDendriticBacking && (
-                      <span className="text-xs text-yellow-800" title="No scout backing">⚠</span>
-                    )}
+                    <div className={`w-2 h-2 rounded-full shrink-0 ${cc.dotClass}`} />
+                    <span className={`text-xs font-mono ${cc.textClass} flex-1`}>{cc.displayName}</span>
                     <button
                       onClick={() => onRecall(cell.id)}
                       className="text-xs text-gray-800 hover:text-red-700 font-mono transition-colors"
@@ -234,7 +221,7 @@ export default function NodeDetail({
             <div className="space-y-px pb-2">
               <div className="px-4 pt-1 text-xs text-gray-700">Passing through:</div>
               {cellsTransit.map(cell => {
-                const cc = CELL_CONFIG[cell.type] ?? { label: cell.type, color: 'text-gray-600', dot: 'bg-gray-700' };
+                const cc = CELL_TYPE_CONFIG[cell.type] ?? { displayName: cell.type, textClass: 'text-gray-600', dotClass: 'bg-gray-700' };
                 const isOutbound = cell.phase === 'outbound';
                 const destLabel = isOutbound
                   ? (NODES[cell.destNodeId]?.label ?? cell.destNodeId ?? '?')
@@ -244,8 +231,8 @@ export default function NodeDetail({
                   : null;
                 return (
                   <div key={cell.id} className="flex items-center gap-2 px-4 py-1 opacity-60">
-                    <div className={`w-2 h-2 rounded-full shrink-0 ${cc.dot} opacity-50`} />
-                    <span className={`text-xs font-mono ${cc.color} flex-1`}>{cc.label}</span>
+                    <div className={`w-2 h-2 rounded-full shrink-0 ${cc.dotClass} opacity-50`} />
+                    <span className={`text-xs font-mono ${cc.textClass} flex-1`}>{cc.displayName}</span>
                     <span className="text-xs text-gray-700">
                       {isOutbound ? '→' : '↩'} {destLabel}{eta != null ? ` ${eta}T` : ''}
                     </span>

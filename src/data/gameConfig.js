@@ -15,17 +15,6 @@ export const INITIAL_TOKEN_CAPACITY = 12;
 export const TOKEN_CAPACITY_MAX = 20;
 export const TOKEN_CAPACITY_REGEN_INTERVAL = 60; // ticks between +1 capacity (~1 per minute)
 
-// Bone-marrow production time per cell type (ticks = seconds)
-export const TRAINING_TICKS = {
-  dendritic:  20,
-  neutrophil: 10,
-  responder:  15,
-  killer_t:   25,
-  b_cell:     20,
-  nk_cell:    20,
-  macrophage: 10,
-};
-
 // ── Inflammation ───────────────────────────────────────────────────────────────
 // Inflammation damages tissue integrity once it crosses 25.
 // Damage rate increases at each threshold.

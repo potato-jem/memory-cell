@@ -16,7 +16,11 @@ export function generatePathogenUid() {
   return `path_${++_uidCounter}`;
 }
 import { PATHOGEN_REGISTRY, isInstanceCleared, getPrimaryLoad } from '../data/pathogens.js';
-import { CLEARANCE_RATES, getEffectiveClearanceRate } from '../data/cellConfig.js';
+import {
+  CELL_CONFIG,
+  getEffectiveClearanceRate,
+  getEffectiveEffectiveness,
+} from '../data/cellConfig.js';
 import {
   getEffectiveGrowthRate,
   getEffectiveSpreadThreshold,
@@ -27,20 +31,33 @@ import {
 // ── Clearance ─────────────────────────────────────────────────────────────────
 
 /**
- * How much of a pathogen's primary value is removed this turn by present immune cells.
- * Only cell types listed in clearableBy contribute.
+ * How much of a pathogen instance's primary value is removed this turn.
+ *
+ * Clearability is cell-side: CELL_CONFIG[cell.type].clearablePathogens[pathogenType]
+ * gives the per-cell effectiveness multiplier (0 = cannot clear this pathogen).
+ *
+ * Effectiveness also scales with the pathogen's current detected_level:
+ * CELL_CONFIG[cell.type].effectivenessByLevel[detected_level]
+ *
+ * @param {Object} instance    - the specific pathogen instance being cleared
+ * @param {string} nodeId
+ * @param {Object} deployedCells
+ * @param {Object} nodeState
+ * @param {Object} modifiers
  */
-export function getClearancePower(pathogenType, nodeId, deployedCells, nodeState, modifiers = null) {
-  const def = PATHOGEN_REGISTRY[pathogenType];
-  if (!def) return 0;
-  const clearableBy = def.clearableBy ?? [];
+export function getClearancePower(instance, nodeId, deployedCells, nodeState, modifiers = null) {
+  const pathogenType = instance.type;
+  const detectedLevel = instance.detected_level ?? 'none';
 
   let total = 0;
   for (const cell of Object.values(deployedCells)) {
     if (cell.nodeId !== nodeId || cell.phase !== 'arrived') continue;
-    if (!clearableBy.includes(cell.type)) continue;
+    const cellCfg = CELL_CONFIG[cell.type];
+    const clearMod = cellCfg?.clearablePathogens?.[pathogenType] ?? 0;
+    if (clearMod === 0) continue;
     const effectiveRate = getEffectiveClearanceRate(cell.type, modifiers);
-    total += effectiveRate * (cell.effectiveness ?? 1.0);
+    const levelEffectiveness = getEffectiveEffectiveness(cell.type, detectedLevel, modifiers);
+    total += effectiveRate * clearMod * levelEffectiveness;
   }
 
   // Pathogen-specific clearance multiplier (e.g. upgrade makes a type easier to clear)
@@ -71,7 +88,7 @@ export function advanceInstance(instance, nodeId, deployedCells, nodeState, syst
   const tv = def.trackedValue;
   const currentLoad = instance[tv] ?? 0;
 
-  const clearance = getClearancePower(instance.type, nodeId, deployedCells, nodeState, modifiers);
+  const clearance = getClearancePower(instance, nodeId, deployedCells, nodeState, modifiers);
   const growth = computeGrowth(def, currentLoad, systemicStress, instance.type, modifiers);
 
   // Walled Off fungi: ticks down very slowly, neither grows nor clears normally

@@ -14,7 +14,7 @@ import {
   startReturnForClearedNodes,
   computeTokensInUse,
 } from '../engine/cells.js';
-import { RECON_CELL_TYPES } from '../data/cellConfig.js';
+import { CELL_CONFIG, RECON_CELL_TYPES } from '../data/cellConfig.js';
 import { NODES, computeVisibility } from '../data/nodes.js';
 import { TICKS_PER_TURN, GAME_PHASES, LOSS_REASONS } from './gameState.js';
 import { TOKEN_CAPACITY_MAX, TOKEN_CAPACITY_REGEN_INTERVAL } from '../data/gameConfig.js';
@@ -70,7 +70,7 @@ function handleEndTurn(state) {
   }
 
   // 2. Advance cells (training, transit, patrol, returns)
-  let { updatedCells, events: cellEvents, nodesVisited } = advanceCells(state.deployedCells, newTick, mods);
+  let { updatedCells, nodesVisited } = advanceCells(state.deployedCells, newTick, mods);
 
   // 3. Detection phase: run before ground truth advances so cells see current pathogen state.
   //    Updates detected_level on pathogen instances directly.
@@ -82,7 +82,7 @@ function handleEndTurn(state) {
   const pendingSpawns = rollSpawns(groundTruthAfterDetection.nodeStates, newTurn, state.systemicStress, Math.random, mods);
 
   // 5. Advance ground truth (pathogens, inflammation, tissue integrity)
-  const { newGroundTruth, events: gtEvents, perSiteOutputs } = advanceGroundTruth(
+  const { newGroundTruth, perSiteOutputs } = advanceGroundTruth(
     groundTruthAfterDetection,
     updatedCells,
     newTurn,
@@ -260,7 +260,7 @@ function runDetectionPhase(deployedCells, nodesVisited, groundTruth, modifiers) 
     if (cell.phase !== 'arrived') continue;
     if (!RECON_CELL_TYPES.has(cell.type)) continue;
     addDetector(cell.nodeId, cell.type);
-    if (cell.coversAdjacentNodes) {
+    if (CELL_CONFIG[cell.type]?.coversAdjacentNodes) {
       for (const adjId of (NODES[cell.nodeId]?.connections ?? [])) {
         addDetector(adjId, cell.type);
       }

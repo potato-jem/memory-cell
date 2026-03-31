@@ -13,8 +13,8 @@
 //   clearanceRateMultiplier     — multiplies base clearanceRate from cellConfig
 //   trainingTicksDelta          — added to base trainingTicks (negative = faster)
 //   deploymentCostDelta         — added to base deployCost (clamped to min 1)
-//   effectivenessBackedBonus    — added to effectiveness when scout-confirmed (capped at 1.0)
-//   effectivenessUnbackedBonus  — added to effectiveness without scout confirmation
+//   effectivenessLevelBonus     — { [detected_level]: bonus } added to effectivenessByLevel
+//                                  e.g. { classified: 0.1 } gives +10% when classified
 //   autoimmuneSurchargeMultiplier — scales inflammation added when attacking clean sites
 //
 // nodes[nodeId]:

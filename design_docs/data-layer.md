@@ -13,7 +13,6 @@ Key constants:
 | `TICKS_PER_TURN` | everywhere | 5 ticks per turn |
 | `PATROL_DWELL_TICKS` | `cells.js` | How long a patrol stays at a node before cycling (10 ticks = 2 turns) |
 | `SCOUT_DWELL_TICKS` | `cells.js` | How long a scout stays at destination before auto-returning (10 ticks = 2 turns) |
-| `TRAINING_TICKS` | `cells.js` | Per-cell-type manufacturing time |
 | `TOKEN_CAPACITY_*` | `actions.js`, `gameState.js` | Starting capacity, max, regen interval |
 | `INITIAL_TOKEN_CAPACITY` | `gameState.js` | Starting token capacity (12) |
 | `INFLAMMATION_*` | `groundTruth.js` | Thresholds and rates for inflammation damage |
@@ -29,29 +28,40 @@ Key constants:
 ---
 
 ## `cellConfig.js`
-Single source of truth for all per-type cell properties.
+Single source of truth for all per-type cell properties. **This is the only place you need to edit to add or change a cell type.**
 
 **`CELL_CONFIG[type]` fields:**
 | Field | Purpose |
 |---|---|
 | `displayName` | UI label |
 | `deployCost` | Tokens held for cell's lifetime |
-| `clearanceRate` | Pathogen clearance power per turn |
-| `detectionRolls` | Number of detection rolls per node visit (recon cells only: macrophage=1, neutrophil=2, dendritic=3) |
-| `isRecon` / `isAttack` / `isPatrol` | Role flags |
-| `requiresScoutConfirmation` | Killer T: cannot deploy without a classified pathogen at target |
-| `effectivenessWithBacking` | Clearance effectiveness when node has a classified pathogen |
-| `effectivenessWithoutBacking` | Clearance effectiveness without classification (null = N/A) |
+| `clearanceRate` | Base pathogen clearance power per turn |
+| `trainingTicks` | Manufacturing duration (ticks) |
+| `displayOrder` | Sort order for roster lists and start screen |
+| `color` | Hex colour for SVG cell dots (BodyMap) |
+| `textClass` | Tailwind text colour class (UI labels) |
+| `dotClass` | Tailwind background class (roster/detail dots) |
+| `startingCount` | Default units of this type at run start (0 = none) |
+| `isRecon` / `isAttack` / `isPatrol` / `isScout` | Role flags |
+| `requiresClassified` | Cannot deploy without a classified pathogen at target (Killer T) |
+| `coversAdjacentNodes` | Grants fog-of-war visibility to adjacent nodes (Macrophage) |
+| `detectionRolls` | Detection rolls per node visit (recon cells); 0 for non-recon |
+| `detectionUpgradeProbs` | Per-level upgrade probabilities `{ [detected_level]: { upgradeChance, misclassifyChance? } }` (null for non-recon) |
+| `clearablePathogens` | `{ [pathogenType]: effectivenessMultiplier }` — pathogens this cell can clear and how effectively. Not listed = cannot clear (effectively 0). |
+| `effectivenessByLevel` | `{ [detected_level]: 0–1 }` — clearance effectiveness at each detection level. Higher detection = better intel = higher effectiveness. |
 
-**Derived tables:** `DEPLOY_COSTS`, `CLEARANCE_RATES`, `CELL_DISPLAY_NAMES` — re-exported from `cells.js` for backward compat.
+**Effectiveness model:** Clearance effectiveness now scales with the pathogen's `detected_level`. For example, Responder has 0.6× at `none/unknown/threat/misclassified` and 1.0× at `classified`. Killer T has 0 at all non-classified levels (enforced by `requiresClassified` at deploy time as well). NK Cell is 1.0× at all levels.
 
-**Convenience sets:** `ATTACK_CELL_TYPES`, `RECON_CELL_TYPES`, `PATROL_CELL_TYPES`
+**Derived exports:**
+- `CELL_TYPE_ORDER` — cell type strings sorted by `displayOrder`
+- `ATTACK_CELL_TYPES`, `RECON_CELL_TYPES`, `PATROL_CELL_TYPES` — convenience Sets
+- `DEPLOY_COSTS`, `CLEARANCE_RATES`, `CELL_DISPLAY_NAMES` — flat lookup tables (backward compat)
 
 **Modifier-aware accessors (use in engine code):**
 - `getEffectiveClearanceRate(cellType, modifiers)` — base × `clearanceRateMultiplier`
 - `getEffectiveDeployCost(cellType, modifiers)` — base + `deploymentCostDelta`
-- `getEffectiveTrainingTicks(cellType, baseTicks, modifiers)` — baseTicks + `trainingTicksDelta`
-- `getEffectiveEffectiveness(cellType, hasBacking, modifiers)` — base + bonus
+- `getEffectiveTrainingTicks(cellType, modifiers)` — base + `trainingTicksDelta`
+- `getEffectiveEffectiveness(cellType, detectedLevel, modifiers)` — `effectivenessByLevel[level]` + `effectivenessLevelBonus[level]`
 
 ---
 
@@ -80,8 +90,8 @@ Runtime modifier system. Accumulates effects from upgrades, scars, and decisions
       clearanceRateMultiplier,      // scales clearanceRate from cellConfig
       trainingTicksDelta,           // added to trainingTicks (negative = faster)
       deploymentCostDelta,          // added to deployCost (clamped to min 1)
-      effectivenessBackedBonus,     // added to effectiveness when scout-confirmed
-      effectivenessUnbackedBonus,   // added to effectiveness without backing
+      effectivenessLevelBonus,      // { [detected_level]: bonus } — added to effectivenessByLevel
+                                    //   e.g. { classified: 0.1 } gives +10% when classified
       autoimmuneSurchargeMultiplier,// scales inflammation on clean-site attacks
     }
   },
@@ -154,15 +164,18 @@ SPLEEN (HQ) ─── BLOOD ─── BONE_MARROW
 - `HQ_NODE_ID` — `'SPLEEN'`
 - `computePath(fromId, toId)` — Dijkstra shortest path using base topology
 - `computePathCost(path, fromIndex?)` — sum of exit costs along a path
-- `computePathWithModifiers(fromId, toId, modifiers)` — respects `addedConnections`, `removedConnections`, `exitCostDelta` from runModifiers. Used by cells.js for all path computation during play.
+- `computePathWithModifiers(fromId, toId, modifiers)` — respects `addedConnections`, `removedConnections`, `exitCostDelta` from runModifiers
 - `computePathCostWithModifiers(path, modifiers, fromIndex?)` — modifier-aware cost sum
+- `computeVisibility(deployedCells)` — returns Set of visible nodeIds; uses `CELL_CONFIG[type].coversAdjacentNodes` to extend to adjacent nodes
 
 **Movement budget:** 1 per turn. A 0-cost origin (SPLEEN) means the cell moves to the first intermediate node for free, then spends 1 to reach the next. So SPLEEN → GUT takes 2 turns (SPLEEN→BLOOD for free + BLOOD→LIVER for 1 + LIVER→GUT for 1 = cost 2).
 
 ---
 
 ## `pathogens.js`
-Static registry of all pathogen types: growth models, damage rates, clearable-by lists.
+Static registry of all pathogen types: growth models, damage rates.
+
+Which cells can clear each pathogen is defined **on the cell** (`CELL_CONFIG[type].clearablePathogens`) rather than on the pathogen. This makes adding cell types self-contained.
 
 **Exports used:**
 - `PATHOGEN_REGISTRY` — full per-type configuration (includes `detectionModifier` per type)
@@ -171,7 +184,7 @@ Static registry of all pathogen types: growth models, damage rates, clearable-by
 - `isInstanceCleared(inst)` — returns true if tracked value ≤ 0
 - `getPrimaryLoad(inst)` — reads the tracked value from an instance
 - `getDominantPathogen(nodeState)` — returns the highest-load pathogen at a node (iterates array)
-- `nodeHasActivePathogen(nodeState)` — true if any pathogen is present (`nodeState.pathogens.some(...)`)
+- `nodeHasActivePathogen(nodeState)` — true if any pathogen is present
 - `allNodesClear(nodeStates)` — true if no active pathogens anywhere
 
 **PathogenInstance shape:**
@@ -184,7 +197,6 @@ Static registry of all pathogen types: growth models, damage rates, clearable-by
   perceived_type: null,            // string | null — set when classified/misclassified
 }
 ```
-Each type tracks exactly one primary value (`trackedValue` from registry). Stored in `nodeStates[nodeId].pathogens[]` (array — multiple pathogens of the same type can coexist).
 
 **`detectionModifier` per pathogen type** (scales detection upgrade probability):
 | Type | Modifier |
@@ -217,22 +229,13 @@ Detection probability tables and the `performDetection` pure function. Operates 
 
 **`performDetection(cellType, nodePathogens, nodeInflammation, modifiers?)`** → updated `nodePathogens[]`
 
-Each recon cell gets N rolls (from `CELL_DETECTION_ROLLS`). Each roll targets the highest-priority unclassified pathogen and attempts to upgrade its `detected_level`. Returns a new array with updated detection state on affected instances.
+Detection rolls and upgrade probabilities are read from `CELL_CONFIG[cellType]`:
+- `detectionRolls` — how many rolls per node visit
+- `detectionUpgradeProbs` — per-level `{ upgradeChance, misclassifyChance? }` table
 
-**Detection rolls per cell type (`CELL_DETECTION_ROLLS`):**
-| Cell type | Rolls |
-|---|---|
-| macrophage | 1 |
-| neutrophil | 2 |
-| dendritic | 3 |
+Each roll targets the highest-priority unclassified pathogen and attempts to upgrade its `detected_level`. Returns a new array with updated detection state on affected instances.
 
 **Level priority** (rolls target highest-priority first): `misclassified` > `threat` > `unknown` > `none` > `classified` (already done).
-
-**Upgrade probability tables (`DETECTION_UPGRADE_PROBS`)** — per cell type × current `detected_level`:
-- `none → unknown`: base chance modified by `detectionModifier` and inflammation bonus
-- `unknown → threat`: higher base chance
-- `threat → classified`: highest base chance; `misclassifyChance` may instead produce `misclassified`
-- `misclassified → classified`: correction attempt
 
 **`WRONG_ID_MAP`** — per pathogen type, likely misidentification targets (other type strings).
 
@@ -241,10 +244,9 @@ Used by `actions.js` (`runDetectionPhase`) for all detection — arrived recon c
 ---
 
 ## `runConfig.js`
-Default run configuration. Specifies starting units.
+Default run configuration.
 
-```js
-{ startingUnits: [{ type: 'neutrophil', count: 2 }, { type: 'macrophage', count: 1 }] }
-```
+- `availableResponders` — attack cell types available for training in this run
+- Starting roster defaults derive from `CELL_CONFIG[type].startingCount`. Override via `runConfig.startingUnits` (e.g. from the start screen) or edit `startingCount` in `cellConfig.js`.
 
-`GameShell.jsx` lets the player override `startingUnits` from the start screen.
+`GameShell.jsx` lets the player adjust starting counts on the start screen.

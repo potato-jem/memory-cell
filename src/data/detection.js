@@ -8,52 +8,14 @@
 //   'misclassified' — classified but with wrong perceived_type
 //   'classified'    — correctly identified; perceived_type matches true type
 //
-// Detection runs once per turn. Each recon cell has N rolls per node visited.
-// Rolls target the highest-level pathogens first (upgrade before discover).
-// Each roll has a probability of upgrading a pathogen's detected_level by one step.
+// Detection runs once per turn. Each recon cell has N rolls per node visited
+// (detectionRolls on CELL_CONFIG). Rolls target the highest-level pathogens
+// first (upgrade before discover). Each roll has a probability of upgrading a
+// pathogen's detected_level by one step (detectionUpgradeProbs on CELL_CONFIG).
 
+import { CELL_CONFIG } from './cellConfig.js';
 import { getPrimaryLoad, PATHOGEN_REGISTRY } from './pathogens.js';
 import { getDetectionAccuracyBonus } from './runModifiers.js';
-
-// ── Detection rolls per cell type ─────────────────────────────────────────────
-
-export const CELL_DETECTION_ROLLS = {
-  macrophage: 1,
-  neutrophil: 2,
-  dendritic:  3,
-};
-
-// ── Upgrade probabilities ─────────────────────────────────────────────────────
-// [cellType][detected_level] → { upgradeChance, misclassifyChance? }
-//
-// upgradeChance:    probability this roll increases detected_level by one step
-// misclassifyChance: (only for threat→classified) probability of wrong classification
-//
-// Design intent:
-//   Patrols (neutrophil) are good at discovery (none→unknown) but weak at classification
-//   Macrophages are decent all-round; reasonable at threat recognition
-//   Scouts (dendritic) are excellent at all levels, especially classification
-
-export const DETECTION_UPGRADE_PROBS = {
-  macrophage: {
-    none:          { upgradeChance: 0.40 },
-    unknown:       { upgradeChance: 0.45 },
-    threat:        { upgradeChance: 0.30, misclassifyChance: 0.40 },
-    misclassified: { upgradeChance: 0.20 },
-  },
-  neutrophil: {
-    none:          { upgradeChance: 0.50 },
-    unknown:       { upgradeChance: 0.50 },
-    threat:        { upgradeChance: 0.20, misclassifyChance: 0.50 },
-    misclassified: { upgradeChance: 0.15 },
-  },
-  dendritic: {
-    none:          { upgradeChance: 0.70 },
-    unknown:       { upgradeChance: 0.75 },
-    threat:        { upgradeChance: 0.60, misclassifyChance: 0.15 },
-    misclassified: { upgradeChance: 0.50 },
-  },
-};
 
 // ── Wrong-ID table ────────────────────────────────────────────────────────────
 // When classification is wrong, what does the cell report instead?
@@ -90,6 +52,8 @@ const LEVEL_PRIORITY = {
  * Returns a new pathogens array with potentially upgraded detected_levels.
  * Does not mutate input.
  *
+ * detectionRolls and detectionUpgradeProbs are read from CELL_CONFIG[cellType].
+ *
  * @param {string} cellType          - 'macrophage' | 'neutrophil' | 'dendritic'
  * @param {Array}  nodePathogens     - current pathogens array at the node
  * @param {number} nodeInflammation  - 0–100; boosts detection chance slightly
@@ -97,7 +61,8 @@ const LEVEL_PRIORITY = {
  * @returns {Array} updated pathogens array
  */
 export function performDetection(cellType, nodePathogens, nodeInflammation = 0, modifiers = null) {
-  const rolls = CELL_DETECTION_ROLLS[cellType] ?? 0;
+  const cellCfg = CELL_CONFIG[cellType];
+  const rolls = cellCfg?.detectionRolls ?? 0;
   if (rolls === 0 || !nodePathogens?.length) return nodePathogens;
 
   // Build sorted candidate list (highest priority first; skip 'classified')
@@ -121,7 +86,7 @@ export function performDetection(cellType, nodePathogens, nodeInflammation = 0, 
 
     if (currentInst.detected_level === 'classified') continue;
 
-    const probs = DETECTION_UPGRADE_PROBS[cellType]?.[currentInst.detected_level];
+    const probs = cellCfg.detectionUpgradeProbs?.[currentInst.detected_level];
     if (!probs) continue;
 
     let chance = probs.upgradeChance;
