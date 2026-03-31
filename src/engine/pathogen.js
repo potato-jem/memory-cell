@@ -2,7 +2,7 @@
 // Pure functions. No React, no UI.
 //
 // A PathogenInstance lives in nodeStates[nodeId].pathogens[] (array).
-// Each instance has a uid, type, tracked value, detected_level, and perceived_type.
+// Each instance has a uid, type, actualLoad, detected_level, and perceived_type.
 //
 // All functions accept an optional `modifiers` (runModifiers) parameter.
 // When null/undefined, base config values are used (fully backward compatible).
@@ -85,8 +85,7 @@ export function advanceInstance(instance, nodeId, deployedCells, nodeState, syst
   const def = PATHOGEN_REGISTRY[instance.type];
   if (!def) return { newInstance: null, tissueIntegrityDelta: 0, inflammationDelta: 0, toxinOutput: 0 };
 
-  const tv = def.trackedValue;
-  const currentLoad = instance[tv] ?? 0;
+  const currentLoad = getPrimaryLoad(instance);
 
   const clearance = getClearancePower(instance, nodeId, deployedCells, nodeState, modifiers);
   const growth = computeGrowth(def, currentLoad, systemicStress, instance.type, modifiers);
@@ -131,7 +130,7 @@ export function advanceInstance(instance, nodeId, deployedCells, nodeState, syst
   }
 
   return {
-    newInstance: { ...instance, [tv]: newLoad },
+    newInstance: { ...instance, actualLoad: newLoad },
     tissueIntegrityDelta,
     inflammationDelta,
     toxinOutput,

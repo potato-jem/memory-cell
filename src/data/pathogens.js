@@ -47,8 +47,6 @@ export const PATHOGEN_DISPLAY_NAMES = {
 };
 
 /**
- * For each type, the 'trackedValue' is the field on a PathogenInstance that
- * represents its presence/severity. All other tracked values are 0.
  *
  * Growth formula:
  *   LOGISTIC:    load += load * rate * (1 - load/100)   — slows as cap approaches
@@ -58,7 +56,7 @@ export const PATHOGEN_DISPLAY_NAMES = {
 export const PATHOGEN_REGISTRY = {
 
   extracellular_bacteria: {
-    trackedValue:      'infectionLoad',
+    actualLoad:              0,
     growthModel:       'logistic',
     replicationRate:   0.30,          // moderate logistic growth
     detectionModifier: 1.0,           // standard detectability
@@ -70,11 +68,11 @@ export const PATHOGEN_REGISTRY = {
   },
 
   virus: {
-    trackedValue:      'cellularCompromise',
+    actualLoad:              0,
     growthModel:       'exponential',
     replicationRate:   0.50,          // fast: compromise × rate per turn
     detectionModifier: 0.8,           // hides inside cells
-    spreadThreshold:   60,            // spreads when cellularCompromise > 60
+    spreadThreshold:   60,            // spreads when > 60
     spreadStrength:    8,
     // Viruses don't damage tissue directly — clearing does (handled in groundTruth)
     tissueDamageRate:  0,
@@ -83,7 +81,7 @@ export const PATHOGEN_REGISTRY = {
   },
 
   fungi: {
-    trackedValue:      'infectionLoad',
+    actualLoad:              0,
     growthModel:       'logistic',
     replicationRate:   0.12,          // slow
     detectionModifier: 1.0,           // visible structures
@@ -95,7 +93,7 @@ export const PATHOGEN_REGISTRY = {
   },
 
   parasite: {
-    trackedValue:      'parasiticBurden',
+    actualLoad:              0,
     growthModel:       'logistic',
     replicationRate:   0.15,
     detectionModifier: 0.9,           // somewhat hidden
@@ -108,7 +106,7 @@ export const PATHOGEN_REGISTRY = {
   },
 
   toxin_producer: {
-    trackedValue:      'infectionLoad',
+    actualLoad:              0,
     growthModel:       'logistic',
     replicationRate:   0.08,          // very slow growth
     detectionModifier: 0.9,           // detected via indirect toxin evidence
@@ -119,7 +117,7 @@ export const PATHOGEN_REGISTRY = {
   },
 
   prion: {
-    trackedValue:      'corruptionLevel',
+    actualLoad:              0,
     growthModel:       'linear',
     replicationRate:   8,             // flat +8 corruption per turn
     detectionModifier: 0.5,           // very hard to detect — protein misfolding
@@ -133,7 +131,7 @@ export const PATHOGEN_REGISTRY = {
   // ── Stubs ──────────────────────────────────────────────────────────────────
 
   intracellular_bacteria: {
-    trackedValue:      'cellularCompromise',
+    actualLoad:              0,
     growthModel:       'logistic',
     replicationRate:   0.10,
     detectionModifier: 0.8,           // hides inside host cells
@@ -143,7 +141,7 @@ export const PATHOGEN_REGISTRY = {
   },
 
   cancer: {
-    trackedValue:      'cellularCompromise',
+    actualLoad:              0,
     growthModel:       'linear',
     replicationRate:   4,             // flat +4 per turn
     detectionModifier: 0.6,           // mimics normal cells
@@ -155,7 +153,7 @@ export const PATHOGEN_REGISTRY = {
   // Benign: starts at 100, decays naturally. No tissue damage. Slight inflammation.
   // Cleared by any attack cell. Creates false-positive signals for the player.
   benign: {
-    trackedValue:      'infectionLoad',
+    actualLoad:              0,
     growthModel:       'linear',
     replicationRate:   -4,            // decays 4/turn naturally (gone in ~25T without cells)
     detectionModifier: 0.7,           // looks like normal cell activity
@@ -165,7 +163,7 @@ export const PATHOGEN_REGISTRY = {
   },
 
   autoimmune: {
-    trackedValue:      'infectionLoad',  // represents self-tissue reactivity
+    actualLoad:              0,
     growthModel:       'logistic',
     replicationRate:   0.20,
     detectionModifier: 0.7,           // appears self-like; hard to distinguish from normal immune response
@@ -178,20 +176,16 @@ export const PATHOGEN_REGISTRY = {
 
 // ── Queries ───────────────────────────────────────────────────────────────────
 
-/** Returns true if a pathogen instance has been fully cleared. */
-export function isInstanceCleared(instance) {
-  if (!instance) return true;
-  const def = PATHOGEN_REGISTRY[instance.type];
-  if (!def) return true;
-  return (instance[def.trackedValue] ?? 0) <= 0;
+/** Returns the primary load value for display/logic. */
+export function getPrimaryLoad(instance, isVisible = true) {
+  if (!instance) return 0;
+  if (!isVisible) return instance.lastKnownLoad ?? 0;
+  return instance.actualLoad ?? 0;
 }
 
-/** Returns the primary load value for display/logic. */
-export function getPrimaryLoad(instance) {
-  if (!instance) return 0;
-  const def = PATHOGEN_REGISTRY[instance.type];
-  if (!def) return 0;
-  return instance[def.trackedValue] ?? 0;
+/** Returns true if a pathogen instance has been fully cleared. */
+export function isInstanceCleared(instance) {
+  return getPrimaryLoad(instance) <= 0;
 }
 
 /** True if any pathogen is active at this node state. */

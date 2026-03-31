@@ -75,24 +75,24 @@ function getPathogenDisplay(nodeId, gtNodeStates, isVisible) {
   }
   unknownCount = unknowns.length;
 
-  // classified/misclassified: solid type-colour ring; arc = load % when visible
+  // classified/misclassified: solid type-colour ring; arc = actual load when visible, lastKnownLoad when not
   for (const inst of classified) {
     const displayType = inst.perceived_type ?? inst.type;
     const color = PATHOGEN_RING_COLORS[displayType] ?? '#aaa';
-    const load = getPrimaryLoad(inst);
+    const load =  getPrimaryLoad(inst, isVisible);
     if (load <= 0) continue;
-    const loadPct = isVisible ? Math.min(0.999, load / 100) : 0.85;
+    const loadPct = Math.min(0.999, load / 100);
     rings.push({ uid: inst.uid, loadPct, color, dashed: false, dashArray: undefined });
   }
 
   // threat: dashed orange ring, fixed arc (load unknown to player)
   for (const inst of threats) {
-    rings.push({ uid: inst.uid, loadPct: 0.55, color: '#f97316', dashed: true, dashArray: '5 3' });
+    rings.push({ uid: inst.uid, loadPct: 0.15, color: '#f97316', dashed: true, dashArray: '5 3' });
   }
 
   // unknown: thin dashed grey ring, short fixed arc
   for (const inst of unknowns) {
-    rings.push({ uid: inst.uid, loadPct: 0.25, color: '#6b7280', dashed: true, dashArray: '3 4' });
+    rings.push({ uid: inst.uid, loadPct: 0.15, color: '#6b7280', dashed: true, dashArray: '3 4' });
   }
 
   return { rings, unknownCount };
@@ -116,7 +116,6 @@ export default function BodyMap({
   onSelectNode,
   onNodeContextMenu,
   visibleNodes = new Set(),
-  lastKnownNodeStates = {},
 }) {
   const nodeList = Object.values(NODES);
 
@@ -191,9 +190,7 @@ export default function BodyMap({
           const cy = node.position.y;
           const gt = groundTruthNodeStates?.[node.id];
           const isVisible = visibleNodes.has(node.id);
-          // Use last-known inflammation data when not currently visible
-          const fogGt = isVisible ? gt : (lastKnownNodeStates?.[node.id] ?? null);
-          const inflammPct = (fogGt?.inflammation ?? 0) / 100;
+          const inflammPct = (isVisible ? (gt?.inflammation ?? 0) : (gt?.lastKnownInflammation ?? 0)) / 100;
           const { fill, stroke } = inflammationStyle(inflammPct);
           const isSelected = node.id === selectedNodeId;
           const { rings, unknownCount } = getPathogenDisplay(node.id, groundTruthNodeStates, isVisible);

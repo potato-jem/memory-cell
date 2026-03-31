@@ -90,28 +90,24 @@ function handleEndTurn(state) {
     pendingSpawns,
     mods
   );
-
+  
   // 6. Auto-return attack cells from cleared nodes
   updatedCells = startReturnForClearedNodes(updatedCells, newGroundTruth.nodeStates, newTick, mods);
 
-  // 6b. Snapshot currently-visible nodes for fog-of-war last-known display
+  // 6b. Stamp lastKnownInflammation and lastKnownLoad onto visible nodes in groundTruth
   const visibleThisTurn = computeVisibility(updatedCells);
-  let lastKnownNodeStates = state.lastKnownNodeStates ?? {};
+  const stampedNodeStates = { ...newGroundTruth.nodeStates };
   for (const nodeId of visibleThisTurn) {
-    const gtNode = newGroundTruth.nodeStates[nodeId];
+    const gtNode = stampedNodeStates[nodeId];
     if (!gtNode) continue;
-    lastKnownNodeStates = {
-      ...lastKnownNodeStates,
-      [nodeId]: {
-        inflammation:           gtNode.inflammation ?? 0,
-        tissueIntegrity:        gtNode.tissueIntegrity ?? 100,
-        tissueIntegrityCeiling: gtNode.tissueIntegrityCeiling ?? 100,
-        isWalledOff:            gtNode.isWalledOff ?? false,
-        immuneSuppressed:       gtNode.immuneSuppressed ?? false,
-        transitPenalty:         gtNode.transitPenalty ?? 0,
-      },
+    stampedNodeStates[nodeId] = {
+      ...gtNode,
+      lastKnownInflammation: gtNode.inflammation ?? 0,
+      pathogens: gtNode.pathogens.map(p => ({ ...p, lastKnownLoad: p.actualLoad ?? 0 })),
     };
   }
+  const finalGroundTruth = { ...newGroundTruth, nodeStates: stampedNodeStates };
+  console.log(finalGroundTruth)
 
   // 7. Systemic values
   const { stress: newStress } = computeSystemicStress(
@@ -139,14 +135,14 @@ function handleEndTurn(state) {
   if (isSystemCollapsed(newIntegrity)) {
     phase = GAME_PHASES.LOST;
     lossReason = LOSS_REASONS.SYSTEMIC_COLLAPSE;
-    postMortem = buildPostMortem(state, newGroundTruth, systemicStressHistory, scars, 'systemic_collapse');
+    postMortem = buildPostMortem(state, finalGroundTruth, systemicStressHistory, scars, 'systemic_collapse');
   }
   return {
     ...state,
     tick: newTick,
     turn: newTurn,
     tokenCapacity,
-    groundTruth: newGroundTruth,
+    groundTruth: finalGroundTruth,
     deployedCells: updatedCells,
     attentionTokens,
     tokensInUse,
@@ -154,7 +150,6 @@ function handleEndTurn(state) {
     systemicIntegrity: newIntegrity,
     systemicStressHistory,
     scars,
-    lastKnownNodeStates,
     phase,
     lossReason,
     postMortem,

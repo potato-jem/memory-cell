@@ -78,7 +78,7 @@ function SiteStatusPanel({ gt, liveIntegrity = null, isStale = false }) {
 
 // ── Pathogen threat section ───────────────────────────────────────────────────
 
-function PathogenPanel({ groundTruthNodeState }) {
+function PathogenPanel({ groundTruthNodeState, isVisible }) {
   const pathogens = (groundTruthNodeState?.pathogens ?? [])
     .filter(inst => inst.detected_level !== 'none');
 
@@ -112,7 +112,7 @@ function PathogenPanel({ groundTruthNodeState }) {
           labelColor = displayType === 'benign' ? 'text-gray-500' : 'text-red-400';
         }
 
-        const load = isKnown ? getPrimaryLoad(inst) : 0;
+        const load = isKnown ? getPrimaryLoad(inst, isVisible) : 0;
 
         return (
           <div key={inst.uid ?? inst.type}>
@@ -147,14 +147,20 @@ export default function NodeDetail({
   onRecall,
   onClose,
   visibleNodes,
-  lastKnownNodeStates,
 }) {
   const node = NODES[nodeId];
   if (!node) return null;
 
-  const isVisible  = visibleNodes?.has(nodeId) ?? false;
-  const lastKnown  = lastKnownNodeStates?.[nodeId] ?? null;
-  const siteGt     = isVisible ? groundTruthNodeState : lastKnown;
+  const isVisible = visibleNodes?.has(nodeId) ?? false;
+  // Use lastKnownInflammation when node is not visible; everything else uses ground truth
+  const siteGt = groundTruthNodeState
+    ? {
+        ...groundTruthNodeState,
+        inflammation: isVisible
+          ? groundTruthNodeState.inflammation
+          : (groundTruthNodeState.lastKnownInflammation ?? 0),
+      }
+    : null;
 
   const cellsHere      = Object.values(deployedCells).filter(c => c.nodeId === nodeId && c.phase === 'arrived');
   const cellsTransit   = Object.values(deployedCells).filter(c =>
@@ -182,11 +188,11 @@ export default function NodeDetail({
         <SiteStatusPanel
           gt={siteGt}
           liveIntegrity={groundTruthNodeState?.tissueIntegrity ?? null}
-          isStale={!isVisible && !!lastKnown}
+          isStale={!isVisible && !!groundTruthNodeState}
         />
 
         {/* Pathogen threat state */}
-        <PathogenPanel groundTruthNodeState={groundTruthNodeState} />
+        <PathogenPanel groundTruthNodeState={groundTruthNodeState} isVisible = {isVisible} />
 
         {/* Friendly cells */}
         <section className="border-b border-gray-800">

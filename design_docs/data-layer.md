@@ -181,8 +181,8 @@ Which cells can clear each pathogen is defined **on the cell** (`CELL_CONFIG[typ
 - `PATHOGEN_REGISTRY` — full per-type configuration (includes `detectionModifier` per type)
 - `PATHOGEN_TYPES` — string constants
 - `PATHOGEN_DISPLAY_NAMES` — UI labels
-- `isInstanceCleared(inst)` — returns true if tracked value ≤ 0
-- `getPrimaryLoad(inst)` — reads the tracked value from an instance
+- `isInstanceCleared(inst)` — returns true if actualLoad ≤ 0
+- `getPrimaryLoad(inst, isVisible)` — reads the actualLoad from an instance
 - `getDominantPathogen(nodeState)` — returns the highest-load pathogen at a node (iterates array)
 - `nodeHasActivePathogen(nodeState)` — true if any pathogen is present
 - `allNodesClear(nodeStates)` — true if no active pathogens anywhere
@@ -192,7 +192,7 @@ Which cells can clear each pathogen is defined **on the cell** (`CELL_CONFIG[typ
 {
   uid: 'path_7',                   // unique ID; inherited by spread children
   type: 'extracellular_bacteria',
-  infectionLoad: 45,               // primary tracked value (name varies by type)
+  actualLoad: 45,               // primary actualLoad
   detected_level: 'none',          // 'none' | 'unknown' | 'threat' | 'classified' | 'misclassified'
   perceived_type: null,            // string | null — set when classified/misclassified
 }

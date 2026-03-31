@@ -13,7 +13,7 @@ Move detection state onto individual pathogen objects rather than a separate `pe
 {
   uid: 'path_001',              // unique ID — persists as lineage for spread + immunity
   type: 'extracellular_bacteria',
-  infectionLoad: 45,            // (or whichever tracked value for this type)
+  actualLoad: 45,            // 
   detected_level: 'none',       // 'none' | 'unknown' | 'threat' | 'misclassified' | 'classified'
   perceived_type: null,         // string | null — what the immune system thinks it is
 }
@@ -201,7 +201,7 @@ Before spreading pathogen (uid=X, type=T) from nodeA to nodeB:
 In practice (3) is covered by (1) since a node won't have two active instances of the same uid, but it's good to be explicit.
 
 ### Clearance → immunity
-In `advanceInstance` (or the clearance block in `advanceGroundTruth`), when a pathogen instance's tracked value drops to ≤ 0:
+In `advanceInstance` (or the clearance block in `advanceGroundTruth`), when a pathogen instance's actualLoad drops to ≤ 0:
 - Emit `pathogen_cleared` event (already happens)
 - **NEW**: Add `instance.uid` to `nodeState.immune` array
 

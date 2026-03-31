@@ -159,7 +159,6 @@ export default function GameShell() {
   const stress = state.systemicStress ?? 0;
   const integrity = state.systemicIntegrity ?? 100;
   const visibleNodes = computeVisibility(state.deployedCells);
-  const lastKnownNodeStates = state.lastKnownNodeStates ?? {};
 
   return (
     <div className="flex flex-col h-screen bg-gray-950 text-gray-300 overflow-hidden">
@@ -261,7 +260,6 @@ export default function GameShell() {
             onSelectNode={handleSelectNode}
             onNodeContextMenu={handleNodeContextMenu}
             visibleNodes={visibleNodes}
-            lastKnownNodeStates={lastKnownNodeStates}
           />
         </div>
 
@@ -276,7 +274,6 @@ export default function GameShell() {
               onRecall={handleRecall}
               onClose={() => handleSelectNode(null)}
               visibleNodes={visibleNodes}
-              lastKnownNodeStates={lastKnownNodeStates}
             />
           </div>
         ) : (

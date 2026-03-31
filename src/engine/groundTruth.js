@@ -32,9 +32,10 @@ import { getEffectiveIntegrityRecovery } from '../data/runModifiers.js';
 
 export function makeCleanSiteState() {
   return {
-    pathogens: [],             // PathogenInstance[] — each has uid, type, tracked value, detected_level, perceived_type
+    pathogens: [],             // PathogenInstance[] — each has uid, type, actualLoad, detected_level, perceived_type, lastKnownLoad
     immune: [],                // uid[] — uids of pathogens cleared from this node (prevents re-spread of same lineage)
     inflammation: 0,           // 0–100
+    lastKnownInflammation: 0,  // last observed inflammation (fog-of-war)
     tissueIntegrity: 100,      // 0–100
     tissueIntegrityCeiling: 100,
     lowestIntegrityReached: 100,
@@ -249,34 +250,20 @@ function inflammationDamageTick(inflammation) {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-// Mini inline lookup to avoid circular import with pathogens.js registry
-const PATHOGEN_REGISTRY_TV = {
-  extracellular_bacteria: 'infectionLoad',
-  virus:                  'cellularCompromise',
-  fungi:                  'infectionLoad',
-  parasite:               'parasiticBurden',
-  toxin_producer:         'infectionLoad',
-  prion:                  'corruptionLevel',
-  intracellular_bacteria: 'cellularCompromise',
-  cancer:                 'cellularCompromise',
-  autoimmune:             'infectionLoad',
-  benign:                 'infectionLoad',
-};
 
 function makeNewInstance(type, initialLoad, uid = null) {
-  const tv = PATHOGEN_REGISTRY_TV[type] ?? 'infectionLoad';
   return {
     uid: uid ?? generatePathogenUid(),
     type,
-    [tv]: initialLoad,
+    actualLoad: initialLoad,
     detected_level: 'none',
     perceived_type: null,
+    lastKnownLoad: null,       // set when node is observed; null = never seen
   };
 }
 
 function isInstanceClearedSimple(instance) {
-  const tv = PATHOGEN_REGISTRY_TV[instance.type] ?? 'infectionLoad';
-  return (instance[tv] ?? 0) <= 0;
+  return (instance.actualLoad ?? 0) <= 0;
 }
 
 export function getGroundTruthSnapshot(groundTruth) {

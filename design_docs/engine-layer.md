@@ -79,7 +79,7 @@ Hidden simulation. Advances all pathogen instances, inflammation, tissue integri
 **Site state shape:**
 ```js
 {
-  pathogens: [],                  // PathogenInstance[] — each has uid, type, tracked value, detected_level, perceived_type
+  pathogens: [],                  // PathogenInstance[] — each has uid, type, actualLoad, detected_level, perceived_type
   immune: [],                     // uid[] — cleared pathogen lineages; blocks re-spread of same uid
   inflammation: 0,                // 0-100
   tissueIntegrity: 100,           // 0-100

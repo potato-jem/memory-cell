@@ -23,7 +23,7 @@ All UI (roster, body map, start screen, node detail) derives colours, labels, an
 ## Adding a new pathogen type
 
 1. `PATHOGEN_TYPES` + `PATHOGEN_SIGNAL_TYPE` + `PATHOGEN_DISPLAY_NAMES` in `pathogens.js`
-2. Entry in `PATHOGEN_REGISTRY` in `pathogens.js` (trackedValue, growth, rates — **no clearableBy**)
+2. Entry in `PATHOGEN_REGISTRY` in `pathogens.js` (actualLoad, growth, rates — **no clearableBy**)
 3. Add the pathogen type to `clearablePathogens` on each cell that should be able to clear it in `cellConfig.js`
 4. `BASE_WEIGHTS` entry in `spawnConfig.js` to control spawn frequency
 5. Optionally: special behaviour hook in `advanceInstance` in `pathogen.js`

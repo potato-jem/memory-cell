@@ -19,7 +19,6 @@ Game state shape and `initGameState(runConfig)`.
   fever: { active: bool },
   scars,                       // [{nodeId, integrityFloor, turn}]
   runModifiers,                // accumulated upgrades/scars/decisions — see data-layer.md
-  lastKnownNodeStates,         // fog-of-war snapshot per node
   phase,                       // 'playing' | 'lost'
   lossReason,
   postMortem,
@@ -57,7 +56,7 @@ The `gameReducer` and all action handlers. **This is the only place state mutati
 4. `rollSpawns`
 5. `advanceGroundTruth`
 6. `startReturnForClearedNodes`
-7. Fog-of-war snapshot of visible nodes → `lastKnownNodeStates`
+7. Stamp `lastKnownInflammation` and `lastKnownLoad` onto visible nodes in groundTruth
 8. `computeSystemicStress`, `applySystemicIntegrityHits`, `computeNewScars`
 9. Token accounting
 10. Loss check (`isSystemCollapsed`)
@@ -100,7 +99,7 @@ SVG map of all nodes. Shows:
 - Right-click on node → deploy selected cell
 - Left-click → `SELECT_NODE` action
 
-**Props:** `groundTruthNodeStates`, `deployedCells`, `selectedNodeId`, `onSelectNode`, `onNodeContextMenu`, `visibleNodes`, `lastKnownNodeStates` (no `perceivedState`)
+**Props:** `groundTruthNodeStates`, `deployedCells`, `selectedNodeId`, `onSelectNode`, `onNodeContextMenu`, `visibleNodes`
 
 **To change:** visual node layout, ring styling, cell dot appearance.
 
@@ -130,7 +129,7 @@ Right panel slide-in when a node is selected. Three sections:
    - No detected pathogens: "No surveillance data"
 3. **Your Cells Here** — arrived cells with recall buttons; "Passing through" sub-section for outbound/returning cells with destination + ETA
 
-**Props:** `nodeId`, `groundTruthNodeState`, `deployedCells`, `currentTurn`, `onRecall`, `onClose`, `visibleNodes`, `lastKnownNodeStates` (no `perceivedState`)
+**Props:** `nodeId`, `groundTruthNodeState`, `deployedCells`, `currentTurn`, `onRecall`, `onClose`, `visibleNodes`
 
 **To change:** add more GT data display, change detection level display rules.
 
