@@ -17,7 +17,7 @@ function BarFill({ value, max = 100, color, bg = 'bg-gray-800' }) {
   );
 }
 
-function SiteStatusPanel({ gt, liveIntegrity = null, isStale = false }) {
+function SiteStatusPanel({ gt, liveIntegrity = null, isStale = false, turnsSinceLastVisible = 0 }) {
   // Show if we have fog-aware site data OR at least live tissue integrity
   if (!gt && liveIntegrity == null) return null;
 
@@ -34,7 +34,7 @@ function SiteStatusPanel({ gt, liveIntegrity = null, isStale = false }) {
     <section className="border-b border-gray-800 px-4 py-3 space-y-2">
       <div className="flex items-center justify-between">
         <div className="text-xs text-gray-600 uppercase tracking-wider">Site Status</div>
-        {isStale && <span className="text-xs text-gray-700 italic">last known</span>}
+        {isStale && <span className="text-xs text-gray-700 italic">last known ({turnsSinceLastVisible}T ago)</span>}
       </div>
 
       {gt && (
@@ -189,6 +189,7 @@ export default function NodeDetail({
           gt={siteGt}
           liveIntegrity={groundTruthNodeState?.tissueIntegrity ?? null}
           isStale={!isVisible && !!groundTruthNodeState}
+          turnsSinceLastVisible={groundTruthNodeState?.turnsSinceLastVisible ?? 0}
         />
 
         {/* Pathogen threat state */}

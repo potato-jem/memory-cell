@@ -12,6 +12,7 @@ import {
   recallUnit,
   advanceCells,
   startReturnForClearedNodes,
+  assignPatrolDestinations,
   computeTokensInUse,
 } from '../engine/cells.js';
 import { CELL_CONFIG, RECON_CELL_TYPES } from '../data/cellConfig.js';
@@ -94,20 +95,30 @@ function handleEndTurn(state) {
   // 6. Auto-return attack cells from cleared nodes
   updatedCells = startReturnForClearedNodes(updatedCells, newGroundTruth.nodeStates, newTick, mods);
 
-  // 6b. Stamp lastKnownInflammation and lastKnownLoad onto visible nodes in groundTruth
+  // 6b. Stamp lastKnownInflammation, lastKnownLoad, and turnsSinceLastVisible onto nodeStates
   const visibleThisTurn = computeVisibility(updatedCells);
   const stampedNodeStates = { ...newGroundTruth.nodeStates };
-  for (const nodeId of visibleThisTurn) {
+  for (const nodeId of Object.keys(stampedNodeStates)) {
     const gtNode = stampedNodeStates[nodeId];
     if (!gtNode) continue;
-    stampedNodeStates[nodeId] = {
-      ...gtNode,
-      lastKnownInflammation: gtNode.inflammation ?? 0,
-      pathogens: gtNode.pathogens.map(p => ({ ...p, lastKnownLoad: p.actualLoad ?? 0 })),
-    };
+    if (visibleThisTurn.has(nodeId)) {
+      stampedNodeStates[nodeId] = {
+        ...gtNode,
+        turnsSinceLastVisible: 0,
+        lastKnownInflammation: gtNode.inflammation ?? 0,
+        pathogens: gtNode.pathogens.map(p => ({ ...p, lastKnownLoad: p.actualLoad ?? 0 })),
+      };
+    } else {
+      stampedNodeStates[nodeId] = {
+        ...gtNode,
+        turnsSinceLastVisible: (gtNode.turnsSinceLastVisible ?? 0) + 1,
+      };
+    }
   }
   const finalGroundTruth = { ...newGroundTruth, nodeStates: stampedNodeStates };
-  console.log(finalGroundTruth)
+
+  // 6c. Assign patrol destinations based on visibility staleness
+  updatedCells = assignPatrolDestinations(updatedCells, stampedNodeStates, newTick, mods);
 
   // 7. Systemic values
   const { stress: newStress } = computeSystemicStress(

@@ -13,7 +13,7 @@
 // All functions accept an optional `modifiers` (runModifiers) parameter.
 // When null/undefined, base config values are used (fully backward compatible).
 
-import { NODES, HQ_NODE_ID, computePathWithModifiers } from '../data/nodes.js';
+import { NODES, NODE_IDS, HQ_NODE_ID, computePathWithModifiers, computeVisibility } from '../data/nodes.js';
 import { nodeHasActivePathogen } from '../data/pathogens.js';
 import { PATROL_DWELL_TICKS, SCOUT_DWELL_TICKS } from '../data/gameConfig.js';
 import {
@@ -150,7 +150,7 @@ export function deployFromRoster(cellId, nodeId, deployedCells, tick, nodeStates
 // Effectiveness is now computed dynamically per pathogen instance — not stored on cell.
 function _deployExtra(type) {
   if (CELL_CONFIG[type]?.isPatrol) {
-    return { patrolConnectionIdx: 0, patrolNextMoveTick: null };
+    return { patrolDestNodeId: null, patrolNextMoveTick: null };
   }
   return {};
 }
@@ -270,18 +270,25 @@ export function advanceCells(deployedCells, tick, modifiers = null) {
       c.scoutDwellUntilTick = null;
     }
 
-    // ── Patrol movement (cycles adjacent nodes) ───────────────────────────────
-    if (CELL_CONFIG[c.type]?.isPatrol && c.phase === 'arrived' &&
-        c.patrolNextMoveTick != null && tick >= c.patrolNextMoveTick) {
-      const baseConnections = NODES[c.nodeId]?.connections ?? [];
-      const connections = getEffectiveConnections(c.nodeId, baseConnections, modifiers);
-      if (connections.length > 0) {
-        const nextIdx = ((c.patrolConnectionIdx ?? 0) + 1) % connections.length;
-        c.nodeId = connections[nextIdx];
-        c.patrolConnectionIdx = nextIdx;
-        c.patrolNextMoveTick = tick + PATROL_DWELL_TICKS;
-        nodesVisited.push({ cellId, cellType: c.type, nodeId: c.nodeId });
+    // ── Patrol movement (destination-based) ──────────────────────────────────
+    if (CELL_CONFIG[c.type]?.isPatrol && c.phase === 'arrived') {
+      if (c.patrolDestNodeId && c.nodeId !== c.patrolDestNodeId) {
+        // Traveling toward destination — move one hop per dwell cycle
+        if (c.patrolNextMoveTick != null && tick >= c.patrolNextMoveTick) {
+          const path = computePathWithModifiers(c.nodeId, c.patrolDestNodeId, modifiers);
+          if (path.length > 1) {
+            c.nodeId = path[1];
+            c.patrolNextMoveTick = tick + PATROL_DWELL_TICKS;
+            nodesVisited.push({ cellId, cellType: c.type, nodeId: c.nodeId });
+          }
+        }
+      } else if (c.patrolDestNodeId && c.nodeId === c.patrolDestNodeId) {
+        // Arrived at destination — dwell, then clear dest to trigger reassignment
+        if (c.patrolNextMoveTick != null && tick >= c.patrolNextMoveTick) {
+          c.patrolDestNodeId = null;
+        }
       }
+      // patrolDestNodeId === null: waiting for assignPatrolDestinations
     }
 
     // ── Returning movement (path-based) ───────────────────────────────────────
@@ -358,6 +365,83 @@ export function startReturnForClearedNodes(deployedCells, nodeStates, tick, modi
 export function nodeHasClassifiedPathogen(nodeId, nodeStates) {
   const ns = nodeStates?.[nodeId];
   return ns?.pathogens?.some(i => i.detected_level === 'classified') ?? false;
+}
+
+/**
+ * Assign patrol destinations after each turn.
+ *
+ * Priority:
+ *   1. Nodes not currently visible, ordered by turnsSinceLastVisible descending.
+ *      Closest available patrol is assigned to each (by hop count).
+ *   2. Remaining patrols get a weighted-random node from the unassigned pool,
+ *      using NODES[id].patrolDestinationWeight.
+ *
+ * Only patrols with phase === 'arrived' and patrolDestNodeId === null are considered.
+ * patrolNextMoveTick is set to tick so movement begins on the next turn.
+ */
+export function assignPatrolDestinations(deployedCells, nodeStates, tick, modifiers = null) {
+  const needsAssignment = Object.values(deployedCells).filter(
+    c => CELL_CONFIG[c.type]?.isPatrol && c.phase === 'arrived' && !c.patrolDestNodeId
+  );
+  if (needsAssignment.length === 0) return deployedCells;
+
+  const visible = computeVisibility(deployedCells);
+
+  // Nodes already targeted by patrols that are en-route (don't double-assign)
+  const alreadyTargeted = new Set(
+    Object.values(deployedCells)
+      .filter(c => CELL_CONFIG[c.type]?.isPatrol && c.patrolDestNodeId)
+      .map(c => c.patrolDestNodeId)
+  );
+
+  // Sort unseen, un-targeted nodes by turnsSinceLastVisible descending
+  const unseen = NODE_IDS
+    .filter(id => !visible.has(id) && !alreadyTargeted.has(id))
+    .sort((a, b) => (nodeStates[b]?.turnsSinceLastVisible ?? 0) - (nodeStates[a]?.turnsSinceLastVisible ?? 0));
+
+  const updated = { ...deployedCells };
+  const assignedNodes = new Set(alreadyTargeted); // seed with already-targeted nodes
+  let remaining = [...needsAssignment];
+
+  // Phase 1: assign closest patrol to each unseen node in priority order
+  for (const targetId of unseen) {
+    if (remaining.length === 0) break;
+
+    let closestIdx = 0;
+    let closestHops = Infinity;
+    for (let i = 0; i < remaining.length; i++) {
+      const path = computePathWithModifiers(remaining[i].nodeId, targetId, modifiers);
+      if (path.length - 1 < closestHops) {
+        closestHops = path.length - 1;
+        closestIdx = i;
+      }
+    }
+
+    const patrol = remaining[closestIdx];
+    updated[patrol.id] = { ...patrol, patrolDestNodeId: targetId, patrolNextMoveTick: tick };
+    assignedNodes.add(targetId);
+    remaining.splice(closestIdx, 1);
+  }
+
+  // Phase 2: weighted-random destination for any unassigned patrols
+  if (remaining.length > 0) {
+    const eligibleIds = NODE_IDS.filter(id => !assignedNodes.has(id));
+    const weights = eligibleIds.map(id => NODES[id].patrolDestinationWeight ?? 0);
+    const totalWeight = weights.reduce((s, w) => s + w, 0);
+
+    for (const patrol of remaining) {
+      if (totalWeight <= 0) break;
+      let rand = Math.random() * totalWeight;
+      let chosen = eligibleIds[eligibleIds.length - 1];
+      for (let i = 0; i < eligibleIds.length; i++) {
+        rand -= weights[i];
+        if (rand <= 0) { chosen = eligibleIds[i]; break; }
+      }
+      updated[patrol.id] = { ...patrol, patrolDestNodeId: chosen, patrolNextMoveTick: tick };
+    }
+  }
+
+  return updated;
 }
 
 /**

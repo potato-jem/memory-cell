@@ -36,6 +36,7 @@ export function makeCleanSiteState() {
     immune: [],                // uid[] — uids of pathogens cleared from this node (prevents re-spread of same lineage)
     inflammation: 0,           // 0–100
     lastKnownInflammation: 0,  // last observed inflammation (fog-of-war)
+    turnsSinceLastVisible: 0,  // turns elapsed since node was last visible
     tissueIntegrity: 100,      // 0–100
     tissueIntegrityCeiling: 100,
     lowestIntegrityReached: 100,
