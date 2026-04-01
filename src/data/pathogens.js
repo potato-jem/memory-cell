@@ -56,6 +56,7 @@ export const PATHOGEN_DISPLAY_NAMES = {
 export const PATHOGEN_REGISTRY = {
 
   extracellular_bacteria: {
+    ringColor:         '#4ade80',     // green
     actualLoad:              0,
     growthModel:       'logistic',
     replicationRate:   0.30,          // moderate logistic growth
@@ -68,6 +69,7 @@ export const PATHOGEN_REGISTRY = {
   },
 
   virus: {
+    ringColor:         '#f43f5e',     // rose/crimson
     actualLoad:              0,
     growthModel:       'exponential',
     replicationRate:   0.15,          // compromise × rate per turn (was 0.50 → 0.30 → 0.15 — too fast to respond to)
@@ -81,6 +83,7 @@ export const PATHOGEN_REGISTRY = {
   },
 
   fungi: {
+    ringColor:         '#fbbf24',     // gold
     actualLoad:              0,
     growthModel:       'logistic',
     replicationRate:   0.12,          // slow
@@ -93,6 +96,7 @@ export const PATHOGEN_REGISTRY = {
   },
 
   parasite: {
+    ringColor:         '#818cf8',     // indigo
     actualLoad:              0,
     growthModel:       'logistic',
     replicationRate:   0.15,
@@ -106,6 +110,7 @@ export const PATHOGEN_REGISTRY = {
   },
 
   toxin_producer: {
+    ringColor:         '#fb923c',     // orange (toxin_producer)
     actualLoad:              0,
     growthModel:       'logistic',
     replicationRate:   0.08,          // very slow growth
@@ -117,6 +122,7 @@ export const PATHOGEN_REGISTRY = {
   },
 
   prion: {
+    ringColor:         '#e879f9',     // fuchsia/magenta
     actualLoad:              0,
     growthModel:       'linear',
     replicationRate:   8,             // flat +8 corruption per turn
@@ -131,6 +137,7 @@ export const PATHOGEN_REGISTRY = {
   // ── Stubs ──────────────────────────────────────────────────────────────────
 
   intracellular_bacteria: {
+    ringColor:         '#2dd4bf',     // teal
     actualLoad:              0,
     growthModel:       'logistic',
     replicationRate:   0.10,
@@ -141,6 +148,7 @@ export const PATHOGEN_REGISTRY = {
   },
 
   cancer: {
+    ringColor:         '#94a3b8',     // slate (cancer — muted intentionally)
     actualLoad:              0,
     growthModel:       'linear',
     replicationRate:   4,             // flat +4 per turn
@@ -153,6 +161,7 @@ export const PATHOGEN_REGISTRY = {
   // Benign: starts at 100, decays naturally. No tissue damage. Slight inflammation.
   // Cleared by any attack cell. Creates false-positive signals for the player.
   benign: {
+    ringColor:         null,          // never classified — no arc ring colour
     actualLoad:              0,
     growthModel:       'linear',
     replicationRate:   -4,            // decays 4/turn naturally (gone in ~25T without cells)
@@ -163,6 +172,7 @@ export const PATHOGEN_REGISTRY = {
   },
 
   autoimmune: {
+    ringColor:         null,          // no arc ring colour
     actualLoad:              0,
     growthModel:       'logistic',
     replicationRate:   0.20,
@@ -173,6 +183,14 @@ export const PATHOGEN_REGISTRY = {
     // cannot be cleared — regulatory T-cell ability (future)
   },
 };
+
+// Ring colours keyed by pathogen type — derived from PATHOGEN_REGISTRY.ringColor.
+// Used by BodyMap arc rings and cell clearance tooltips.
+export const PATHOGEN_RING_COLORS = Object.fromEntries(
+  Object.entries(PATHOGEN_REGISTRY)
+    .filter(([, v]) => v.ringColor)
+    .map(([k, v]) => [k, v.ringColor])
+);
 
 // ── Queries ───────────────────────────────────────────────────────────────────
 

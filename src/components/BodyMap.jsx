@@ -12,26 +12,12 @@
 //   Yellow badge = count of unknown-level pathogens
 
 import { NODES } from '../data/nodes.js';
-import { getPrimaryLoad } from '../data/pathogens.js';
+import { getPrimaryLoad, PATHOGEN_RING_COLORS } from '../data/pathogens.js';
 import { CELL_CONFIG, CELL_TYPE_ORDER } from '../data/cellConfig.js';
 
 const SVG_W = 420;
 const SVG_H = 420;
 const NODE_R = 22;
-
-// ── Colour tables ─────────────────────────────────────────────────────────────
-
-const PATHOGEN_RING_COLORS = {
-  extracellular_bacteria: '#a3e635',   // lime
-  intracellular_bacteria: '#34d399',   // emerald
-  virus:                  '#e879f9',   // fuchsia
-  fungi:                  '#f59e0b',   // amber
-  parasite:               '#a855f7',   // purple
-  toxin_producer:         '#fb923c',   // orange
-  prion:                  '#ef4444',   // red
-  cancer:                 '#94a3b8',   // slate
-};
-
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -160,9 +146,10 @@ export default function BodyMap({
 
           {/* Glow filters */}
           {[
-            '#dc2626', '#c2410c', '#f97316', '#f59e0b',
-            '#a3e635', '#34d399', '#e879f9', '#a855f7',
-            '#fb923c', '#60a5fa', '#fbbf24',
+            '#dc2626', '#c2410c', '#f97316',
+            '#4ade80', '#2dd4bf', '#f43f5e', '#fbbf24',
+            '#818cf8', '#fb923c', '#e879f9', '#94a3b8',
+            '#60a5fa',
           ].map(c => (
             <filter key={c} id={`glow-${c.slice(1)}`} x="-50%" y="-50%" width="200%" height="200%">
               <feGaussianBlur stdDeviation="2.5" result="blur" />

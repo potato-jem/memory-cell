@@ -6,6 +6,7 @@
 import { useState } from 'react';
 import { CELL_TYPES, CELL_DISPLAY_NAMES, DEPLOY_COSTS } from '../engine/cells.js';
 import { CELL_CONFIG, RECON_CELL_TYPES } from '../data/cellConfig.js';
+import { PATHOGEN_RING_COLORS, PATHOGEN_DISPLAY_NAMES } from '../data/pathogens.js';
 import { TOKEN_CAPACITY_MAX, TOKEN_CAPACITY_REGEN_INTERVAL, TICKS_PER_TURN } from '../data/gameConfig.js';
 import { NODES, computePathCost } from '../data/nodes.js';
 
@@ -30,6 +31,19 @@ const GROUP_LABELS = { none: 'ungrouped', type: 'by type', location: 'by locatio
 
 function shortName(type) {
   return CELL_DISPLAY_NAMES[type] ?? type;
+}
+
+function getClearanceEntries(cellType) {
+  const cfg = CELL_CONFIG[cellType];
+  if (!cfg || cfg.clearanceRate === 0) return [];
+  return Object.entries(cfg.clearablePathogens)
+    .filter(([pathType, mult]) => mult > 0 && PATHOGEN_RING_COLORS[pathType])
+    .map(([pathType, mult]) => ({
+      pathType,
+      strength: cfg.clearanceRate * mult,
+      color: PATHOGEN_RING_COLORS[pathType],
+      label: PATHOGEN_DISPLAY_NAMES[pathType] ?? pathType,
+    }));
 }
 
 function buildGroups(cells, groupBy) {
@@ -76,6 +90,7 @@ export default function CellRoster({
   onRecall,
 }) {
   const [groupBy, setGroupBy] = useState('none');
+  const [tooltip, setTooltip] = useState(null); // { cellType, x, y }
 
   const tokensAvailable = tokenCapacity - tokensInUse;
   const ticksUntilRegen = TOKEN_CAPACITY_REGEN_INTERVAL - (currentTick % TOKEN_CAPACITY_REGEN_INTERVAL);
@@ -135,7 +150,23 @@ export default function CellRoster({
   const canRecall = phase => phase === 'outbound' || phase === 'arrived';
   const canDecommission = phase => phase === 'training' || phase === 'ready';
 
+  const tooltipEntries = tooltip ? getClearanceEntries(tooltip.cellType) : [];
+
   return (
+    <>
+    {tooltip && tooltipEntries.length > 0 && (
+      <div
+        style={{ position: 'fixed', left: tooltip.x + 12, top: tooltip.y - 8, zIndex: 50 }}
+        className="pointer-events-none bg-gray-900 border border-gray-700 rounded px-2 py-1.5 shadow-lg text-xs"
+      >
+        <div className="text-gray-400 font-mono mb-1">{CELL_CONFIG[tooltip.cellType].displayName}</div>
+        {tooltipEntries.map(({ pathType, strength, color, label }) => (
+          <div key={pathType} className="font-mono" style={{ color }}>
+            {label} <span className="opacity-60">({strength})</span>
+          </div>
+        ))}
+      </div>
+    )}
     <div className="flex flex-col h-full text-xs overflow-hidden">
 
       {/* Header: capacity */}
@@ -175,6 +206,8 @@ export default function CellRoster({
                 className={`w-full flex items-center gap-1 px-1.5 py-1 rounded text-left transition-colors ${
                   canAfford ? 'hover:bg-gray-800 text-gray-400' : 'text-gray-700 cursor-not-allowed'
                 }`}
+                onMouseEnter={e => setTooltip({ cellType: type, x: e.clientX, y: e.clientY })}
+                onMouseLeave={() => setTooltip(null)}
               >
                 <span className={`font-mono font-bold w-3.5 text-center ${canAfford ? 'text-green-600' : 'text-gray-700'}`}>+</span>
                 <span className="flex-1 truncate">{shortName(type)}</span>
@@ -223,6 +256,8 @@ export default function CellRoster({
                     className={`flex items-center gap-1.5 px-2 py-1.5 border-b border-gray-900 cursor-pointer transition-colors hover:bg-gray-800 ${
                       isSelected ? 'bg-blue-950 border-l-2 border-l-blue-600' : ''
                     }`}
+                    onMouseEnter={e => setTooltip({ cellType: cell.type, x: e.clientX, y: e.clientY })}
+                    onMouseLeave={() => setTooltip(null)}
                   >
                     {/* Phase dot */}
                     <span className={`shrink-0 ${PHASE_COLOR[cell.phase] ?? 'text-gray-600'}`}>
@@ -275,5 +310,6 @@ export default function CellRoster({
         </div>
       )}
     </div>
+    </>
   );
 }
