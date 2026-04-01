@@ -6,6 +6,7 @@ import { useReducer, useCallback, useState } from 'react';
 import { initGameState, GAME_PHASES } from '../state/gameState.js';
 import { gameReducer, ACTION_TYPES } from '../state/actions.js';
 import { DEFAULT_RUN_CONFIG } from '../data/runConfig.js';
+import { WIN_PATHOGEN_TARGET } from '../data/gameConfig.js';
 import { CELL_DISPLAY_NAMES, DEPLOY_COSTS } from '../engine/cells.js';
 import { CELL_CONFIG, CELL_TYPE_ORDER } from '../data/cellConfig.js';
 import { NODES, computeVisibility } from '../data/nodes.js';
@@ -201,6 +202,14 @@ export default function GameShell() {
           >
             {state.fever?.active ? '🌡 FEVER' : '🌡 fever'}
           </button>
+
+          {/* Win progress */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-gray-600">Cleared</span>
+            <span className={`text-sm font-mono tabular-nums ${state.totalPathogensSpawned >= WIN_PATHOGEN_TARGET ? 'text-green-400' : 'text-gray-400'}`}>
+              {Math.min(state.totalPathogensSpawned, WIN_PATHOGEN_TARGET)}/{WIN_PATHOGEN_TARGET}
+            </span>
+          </div>
 
           {/* Token pool */}
           <div className="flex items-center gap-2">

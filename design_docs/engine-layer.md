@@ -17,7 +17,7 @@ All cell lifecycle logic. Pure functions only.
   phase: 'outbound',          // lifecycle phase
   nodeId: 'BLOOD',            // current position (intermediate node during transit)
   destNodeId: 'GUT',          // final destination (outbound/returning only)
-  path: ['SPLEEN','BLOOD','LIVER','GUT'],  // full path
+  path: ['BLOOD','LIVER','GUT'],  // full path
   pathIndex: 1,               // position in path (nodeId = path[pathIndex])
   deployedAtTick: 5,
   scoutDwellUntilTick: null,  // isScout cells only: when to stop dwelling (from CELL_CONFIG.isScout)
@@ -56,7 +56,7 @@ Cell config and modifier-aware accessors live in `src/data/cellConfig.js`. `cell
 - Budget = 1 per turn
 - Exit cost = `signalTravelCost` of node being left
 - While budget > 0 and path not complete: subtract exit cost, advance pathIndex, add to nodesVisited
-- 0-cost exit (SPLEEN only) keeps budget at 1, allowing a free extra hop
+- 0-cost exit (BLOOD/HQ only) keeps budget at 1, allowing a free extra hop
 - `isScout` cells (`CELL_CONFIG[type].isScout`) dwell at destination for `SCOUT_DWELL_TICKS` then auto-return
 - `isPatrol` cells cycle through adjacent nodes every `PATROL_DWELL_TICKS`
 

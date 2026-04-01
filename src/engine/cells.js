@@ -5,7 +5,7 @@
 // Path-based movement: cells store path[], pathIndex, destNodeId.
 // nodeId = path[pathIndex] = current intermediate position.
 // Movement budget = 1 per turn; exit cost = signalTravelCost of node being left.
-// 0-cost nodes (SPLEEN) allow free passage to the next hop in the same turn.
+// 0-cost nodes (BLOOD/HQ) allow free passage to the next hop in the same turn.
 //
 // Tokens are held by every cell in the roster regardless of phase.
 // Tokens are freed only when a cell is explicitly decommissioned.

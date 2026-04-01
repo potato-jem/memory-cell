@@ -5,6 +5,13 @@ import { NODES } from '../data/nodes.js';
 import { PATHOGEN_DISPLAY_NAMES, getPrimaryLoad } from '../data/pathogens.js';
 
 const FAILURE_MODE_DESCRIPTIONS = {
+  pathogens_cleared: {
+    heading: 'Immune Response Complete',
+    subtext: 'All pathogens have been cleared. The body is stable.',
+    color: 'text-green-400',
+    border: 'border-green-900',
+    bg: 'bg-green-950',
+  },
   systemic_collapse: {
     heading: 'Systemic Collapse',
     subtext: 'Sustained pressure overwhelmed the body\'s defences. Integrity failed.',
@@ -55,7 +62,7 @@ export default function PostMortem({ postMortem, onRestart }) {
         {/* Header */}
         <div className={`p-6 border-b ${modeInfo.border} ${modeInfo.bg}`}>
           <div className="text-xs text-gray-600 uppercase tracking-widest mb-2">
-            Run Ended — Turn {postMortem.turnsPlayed}
+            {postMortem.outcome === 'pathogens_cleared' ? 'Victory' : 'Run Ended'} — Turn {postMortem.turnsPlayed}
           </div>
           <h2 className={`text-2xl font-mono ${modeInfo.color} mb-2`}>
             {modeInfo.heading}

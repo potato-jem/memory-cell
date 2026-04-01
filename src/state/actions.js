@@ -18,7 +18,8 @@ import {
 import { CELL_CONFIG, RECON_CELL_TYPES } from '../data/cellConfig.js';
 import { NODES, computeVisibility } from '../data/nodes.js';
 import { TICKS_PER_TURN, GAME_PHASES, LOSS_REASONS } from './gameState.js';
-import { TOKEN_CAPACITY_MAX, TOKEN_CAPACITY_REGEN_INTERVAL } from '../data/gameConfig.js';
+import { TOKEN_CAPACITY_MAX, TOKEN_CAPACITY_REGEN_INTERVAL, WIN_PATHOGEN_TARGET } from '../data/gameConfig.js';
+import { nodeHasActivePathogen } from '../data/pathogens.js';
 import { applyModifierPatch } from '../data/runModifiers.js';
 
 export const ACTION_TYPES = {
@@ -79,8 +80,11 @@ function handleEndTurn(state) {
     updatedCells, nodesVisited, state.groundTruth, mods
   );
 
-  // 4. Probabilistic spawning
-  const pendingSpawns = rollSpawns(groundTruthAfterDetection.nodeStates, newTurn, state.systemicStress, Math.random, mods);
+  // 4. Probabilistic spawning — suppressed once win target is reached
+  const pendingSpawns = state.totalPathogensSpawned >= WIN_PATHOGEN_TARGET
+    ? []
+    : rollSpawns(groundTruthAfterDetection.nodeStates, newTurn, state.systemicStress, Math.random, mods);
+  const totalPathogensSpawned = state.totalPathogensSpawned + pendingSpawns.length;
 
   // 5. Advance ground truth (pathogens, inflammation, tissue integrity)
   const { newGroundTruth, perSiteOutputs } = advanceGroundTruth(
@@ -138,7 +142,7 @@ function handleEndTurn(state) {
   const tokensInUse = computeTokensInUse(updatedCells, mods);
   const attentionTokens = tokenCapacity - tokensInUse;
 
-  // 11. Loss check
+  // 11. Loss / win check
   let phase = state.phase;
   let lossReason = null;
   let postMortem = null;
@@ -147,7 +151,14 @@ function handleEndTurn(state) {
     phase = GAME_PHASES.LOST;
     lossReason = LOSS_REASONS.SYSTEMIC_COLLAPSE;
     postMortem = buildPostMortem(state, finalGroundTruth, systemicStressHistory, scars, 'systemic_collapse');
+  } else if (
+    totalPathogensSpawned >= WIN_PATHOGEN_TARGET &&
+    Object.values(finalGroundTruth.nodeStates).every(ns => !nodeHasActivePathogen(ns))
+  ) {
+    phase = GAME_PHASES.WON;
+    postMortem = buildPostMortem(state, finalGroundTruth, systemicStressHistory, scars, 'pathogens_cleared');
   }
+
   return {
     ...state,
     tick: newTick,
@@ -161,6 +172,7 @@ function handleEndTurn(state) {
     systemicIntegrity: newIntegrity,
     systemicStressHistory,
     scars,
+    totalPathogensSpawned,
     phase,
     lossReason,
     postMortem,
@@ -235,7 +247,7 @@ function handleApplyModifier(state, patch) {
 function buildPostMortem(state, groundTruth, stressHistory, scars, outcome) {
   return {
     outcome,
-    failureMode: identifyFailureMode(stressHistory),
+    failureMode: outcome === 'pathogens_cleared' ? 'pathogens_cleared' : identifyFailureMode(stressHistory),
     finalNodeStates: groundTruth.nodeStates,
     spreadHistory: groundTruth.spreadHistory,
     systemicStressHistory: stressHistory,

@@ -13,6 +13,7 @@ export { TICKS_PER_TURN };
 export const GAME_PHASES = {
   PLAYING: 'playing',
   LOST:    'lost',
+  WON:     'won',
 };
 
 export const LOSS_REASONS = {
@@ -72,6 +73,9 @@ export function initGameState(runConfig = DEFAULT_RUN_CONFIG) {
     // Runtime modifiers — accumulate upgrades, scars, decisions
     // Dispatch APPLY_MODIFIER with a patch to modify cell/node/pathogen/detection/systemic/spawn behavior
     runModifiers: makeRunModifiers(),
+
+    // Win tracking — counts unique pathogen spawns (not spreads)
+    totalPathogensSpawned: 0,
 
     // Phase
     phase: GAME_PHASES.PLAYING,

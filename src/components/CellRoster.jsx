@@ -132,7 +132,7 @@ export default function CellRoster({
       const eta = pathTurnsLeft(cell);
       const etaStr = eta != null ? ` ${eta}T` : '';
       // Show current intermediate node if not at origin
-      const atNode = cell.nodeId && cell.nodeId !== 'SPLEEN' && cell.nodeId !== cell.destNodeId
+      const atNode = cell.nodeId && cell.nodeId !== 'BLOOD' && cell.nodeId !== cell.destNodeId
         ? ` (via ${NODES[cell.nodeId]?.label ?? cell.nodeId})`
         : '';
       return `→ ${dest}${etaStr}${atNode}`;
@@ -192,7 +192,7 @@ export default function CellRoster({
 
       {/* Train section */}
       <div className="px-2 py-2 border-b border-gray-800 shrink-0">
-        <div className="text-gray-700 uppercase tracking-wider mb-1.5 px-1">Train</div>
+        <div className="text-gray-700 uppercase tracking-wider mb-1.5 px-1">Build</div>
         <div className="space-y-0.5">
           {allTrainable.map(type => {
             const cost = DEPLOY_COSTS[type] ?? 0;
@@ -235,7 +235,7 @@ export default function CellRoster({
         </div>
 
         {allCells.length === 0 ? (
-          <div className="px-3 py-3 text-gray-800 italic">No units. Train some above.</div>
+          <div className="px-3 py-3 text-gray-800 italic">No units. Build some above.</div>
         ) : (
           groups.map(group => (
             <div key={group.key ?? '__all'}>

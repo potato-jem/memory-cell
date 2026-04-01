@@ -72,7 +72,7 @@ export const PATHOGEN_REGISTRY = {
     ringColor:         '#f43f5e',     // rose/crimson
     actualLoad:              0,
     growthModel:       'exponential',
-    replicationRate:   0.15,          // compromise × rate per turn (was 0.50 → 0.30 → 0.15 — too fast to respond to)
+    replicationRate:   0.30,          // compromise × rate per turn 
     detectionModifier: 0.8,           // hides inside cells
     spreadThreshold:   60,            // spreads when > 60
     spreadStrength:    8,

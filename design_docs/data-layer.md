@@ -142,33 +142,32 @@ Defines all body nodes and the movement graph.
 **Node fields:**
 - `id`, `label`, `position: {x, y}` — identity and SVG position
 - `connections: string[]` — adjacent nodes (undirected edge)
-- `signalTravelCost: number` — exit cost when leaving this node (SPLEEN = 0, all others = 1)
+- `signalTravelCost: number` — exit cost when leaving this node (BLOOD = 0, all others = 1)
 - `damageWeight` — how much systemic stress this node contributes when inflamed
-- `isHQ` — only SPLEEN; all cells deploy from here
+- `isHQ` — only BLOOD; all cells deploy from here
 - `isSystemic` — only BLOOD; global-spread type node
-- `isCellSource` — BONE_MARROW; cosmetic/informational
 
 **Node topology:**
 ```
-SPLEEN (HQ) ─── BLOOD ─── BONE_MARROW
-                  │
-           ┌──────┼──────┬──────┐
-         CHEST  LIVER  MUSCLE  SPLEEN
-           │      │      │
-         THROAT  GUT  PERIPHERY
+BLOOD (HQ)
+    │
+┌───┼───┐
+CHEST LIVER MUSCLE
+  │    │     │
+THROAT GUT PERIPHERY
 ```
 
 **Exports used:**
 - `NODES` — the full node dictionary
 - `NODE_IDS` — `Object.keys(NODES)`
-- `HQ_NODE_ID` — `'SPLEEN'`
+- `HQ_NODE_ID` — `'BLOOD'`
 - `computePath(fromId, toId)` — Dijkstra shortest path using base topology
 - `computePathCost(path, fromIndex?)` — sum of exit costs along a path
 - `computePathWithModifiers(fromId, toId, modifiers)` — respects `addedConnections`, `removedConnections`, `exitCostDelta` from runModifiers
 - `computePathCostWithModifiers(path, modifiers, fromIndex?)` — modifier-aware cost sum
 - `computeVisibility(deployedCells)` — returns Set of visible nodeIds; uses `CELL_CONFIG[type].coversAdjacentNodes` to extend to adjacent nodes
 
-**Movement budget:** 1 per turn. A 0-cost origin (SPLEEN) means the cell moves to the first intermediate node for free, then spends 1 to reach the next. So SPLEEN → GUT takes 2 turns (SPLEEN→BLOOD for free + BLOOD→LIVER for 1 + LIVER→GUT for 1 = cost 2).
+**Movement budget:** 1 per turn. A 0-cost origin (BLOOD/HQ) means the cell moves to the first intermediate node for free, then spends 1 to reach the next. So BLOOD → GUT takes 2 turns (BLOOD→LIVER for free + LIVER→GUT for 1 = cost 2).
 
 ---
 

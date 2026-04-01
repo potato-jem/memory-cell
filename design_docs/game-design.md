@@ -50,18 +50,20 @@ After a pathogen is cleared, a memory entry is recorded. In subsequent runs, pre
 
 ## The Body Map
 
-Nine nodes connected by a movement graph. Each connection is traversable; movement cost is determined by the **exit cost** of the node being left.
+Seven nodes connected by a movement graph. Each connection is traversable; movement cost is determined by the **exit cost** of the node being left.
 
 ```
-SPLEEN (HQ, cost 0) ─── BLOOD (cost 1) ─── BONE_MARROW (cost 0) 
-                              │
-              ┌───────────────┼───────────────┐
-           CHEST           LIVER          MUSCLE
-              │               │               │
-           THROAT            GUT          PERIPHERY
+BLOOD (HQ, cost 0)
+        │
+┌───────┼───────┐
+CHEST  LIVER  MUSCLE
+  │      │      │
+THROAT  GUT  PERIPHERY
 ```
 
-**Movement budget:** 1 per turn. Because SPLEEN has cost 0, cells leaving HQ always advance at least one additional hop in the same turn (SPLEEN→BLOOD is free, then BLOOD→any costs 1 = 1 turn total to reach an immediate neighbour of BLOOD).
+Blood is the immune headquarters — cells are built and deployed from here (thematically: bone marrow produces cells, spleen releases them into circulation). The Deploy section represents the spleen's role as the launch point.
+
+**Movement budget:** 1 per turn. Because BLOOD has cost 0, cells leaving HQ always advance at least one additional hop in the same turn (BLOOD→any costs 1 = 1 turn total to reach an immediate neighbour of BLOOD).
 
 Cells are always visible at their current intermediate position on the body map, dimmed when in transit. Right-clicking any node deploys the selected cell, computing the shortest path from wherever the cell currently is.
 

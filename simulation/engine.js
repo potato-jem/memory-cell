@@ -17,7 +17,7 @@
  *                 would see: only detected pathogens, last-known values on stale nodes
  *
  * RunResult:
- *   outcome           — 'loss' | 'timeout'
+ *   outcome           — 'win' | 'loss' | 'timeout'
  *   turns             — number of complete turns played
  *   finalState        — final game state snapshot
  *   turnLog           — TurnEntry[]
@@ -110,7 +110,7 @@ export function runGame({
     }
 
     return {
-      outcome: state.phase === GAME_PHASES.LOST ? 'loss' : 'timeout',
+      outcome: state.phase === GAME_PHASES.WON ? 'win' : state.phase === GAME_PHASES.LOST ? 'loss' : 'timeout',
       turns: state.turn,
       finalState: state,
       turnLog,

@@ -3,37 +3,6 @@ import { CELL_CONFIG } from './cellConfig.js';
 
 export const NODES = {
 
-  // ── Production nodes ─────────────────────────────────────────────
-
-  BONE_MARROW: {
-    id: 'BONE_MARROW',
-    label: 'Bone Marrow',
-    position: { x: 85, y: 295 },
-    connections: ['BLOOD'],
-    signalTravelCost: 1,
-    damageWeight: 2.5,
-    patrolDestinationWeight: 0.25,
-    isBottleneck: false,
-    isCellSource: true,
-    isHQ: false,
-    isSystemic: false,
-  },
-
-  // ── Immune HQ ─────────────────────────────────────────────────────────────
-  SPLEEN: {
-    id: 'SPLEEN',
-    label: 'Spleen',
-    position: { x: 85, y: 125 },
-    connections: ['BLOOD'],
-    signalTravelCost: 0,  // HQ — free to leave
-    damageWeight: 2.0,
-    patrolDestinationWeight: 0.25,
-    isBottleneck: false,
-    isCellSource: false,
-    isHQ: true,
-    isSystemic: false,
-  },
-
   // ── Body regions ──────────────────────────────────────────────────────────
   THROAT: {
     id: 'THROAT',
@@ -74,17 +43,18 @@ export const NODES = {
     isHQ: false,
     isSystemic: false,
   },
+  // ── Immune HQ (Blood — cells deploy from and return here) ────────────────
   BLOOD: {
     id: 'BLOOD',
     label: 'Blood',
     position: { x: 85, y: 210 },
-    connections: ['SPLEEN', 'BONE_MARROW', 'CHEST', 'LIVER', 'MUSCLE'],
-    signalTravelCost: 1,
+    connections: ['CHEST', 'LIVER', 'MUSCLE'],
+    signalTravelCost: 0,  // HQ — free to leave
     damageWeight: 2.0,
     patrolDestinationWeight: 0,
     isBottleneck: false,
     isCellSource: false,
-    isHQ: false,
+    isHQ: true,
     isSystemic: true,
   },
   GUT: {
@@ -129,11 +99,11 @@ export const NODES = {
 };
 
 export const NODE_IDS = Object.keys(NODES);
-export const HQ_NODE_ID = 'SPLEEN'; // all cells deploy from here
+export const HQ_NODE_ID = 'BLOOD'; // all cells deploy from here
 
 // ── Dijkstra shortest path using signalTravelCost as edge weights ─────────────
 // Cost is the EXIT cost of the node being left.
-// SPLEEN has cost 0 (free departure from HQ); all others cost 1.
+// BLOOD has cost 0 (free departure from HQ); all others cost 1.
 
 export function computePath(fromId, toId) {
   if (fromId === toId) return [fromId];

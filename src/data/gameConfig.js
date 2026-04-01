@@ -11,7 +11,7 @@ export const SCOUT_DWELL_TICKS = 10;        // how long a scout dwells at destin
 // TOKEN_CAPACITY_REGEN_INTERVAL ticks, capped at TOKEN_CAPACITY_MAX.
 // Each cell in the roster holds its DEPLOY_COST permanently until decommissioned.
 
-export const INITIAL_TOKEN_CAPACITY = 20;
+export const INITIAL_TOKEN_CAPACITY = 12;
 export const TOKEN_CAPACITY_MAX = 30;
 export const TOKEN_CAPACITY_REGEN_INTERVAL = 60; // ticks between +1 capacity (~1 per minute)
 
@@ -71,3 +71,8 @@ export const KILLER_T_INFLAMMATION_ON_CLEAN = 25;          // killer T specifica
 
 // ── Parasite transit penalty ───────────────────────────────────────────────────
 export const PARASITE_TRANSIT_PENALTY_PER_BURDEN = 25;     // +1 turn penalty per N parasiticBurden
+
+// ── Win condition ──────────────────────────────────────────────────────────────
+// Spawning stops once this many unique pathogens have spawned.
+// Win triggers when that target is reached and all nodes are clear.
+export const WIN_PATHOGEN_TARGET = 10;

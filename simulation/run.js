@@ -86,6 +86,7 @@ function mean(arr) {
 
 function buildReport(results, args) {
   const n = results.length;
+  const wins = results.filter(r => r.outcome === 'win');
   const losses = results.filter(r => r.outcome === 'loss');
   const timeouts = results.filter(r => r.outcome === 'timeout');
 
@@ -145,8 +146,10 @@ function buildReport(results, args) {
       maxTurns: args.maxTurns,
     },
     outcomes: {
+      win:     wins.length,
       loss:    losses.length,
       timeout: timeouts.length,
+      winRate:     (wins.length  / n * 100).toFixed(1) + '%',
       lossRate:    (losses.length / n * 100).toFixed(1) + '%',
       timeoutRate: (timeouts.length / n * 100).toFixed(1) + '%',
     },
@@ -191,6 +194,7 @@ function printReport(report) {
 
   console.log('');
   console.log('OUTCOMES');
+  console.log(`  Win       ${outcomes.win.toString().padStart(4)} / ${config.runs}   (${outcomes.winRate})`);
   console.log(`  Loss      ${outcomes.loss.toString().padStart(4)} / ${config.runs}   (${outcomes.lossRate})`);
   console.log(`  Timeout   ${outcomes.timeout.toString().padStart(4)} / ${config.runs}   (${outcomes.timeoutRate})`);
 
@@ -268,6 +272,8 @@ async function main() {
     if (!args.quiet) {
       const status = result.outcome === 'loss'
         ? `LOSS  turn ${result.turns}`
+        : result.outcome === 'win'
+        ? `WIN   turn ${result.turns}`
         : `SURV  turn ${result.turns}`;
       const stress = result.finalState?.systemicStress ?? 0;
       const integrity = result.finalState?.systemicIntegrity ?? 0;

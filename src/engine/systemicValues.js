@@ -13,6 +13,7 @@ import {
   STRESS_PER_INFLAMED_SITE_EXTRA,
   STRESS_FEVER_PER_TURN,
   STRESS_LOW_INTEGRITY_SITE,
+  STRESS_LOW_INTEGRITY_THRESHOLD,
   STRESS_MULTI_INFECTION_BONUS,
   STRESS_MULTI_INFECTION_THRESHOLD,
   STRESS_TOXIN_MULTIPLIER,
@@ -73,7 +74,7 @@ export function computeSystemicStress(nodeStates, perSiteOutputs, fever, current
   // ── Low-integrity sites ────────────────────────────────────────────────────
   for (const nodeId of NODE_IDS) {
     const ns = nodeStates[nodeId];
-    if (ns?.tissueIntegrity < 30) {
+    if (ns?.tissueIntegrity < STRESS_LOW_INTEGRITY_THRESHOLD) {
       delta += STRESS_LOW_INTEGRITY_SITE;
       sources.push({ type: 'low_integrity', nodeId, amount: STRESS_LOW_INTEGRITY_SITE });
     }

@@ -78,7 +78,7 @@ export const CELL_CONFIG = {
     color:                 '#60a5fa',
     textClass:             'text-blue-400',
     dotClass:              'bg-blue-600',
-    startingCount:         2,
+    startingCount:         0,
     // ── Role flags ──
     isRecon:               true,
     isAttack:              false,
@@ -105,7 +105,7 @@ export const CELL_CONFIG = {
     color:                 '#fbbf24',
     textClass:             'text-amber-400',
     dotClass:              'bg-amber-600',
-    startingCount:         1,
+    startingCount:         0,
     // ── Role flags ──
     isRecon:               true,
     isAttack:              false,
@@ -114,7 +114,7 @@ export const CELL_CONFIG = {
     requiresClassified:    false,
     coversAdjacentNodes:   true,     // grants visibility to adjacent nodes
     // ── Detection ──
-    detectionRolls:        1,
+    detectionRolls:        0,
     detectionUpgradeProbs: MACROPHAGE_DETECTION_PROBS,
     // ── Clearance ──
     clearablePathogens: {
