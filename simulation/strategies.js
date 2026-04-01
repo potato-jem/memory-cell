@@ -80,16 +80,35 @@ function getArrivedCells(state) {
   return Object.values(state.deployedCells).filter(c => c.phase === 'arrived');
 }
 
-/** Highest-load node that has an active (non-zero) pathogen. */
+/**
+ * Highest-priority node with a detected pathogen, using perceived values.
+ * Works correctly whether the state is masked (perceived) or omniscient (full GT).
+ *
+ * Priority: classified > misclassified > threat > unknown
+ * Within classified/misclassified: sorts by estimatedLoad (lastKnownLoad) desc,
+ * falling back to actualLoad if present (omniscient mode).
+ */
 function getHighestThreatNode(state) {
   const nodeStates = state.groundTruth?.nodeStates ?? {};
+
+  // Detection level → numeric priority (higher = more urgent to respond to)
+  const LEVEL_PRIORITY = { classified: 4, misclassified: 3, threat: 2, unknown: 1, none: 0 };
+
   let best = null;
-  let bestLoad = -1;
+  let bestScore = -1;
 
   for (const [nodeId, ns] of Object.entries(nodeStates)) {
     for (const p of (ns.pathogens ?? [])) {
-      if ((p.actualLoad ?? 0) > bestLoad) {
-        bestLoad = p.actualLoad;
+      const level = p.detected_level ?? 'none';
+      if (level === 'none') continue;
+
+      const priority = LEVEL_PRIORITY[level] ?? 0;
+      // Use estimatedLoad (masked) or actualLoad (omniscient), normalised to 0-1
+      const load = (p.estimatedLoad ?? p.actualLoad ?? 50) / 100;
+      const score = priority + load; // priority dominates; load breaks ties
+
+      if (score > bestScore) {
+        bestScore = score;
         best = nodeId;
       }
     }
@@ -153,44 +172,70 @@ export function randomStrategy(gameState) {
 // ── Strategy 2: Greedy threat ─────────────────────────────────────────────────
 
 /**
- * Each turn: deploy the best available attack cell to the highest-threat node.
- * If an attack cell is at HQ (ready) and there is a known threat, send it.
- * Trains cheap patrol cells when tokens are available and no attack cell is ready.
- * Does not use fever. Does not recall or reposition arrived cells.
- * Ends turn as soon as no useful deployment can be made.
+ * Respond to known threats as aggressively as possible; scout when blind.
+ *
+ * Works on perceived state (masked) — only acts on detected pathogens.
+ * Priority order each turn:
+ *   1. Deploy best attack cell to highest-priority detected threat
+ *   2. Deploy recon to a threat node that still needs scouting
+ *   3. Deploy recon to the most stale unvisited node (proactive scouting)
+ *   4. Train a neutrophil if tokens available and nothing else to do
+ *   5. End turn
  */
 export function greedyThreatStrategy(gameState) {
+  const nodeStates = gameState.groundTruth?.nodeStates ?? {};
   const threatNode = getHighestThreatNode(gameState);
 
-  // Deploy best available attack cell to the threat node
+  // 1. Deploy best attack cell to the top detected threat
   if (threatNode) {
     const attacker = getBestAttackCell(gameState);
     if (attacker) {
-      // Killer T gating: skip if no classified pathogen at target
       if (CELL_CONFIG[attacker.type]?.requiresClassified &&
-          !nodeHasClassifiedPathogen(threatNode, gameState.groundTruth.nodeStates)) {
-        // Fall through to recon deployment
+          !nodeHasClassifiedPathogen(threatNode, nodeStates)) {
+        // Killer T needs classified — fall through
       } else {
         return { type: ACTION_TYPES.DEPLOY_FROM_ROSTER, cellId: attacker.id, nodeId: threatNode };
       }
     }
   }
 
-  // Send a recon cell to the threat node if we have no intelligence yet
-  if (threatNode) {
+  // 2. Send recon to a threat node where pathogens are still unclassified
+  const unconfimedThreat = Object.entries(nodeStates).find(([, ns]) =>
+    (ns.pathogens ?? []).some(p =>
+      p.detected_level === 'unknown' || p.detected_level === 'threat'
+    )
+  )?.[0] ?? null;
+
+  if (unconfimedThreat) {
     const recon = getBestReconCell(gameState);
     if (recon) {
-      return { type: ACTION_TYPES.DEPLOY_FROM_ROSTER, cellId: recon.id, nodeId: threatNode };
+      return { type: ACTION_TYPES.DEPLOY_FROM_ROSTER, cellId: recon.id, nodeId: unconfimedThreat };
     }
   }
 
-  // Train a neutrophil (cheap patrol) if we have spare tokens and nothing to do
+  // 3. Proactive scouting — send a patrol to the most stale node
+  const recon = getBestReconCell(gameState);
+  if (recon) {
+    const staleNode = getMostStaleNodeGreedy(gameState);
+    if (staleNode) {
+      return { type: ACTION_TYPES.DEPLOY_FROM_ROSTER, cellId: recon.id, nodeId: staleNode };
+    }
+  }
+
+  // 4. Train a neutrophil if there are spare tokens
   if (gameState.attentionTokens >= 1) {
     const trainAction = getLegalTrainActions(gameState).find(a => a.cellType === 'neutrophil');
     if (trainAction) return trainAction;
   }
 
   return { type: ACTION_TYPES.END_TURN };
+}
+
+function getMostStaleNodeGreedy(state) {
+  const nodeStates = state.groundTruth?.nodeStates ?? {};
+  return NODE_IDS
+    .map(id => ({ id, staleness: nodeStates[id]?.turnsSinceLastVisible ?? 999 }))
+    .sort((a, b) => b.staleness - a.staleness)[0]?.id ?? null;
 }
 
 // ── Strategy 3: Conservative ──────────────────────────────────────────────────
@@ -300,6 +345,8 @@ export const STRATEGIES = {
   random:       () => randomStrategy,
   greedy:       () => greedyThreatStrategy,
   conservative: () => makeConservativeStrategy(),
+  // 'omniscient' is not a strategy name — use --omniscient flag with any strategy.
+  // It controls whether engine.js passes masked or full state to the strategy.
 };
 
 export function getStrategy(name) {

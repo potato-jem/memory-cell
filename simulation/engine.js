@@ -12,6 +12,9 @@
  *   strategy    — (gameState) => action  — called each step until END_TURN
  *   rng         — () => [0,1)  — seeded PRNG for reproducibility
  *   maxTurns    — hard ceiling to prevent infinite games (default: 500)
+ *   omniscient  — if true, strategy receives full ground truth; if false (default),
+ *                 strategy receives a perceived-state view matching what a real player
+ *                 would see: only detected pathogens, last-known values on stale nodes
  *
  * RunResult:
  *   outcome           — 'loss' | 'timeout'
@@ -41,6 +44,7 @@
 import { initGameState, GAME_PHASES } from '../src/state/gameState.js';
 import { gameReducer, ACTION_TYPES } from '../src/state/actions.js';
 import { DEFAULT_RUN_CONFIG } from '../src/data/runConfig.js';
+import { computeVisibility } from '../src/data/nodes.js';
 
 const MAX_ACTIONS_PER_TURN = 100;
 
@@ -51,6 +55,7 @@ export function runGame({
   strategy,
   rng,
   maxTurns = 500,
+  omniscient = false,
 } = {}) {
   if (!strategy) throw new Error('runGame requires a strategy function');
   if (!rng) throw new Error('runGame requires an rng function for reproducibility');
@@ -72,7 +77,8 @@ export function runGame({
       // ── Pre-turn phase: strategy issues actions until END_TURN ─────────────
       let preActionCount = 0;
       while (state.phase === GAME_PHASES.PLAYING && preActionCount < MAX_ACTIONS_PER_TURN) {
-        const action = strategy(state);
+        const visibleState = omniscient ? state : maskGameState(state);
+        const action = strategy(visibleState);
         if (!action || action.type === ACTION_TYPES.END_TURN) break;
 
         // Track action frequency
@@ -114,6 +120,74 @@ export function runGame({
   } finally {
     Math.random = savedRandom;
   }
+}
+
+// ── Perceived state masking ───────────────────────────────────────────────────
+
+/**
+ * Returns a copy of game state where groundTruth is replaced with a perceived view,
+ * matching what a real player would see:
+ *
+ *   - Pathogens with detected_level 'none' are hidden entirely.
+ *   - Pathogens at 'unknown' or 'threat' level expose no type or load.
+ *   - Pathogens at 'classified' or 'misclassified' expose perceived_type and
+ *     lastKnownLoad (the load at last observation, which may be stale).
+ *   - Inflammation and tissue integrity show live values on currently-visible nodes,
+ *     last-known values on stale nodes.
+ *   - isWalledOff, immuneSuppressed are only visible on currently-visible nodes.
+ *   - transitPenalty is always visible (cells feel it when traversing).
+ *   - turnsSinceLastVisible is kept (the strategy uses it for patrol routing).
+ *
+ * Strategies receiving this state must rely on detected_level and last-known values
+ * rather than actualLoad / actual inflammation.
+ */
+export function maskGameState(state) {
+  const visible = computeVisibility(state.deployedCells);
+  const rawNodeStates = state.groundTruth?.nodeStates ?? {};
+  const maskedNodeStates = {};
+
+  for (const [nodeId, ns] of Object.entries(rawNodeStates)) {
+    const isVisible = visible.has(nodeId);
+
+    // Mask pathogens: hide undetected ones; obscure loads on partially-detected ones.
+    const maskedPathogens = (ns.pathogens ?? [])
+      .filter(p => p.detected_level !== 'none')
+      .map(p => {
+        const isIdentified = p.detected_level === 'classified' || p.detected_level === 'misclassified';
+        return {
+          uid: p.uid,
+          detected_level: p.detected_level,
+          perceived_type: isIdentified ? p.perceived_type : null,
+          // Load is only meaningful when identified; use last-known (may be stale)
+          estimatedLoad: isIdentified ? (p.lastKnownLoad ?? null) : null,
+          // Do NOT include actualLoad or true type
+        };
+      });
+
+    maskedNodeStates[nodeId] = {
+      pathogens: maskedPathogens,
+      // Site values: current if visible, last-known if stale
+      inflammation: isVisible ? ns.inflammation : (ns.lastKnownInflammation ?? null),
+      tissueIntegrity: isVisible ? ns.tissueIntegrity : null,
+      tissueIntegrityCeiling: isVisible ? ns.tissueIntegrityCeiling : null,
+      // Status flags only visible when a cell is present
+      isWalledOff: isVisible ? ns.isWalledOff : false,
+      immuneSuppressed: isVisible ? ns.immuneSuppressed : false,
+      // Transit penalty is observable (cells are slowed entering the node)
+      transitPenalty: ns.transitPenalty ?? 0,
+      // Staleness — used by recon routing logic
+      turnsSinceLastVisible: ns.turnsSinceLastVisible ?? 0,
+      lastKnownInflammation: ns.lastKnownInflammation ?? null,
+    };
+  }
+
+  return {
+    ...state,
+    groundTruth: {
+      ...state.groundTruth,
+      nodeStates: maskedNodeStates,
+    },
+  };
 }
 
 // ── State summarizer ──────────────────────────────────────────────────────────

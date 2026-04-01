@@ -16,6 +16,7 @@
  *   --maxTurns   turn ceiling per game            (default: 500)
  *   --output     path to write full JSON log      (optional)
  *   --quiet      suppress per-run progress lines  (optional)
+ *   --omniscient strategy receives full ground truth instead of perceived state (optional)
  */
 
 import { writeFileSync } from 'fs';
@@ -33,6 +34,7 @@ function parseArgs(argv) {
     maxTurns: 500,
     output: null,
     quiet: false,
+    omniscient: false,
   };
 
   for (let i = 2; i < argv.length; i++) {
@@ -44,8 +46,9 @@ function parseArgs(argv) {
       case '--runs':     args.runs = parseInt(value, 10); i++; break;
       case '--seed':     args.seed = parseInt(value, 10); i++; break;
       case '--maxTurns': args.maxTurns = parseInt(value, 10); i++; break;
-      case '--output':   args.output = value; i++; break;
-      case '--quiet':    args.quiet = true; break;
+      case '--output':    args.output = value; i++; break;
+      case '--quiet':     args.quiet = true; break;
+      case '--omniscient': args.omniscient = true; break;
       default:
         if (flag.startsWith('--')) {
           console.error(`Unknown flag: ${flag}`);
@@ -136,6 +139,7 @@ function buildReport(results, args) {
   return {
     config: {
       strategy: args.strategy,
+      omniscient: args.omniscient,
       runs: n,
       seed: args.seed,
       maxTurns: args.maxTurns,
@@ -180,7 +184,8 @@ function printReport(report) {
   console.log('');
   console.log('Memory Cell — Balance Simulation Report');
   console.log(hr);
-  console.log(`Strategy : ${config.strategy}`);
+  const omniscientTag = config.omniscient ? '  [OMNISCIENT]' : '  [perceived state]';
+  console.log(`Strategy : ${config.strategy}${omniscientTag}`);
   console.log(`Runs     : ${config.runs}   Seed: ${config.seed}   Max turns: ${config.maxTurns}`);
   console.log(hr);
 
@@ -255,6 +260,7 @@ async function main() {
       strategy,
       rng,
       maxTurns: args.maxTurns,
+      omniscient: args.omniscient,
     });
 
     results.push(result);
