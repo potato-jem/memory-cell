@@ -70,7 +70,7 @@ export const PATHOGEN_REGISTRY = {
   virus: {
     actualLoad:              0,
     growthModel:       'exponential',
-    replicationRate:   0.50,          // fast: compromise × rate per turn
+    replicationRate:   0.30,          // compromise × rate per turn (was 0.50 — too fast to respond to)
     detectionModifier: 0.8,           // hides inside cells
     spreadThreshold:   60,            // spreads when > 60
     spreadStrength:    8,

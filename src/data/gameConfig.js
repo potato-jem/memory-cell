@@ -11,8 +11,8 @@ export const SCOUT_DWELL_TICKS = 10;        // how long a scout dwells at destin
 // TOKEN_CAPACITY_REGEN_INTERVAL ticks, capped at TOKEN_CAPACITY_MAX.
 // Each cell in the roster holds its DEPLOY_COST permanently until decommissioned.
 
-export const INITIAL_TOKEN_CAPACITY = 12;
-export const TOKEN_CAPACITY_MAX = 20;
+export const INITIAL_TOKEN_CAPACITY = 20;
+export const TOKEN_CAPACITY_MAX = 30;
 export const TOKEN_CAPACITY_REGEN_INTERVAL = 60; // ticks between +1 capacity (~1 per minute)
 
 // ── Inflammation ───────────────────────────────────────────────────────────────
