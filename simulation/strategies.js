@@ -125,17 +125,39 @@ function getInfectedNodes(state) {
     .map(([id]) => id);
 }
 
-/** Best attack cell type available in the ready pool, by clearance rate descending. */
-function getBestAttackCell(state) {
-  const candidates = Object.values(state.deployedCells).filter(c => {
-    if (c.phase !== 'ready') return false;
-    return CELL_CONFIG[c.type]?.isAttack;
-  });
+/**
+ * Best ready cell that can clear pathogenType, using PATHOGEN_CLEARERS (sorted by
+ * clearanceRate desc). Respects requiresClassified — skips killer_t unless
+ * detectedLevel is 'classified'.
+ */
+function getBestReadyCellForType(state, pathogenType, detectedLevel) {
+  const clearers = PATHOGEN_CLEARERS[pathogenType] ?? [];
+  for (const { cellType, clearanceRate } of clearers) {
+    if (clearanceRate <= 0) continue;
+    if (CELL_CONFIG[cellType]?.requiresClassified && detectedLevel !== 'classified') continue;
+    const cell = Object.values(state.deployedCells).find(
+      c => c.phase === 'ready' && c.type === cellType
+    );
+    if (cell) return cell;
+  }
+  return null;
+}
 
-  if (!candidates.length) return null;
-  return candidates.sort((a, b) =>
-    (CELL_CONFIG[b.type]?.clearanceRate ?? 0) - (CELL_CONFIG[a.type]?.clearanceRate ?? 0)
-  )[0];
+/**
+ * Train action for the best cell that can clear pathogenType, if tokens allow.
+ * Picks the highest-clearanceRate type the player can currently afford.
+ */
+function getTrainActionForType(state, pathogenType, detectedLevel) {
+  const clearers = PATHOGEN_CLEARERS[pathogenType] ?? [];
+  for (const { cellType, clearanceRate } of clearers) {
+    if (clearanceRate <= 0) continue;
+    if (CELL_CONFIG[cellType]?.requiresClassified && detectedLevel !== 'classified') continue;
+    const cost = CELL_CONFIG[cellType]?.deployCost ?? 1;
+    if (state.attentionTokens >= cost) {
+      return { type: ACTION_TYPES.TRAIN_CELL, cellType };
+    }
+  }
+  return null;
 }
 
 /** Best recon cell available in the ready pool. */
@@ -186,16 +208,19 @@ export function greedyThreatStrategy(gameState) {
   const nodeStates = gameState.groundTruth?.nodeStates ?? {};
   const threatNode = getHighestThreatNode(gameState);
 
-  // 1. Deploy best attack cell to the top detected threat
+  // 1. Deploy type-matched cell to the top classified threat; train if none ready
   if (threatNode) {
-    const attacker = getBestAttackCell(gameState);
-    if (attacker) {
-      if (CELL_CONFIG[attacker.type]?.requiresClassified &&
-          !nodeHasClassifiedPathogen(threatNode, nodeStates)) {
-        // Killer T needs classified — fall through
-      } else {
-        return { type: ACTION_TYPES.DEPLOY_FROM_ROSTER, cellId: attacker.id, nodeId: threatNode };
+    const ns = nodeStates[threatNode];
+    const classifiedP = (ns?.pathogens ?? []).find(
+      p => (p.detected_level === 'classified' || p.detected_level === 'misclassified') && p.perceived_type
+    );
+    if (classifiedP) {
+      const cell = getBestReadyCellForType(gameState, classifiedP.perceived_type, classifiedP.detected_level);
+      if (cell) {
+        return { type: ACTION_TYPES.DEPLOY_FROM_ROSTER, cellId: cell.id, nodeId: threatNode };
       }
+      const trainAction = getTrainActionForType(gameState, classifiedP.perceived_type, classifiedP.detected_level);
+      if (trainAction) return trainAction;
     }
   }
 
@@ -222,8 +247,13 @@ export function greedyThreatStrategy(gameState) {
     }
   }
 
-  // 4. Train a neutrophil if there are spare tokens
-  if (gameState.attentionTokens >= 1) {
+  // 4. Train a neutrophil only when no threats are detected and roster has fewer than 2.
+  const hasDetectedThreat = Object.values(nodeStates).some(ns =>
+    (ns.pathogens ?? []).some(p => p.detected_level !== 'none')
+  );
+  const neutrophilCount = Object.values(gameState.deployedCells)
+    .filter(c => c.type === 'neutrophil').length;
+  if (!hasDetectedThreat && neutrophilCount < 2 && gameState.attentionTokens >= 1) {
     const trainAction = getLegalTrainActions(gameState).find(a => a.cellType === 'neutrophil');
     if (trainAction) return trainAction;
   }
@@ -252,14 +282,14 @@ function getMostStaleNodeGreedy(state) {
  * preventing repeated redundant deployments in the same turn.
  */
 export function makeConservativeStrategy() {
-  // Per-turn visited-target guard: reset each time END_TURN is returned
   const deployedThisTurn = new Set();
   let lastTurnSeen = -1;
+  let trainedThisTurn = false;
 
   return function conservativeStrategy(gameState) {
-    // Reset per-turn state when we're on a new turn
     if (gameState.turn !== lastTurnSeen) {
       deployedThisTurn.clear();
+      trainedThisTurn = false;
       lastTurnSeen = gameState.turn;
     }
 
@@ -278,21 +308,22 @@ export function makeConservativeStrategy() {
       }
     }
 
-    // ── 2. Deploy attack cells only against classified pathogens ───────────
-    const attacker = Object.values(gameState.deployedCells).find(c =>
-      c.phase === 'ready' && CELL_CONFIG[c.type]?.isAttack
-    );
-
-    if (attacker) {
-      const classifiedTarget = getClassifiedThreatNode(gameState, deployedThisTurn);
-      if (classifiedTarget) {
-        // Skip killer_t if the target doesn't have a classified pathogen
-        if (CELL_CONFIG[attacker.type]?.requiresClassified &&
-            !nodeHasClassifiedPathogen(classifiedTarget, nodeStates)) {
-          // Don't deploy
-        } else {
+    // ── 2. Deploy type-matched cell against classified pathogens ───────────
+    const classifiedTarget = getClassifiedThreatNode(gameState, deployedThisTurn);
+    if (classifiedTarget) {
+      const ns = nodeStates[classifiedTarget];
+      const classifiedP = (ns?.pathogens ?? []).find(
+        p => (p.detected_level === 'classified' || p.detected_level === 'misclassified') && p.perceived_type
+      );
+      if (classifiedP) {
+        const cell = getBestReadyCellForType(gameState, classifiedP.perceived_type, classifiedP.detected_level);
+        if (cell) {
           deployedThisTurn.add(classifiedTarget);
-          return { type: ACTION_TYPES.DEPLOY_FROM_ROSTER, cellId: attacker.id, nodeId: classifiedTarget };
+          return { type: ACTION_TYPES.DEPLOY_FROM_ROSTER, cellId: cell.id, nodeId: classifiedTarget };
+        }
+        if (!trainedThisTurn) {
+          const trainAction = getTrainActionForType(gameState, classifiedP.perceived_type, classifiedP.detected_level);
+          if (trainAction) { trainedThisTurn = true; return trainAction; }
         }
       }
     }
@@ -302,11 +333,11 @@ export function makeConservativeStrategy() {
       c.phase === 'ready' && CELL_CONFIG[c.type]?.isRecon
     );
 
-    if (!hasReadyRecon && gameState.attentionTokens >= 1) {
+    if (!hasReadyRecon && !trainedThisTurn && gameState.attentionTokens >= 1) {
       const cheapRecon = getLegalTrainActions(gameState).find(a =>
         CELL_CONFIG[a.cellType]?.isRecon && (CELL_CONFIG[a.cellType]?.deployCost ?? 1) === 1
       );
-      if (cheapRecon) return cheapRecon;
+      if (cheapRecon) { trainedThisTurn = true; return cheapRecon; }
     }
 
     // ── 4. Nothing useful to do — end turn ─────────────────────────────────
@@ -337,6 +368,148 @@ function getClassifiedThreatNode(state, skipNodes) {
     }
   }
   return null;
+}
+
+// ── Strategy 4: Type-aware ─────────────────────────────────────────────────────
+
+/**
+ * Builds a reverse map from pathogenType → cell types that can clear it,
+ * sorted by clearanceRate descending. Derived entirely from CELL_CONFIG so it
+ * stays in sync with any balance changes to clearablePathogens.
+ */
+const PATHOGEN_CLEARERS = (() => {
+  const map = {};
+  for (const [cellType, cfg] of Object.entries(CELL_CONFIG)) {
+    for (const pathogenType of Object.keys(cfg.clearablePathogens ?? {})) {
+      if (!map[pathogenType]) map[pathogenType] = [];
+      map[pathogenType].push({ cellType, clearanceRate: cfg.clearanceRate ?? 0 });
+    }
+  }
+  for (const key of Object.keys(map)) {
+    map[key].sort((a, b) => b.clearanceRate - a.clearanceRate);
+  }
+  return map;
+})();
+
+/**
+ * Responds to each threat with the cell type that can actually clear it.
+ *
+ * Priority each turn:
+ *   1. Deploy the highest-clearance-rate cell that can clear the classified pathogen
+ *      at the highest-load classified threat node. Trains one if none ready.
+ *   2. Send recon to an unclassified threat node to get classification.
+ *   3. Proactive scouting — send recon to the most stale node.
+ *   4. Train a cheap recon cell if none are ready.
+ *   5. End turn.
+ *
+ * Uses perceived_type from masked state — only acts on classified/misclassified
+ * pathogens for deployment decisions. Falls back on recon for anything unclassified.
+ */
+export function makeTypeAwareStrategy() {
+  const deployedThisTurn = new Set();
+  let lastTurnSeen = -1;
+  let trainedThisTurn = false;
+
+  return function typeAwareStrategy(gameState) {
+    if (gameState.turn !== lastTurnSeen) {
+      deployedThisTurn.clear();
+      trainedThisTurn = false;
+      lastTurnSeen = gameState.turn;
+    }
+
+    const nodeStates = gameState.groundTruth?.nodeStates ?? {};
+
+    // ── 1. Deploy the right attacker for classified threats ────────────────
+    // Find all nodes with a classified pathogen that has a known type, sorted
+    // by estimatedLoad (or actualLoad in omniscient mode) descending.
+    const classifiedThreats = [];
+    for (const [nodeId, ns] of Object.entries(nodeStates)) {
+      if (deployedThisTurn.has(nodeId)) continue;
+      for (const p of (ns.pathogens ?? [])) {
+        if ((p.detected_level === 'classified' || p.detected_level === 'misclassified') && p.perceived_type) {
+          const load = p.estimatedLoad ?? p.actualLoad ?? 50;
+          classifiedThreats.push({ nodeId, pathogenType: p.perceived_type, load, detected_level: p.detected_level });
+        }
+      }
+    }
+    classifiedThreats.sort((a, b) => b.load - a.load);
+
+    for (const { nodeId, pathogenType, detected_level } of classifiedThreats) {
+      const clearers = PATHOGEN_CLEARERS[pathogenType] ?? [];
+
+      // Find the best ready cell that can clear this type
+      let bestCell = null;
+      let bestRate = -1;
+      for (const { cellType, clearanceRate } of clearers) {
+        if (clearanceRate <= 0) continue;
+        // requiresClassified cells need detected_level === 'classified' specifically
+        if (CELL_CONFIG[cellType]?.requiresClassified && detected_level !== 'classified') continue;
+        const ready = Object.values(gameState.deployedCells).find(
+          c => c.phase === 'ready' && c.type === cellType
+        );
+        if (ready && clearanceRate > bestRate) {
+          bestCell = ready;
+          bestRate = clearanceRate;
+        }
+      }
+
+      if (bestCell) {
+        deployedThisTurn.add(nodeId);
+        return { type: ACTION_TYPES.DEPLOY_FROM_ROSTER, cellId: bestCell.id, nodeId };
+      }
+
+      // No ready cell — train the best one we can afford (once per turn)
+      if (!trainedThisTurn) {
+        for (const { cellType, clearanceRate } of clearers) {
+          if (clearanceRate <= 0) continue;
+          if (CELL_CONFIG[cellType]?.requiresClassified && detected_level !== 'classified') continue;
+          const cost = CELL_CONFIG[cellType]?.deployCost ?? 1;
+          if (gameState.attentionTokens >= cost) {
+            trainedThisTurn = true;
+            return { type: ACTION_TYPES.TRAIN_CELL, cellType };
+          }
+        }
+      }
+    }
+
+    // ── 2. Send recon to unclassified threat nodes ─────────────────────────
+    const reconCell = Object.values(gameState.deployedCells).find(
+      c => c.phase === 'ready' && CELL_CONFIG[c.type]?.isRecon
+    );
+
+    if (reconCell) {
+      const unclassifiedNode = Object.entries(nodeStates).find(([nodeId, ns]) =>
+        !deployedThisTurn.has(nodeId) &&
+        (ns.pathogens ?? []).some(p => p.detected_level === 'unknown' || p.detected_level === 'threat')
+      )?.[0] ?? null;
+
+      if (unclassifiedNode) {
+        deployedThisTurn.add(unclassifiedNode);
+        return { type: ACTION_TYPES.DEPLOY_FROM_ROSTER, cellId: reconCell.id, nodeId: unclassifiedNode };
+      }
+
+      // ── 3. Proactive scouting ─────────────────────────────────────────────
+      const staleNode = getMostStaleNode(gameState, deployedThisTurn);
+      if (staleNode) {
+        deployedThisTurn.add(staleNode);
+        return { type: ACTION_TYPES.DEPLOY_FROM_ROSTER, cellId: reconCell.id, nodeId: staleNode };
+      }
+    }
+
+    // ── 4. Train a cheap recon cell if none ready ──────────────────────────
+    const hasReadyRecon = Object.values(gameState.deployedCells).some(
+      c => c.phase === 'ready' && CELL_CONFIG[c.type]?.isRecon
+    );
+    if (!hasReadyRecon && !trainedThisTurn && gameState.attentionTokens >= 1) {
+      const cheapRecon = getLegalTrainActions(gameState).find(a => CELL_CONFIG[a.cellType]?.isRecon);
+      if (cheapRecon) {
+        trainedThisTurn = true;
+        return cheapRecon;
+      }
+    }
+
+    return { type: ACTION_TYPES.END_TURN };
+  };
 }
 
 // ── Registry ──────────────────────────────────────────────────────────────────

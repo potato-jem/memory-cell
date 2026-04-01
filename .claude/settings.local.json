@@ -4,14 +4,13 @@
       "Bash(npm install:*)",
       "Bash(npx tailwindcss:*)",
       "Bash(npm run:*)",
-      "Bash(git -C \"C:\\\\Users\\\\Jeremy\\\\Documents\\\\Code\\\\memory-cell\" add src/data/situations/uninvitedGuest.js src/engine/groundTruth.js src/engine/signalGenerator.js src/state/actions.js)",
-      "Bash(git -C \"C:\\\\Users\\\\Jeremy\\\\Documents\\\\Code\\\\memory-cell\" diff --cached --stat)",
-      "Bash(git -C \"C:\\\\Users\\\\Jeremy\\\\Documents\\\\Code\\\\memory-cell\" add src/engine/signalGenerator.js)",
-      "Bash(git -C \"C:\\\\Users\\\\Jeremy\\\\Documents\\\\Code\\\\memory-cell\" commit -m \"Fix: pathogenType undefined after seeded events removal:*)",
-      "Bash(git -C \"C:\\\\Users\\\\Jeremy\\\\Documents\\\\Code\\\\memory-cell\" add src/data/nodes.js)",
+      "Bash(git -C \"C:\\\\Users\\\\Jeremy\\\\Documents\\\\Code\\\\memory-cell\" add *)",
+      "Bash(git -C \"C:\\\\Users\\\\Jeremy\\\\Documents\\\\Code\\\\memory-cell\" diff *)",
+      "Bash(git -C \"C:\\\\Users\\\\Jeremy\\\\Documents\\\\Code\\\\memory-cell\" commit -m *)",
       "Bash(git -C:*)",
       "Bash(wc:*)",
-      "Bash(npx vite:*)"
+      "Bash(npx vite:*)",
+      "Bash(node simulation/run.js*)"
     ]
   }
 }

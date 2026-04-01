@@ -14,8 +14,10 @@ import {
   STRESS_FEVER_PER_TURN,
   STRESS_LOW_INTEGRITY_SITE,
   STRESS_MULTI_INFECTION_BONUS,
+  STRESS_MULTI_INFECTION_THRESHOLD,
   STRESS_TOXIN_MULTIPLIER,
-  STRESS_DECAY_RATE,
+  BASE_STRESS_DECAY_RATE,
+  NO_INFECTION_STRESS_DECAY_RATE,
   INTEGRITY_HIT_STRESS_80,
   INTEGRITY_HIT_STRESS_90,
   INTEGRITY_HIT_STRESS_100,
@@ -79,16 +81,20 @@ export function computeSystemicStress(nodeStates, perSiteOutputs, fever, current
 
   // ── Multiple simultaneous infections ──────────────────────────────────────
   const infectedCount = NODE_IDS.filter(id => nodeHasActivePathogen(nodeStates[id])).length;
-  if (infectedCount >= 3) {
+  if (infectedCount >= STRESS_MULTI_INFECTION_THRESHOLD) {
     delta += STRESS_MULTI_INFECTION_BONUS;
     sources.push({ type: 'multi_infection', count: infectedCount, amount: STRESS_MULTI_INFECTION_BONUS });
   }
 
   // ── Natural decay when no active infections ────────────────────────────────
+  
+  const baseDecayRate = getEffectiveStressDecay(BASE_STRESS_DECAY_RATE, modifiers);
+  delta -= baseDecayRate;
+  sources.push({ type: 'decay', amount: -baseDecayRate });
   if (infectedCount === 0) {
-    const decayRate = getEffectiveStressDecay(STRESS_DECAY_RATE, modifiers);
-    delta -= decayRate;
-    sources.push({ type: 'decay', amount: -decayRate });
+    const extraDecayRate = getEffectiveStressDecay(NO_INFECTION_STRESS_DECAY_RATE, modifiers);
+    delta -= extraDecayRate;
+    sources.push({ type: 'decay', amount: -extraDecayRate });
   }
 
   const stress = Math.max(0, Math.min(100, currentStress + delta));

@@ -121,6 +121,7 @@ export const CELL_CONFIG = {
       extracellular_bacteria: 1.0,
       fungi:                  1.0,
       toxin_producer:         1.0,
+      parasite:               0.5,  // innate phagocytosis — slower than specialist
       benign:                 1.0,
     },
     effectivenessByLevel:  {         // clears regardless of detection level
@@ -258,9 +259,10 @@ export const CELL_CONFIG = {
     detectionUpgradeProbs: null,
     // ── Clearance ──
     clearablePathogens: {
-      virus:   1.0,
-      cancer:  1.0,
-      benign:  1.0,
+      virus:    1.0,
+      parasite: 1.0,  // NK cells target parasite-infected host cells
+      cancer:   1.0,
+      benign:   1.0,
     },
     effectivenessByLevel: {         // operates without prior intelligence
       none:          1.0,
