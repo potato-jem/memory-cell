@@ -122,6 +122,7 @@ export const CELL_CONFIG = {
       fungi:                  1.0,
       toxin_producer:         1.0,
       parasite:               0.5,  // innate phagocytosis — slower than specialist
+      prion:                  0.5,  // autophagy of misfolded proteins — very slow
       benign:                 1.0,
     },
     effectivenessByLevel:  {         // clears regardless of detection level

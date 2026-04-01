@@ -29,7 +29,7 @@ export const INFLAMMATION_RECOVERY_THRESHOLD = 30;  // inflammation below this a
 // ── Tissue integrity ───────────────────────────────────────────────────────────
 export const TISSUE_RECOVERY_RATE = 2;              // integrity restored/turn when clear + low inflammation
 export const TISSUE_SCAR_THRESHOLD = 40;            // if integrity drops below this, ceiling is set permanently
-export const TISSUE_SCAR_BONUS = 25;                // ceiling = lowestPointReached + 25
+export const TISSUE_SCAR_BONUS = 25;                // ceiling = lowestPointReached + 25 
 
 // ── Systemic stress ────────────────────────────────────────────────────────────
 // Stress is NOT a health bar — it is the input to consequences.
@@ -38,6 +38,7 @@ export const STRESS_PER_INFLAMED_SITE_FIRST = 1;    // first inflamed site
 export const STRESS_PER_INFLAMED_SITE_EXTRA = 2;    // each additional site (non-linear)
 export const STRESS_FEVER_PER_TURN = 3;             // fever running adds this per turn
 export const STRESS_LOW_INTEGRITY_SITE = 6;         // any site with low integrity
+export const STRESS_LOW_INTEGRITY_THRESHOLD = 20;   // threshold for low integrity
 export const STRESS_MULTI_INFECTION_BONUS = 2;      // multiple simultaneously infected sites
 export const STRESS_MULTI_INFECTION_THRESHOLD = 3;  // multiple simultaneously infected sites threshold
 export const STRESS_TOXIN_MULTIPLIER = 0.5;         // toxinOutput × this → direct stress per turn
