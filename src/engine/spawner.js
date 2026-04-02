@@ -15,7 +15,7 @@ import {
   SPAWN_OVERWHELM_PENALTY,
 } from '../data/gameConfig.js';
 import { BASE_WEIGHTS, TYPE_BASE_WEIGHT, UNLOCK_TURN, SPAWN_SCHEDULE } from '../data/spawnConfig.js';
-import { getNodeSpawnMultiplier, getSpawnTypeWeightMultiplier } from '../data/runModifiers.js';
+import { getNodeSpawnMultiplier, getSpawnTypeWeightMultiplier, getGlobalSpawnWeightMultiplier } from '../data/runModifiers.js';
 
 // Spawn weights, unlock turns, and schedule are all in src/data/spawnConfig.js.
 // Edit that file to tune spawn rates and distributions without touching engine logic.
@@ -74,6 +74,7 @@ function buildTypeWeights(turn, systemicStress, scheduled, modifiers) {
     if (scheduled?.typeBoost === type) w *= scheduled.typeMultiplier;
     if (type === 'fungi' && systemicStress > 70) w *= 2.0;
     w *= getSpawnTypeWeightMultiplier(type, modifiers);
+    w *= getGlobalSpawnWeightMultiplier(modifiers);
     weights[type] = w;
   }
   return weights;

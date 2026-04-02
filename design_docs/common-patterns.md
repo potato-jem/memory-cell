@@ -54,9 +54,100 @@ Modifier upgrades can boost per-level effectiveness via `cells[type].effectivene
 
 ---
 
-## Applying an upgrade / scar / decision
+## Upgrade and Scar system
 
-Dispatch `APPLY_MODIFIER` with a `patch` — it deep-merges into `state.runModifiers` and all engine functions pick it up automatically on the next turn.
+### Overview
+
+The modifier system presents choices to the player at two trigger points:
+
+- **Upgrades** — triggered when a pathogen is cleared; player selects a beneficial modifier from 3 options
+- **Scars** — triggered when node tissue integrity crosses a threshold (50%, 25%, 0%); player selects which negative consequence to accept
+
+All available upgrades are defined in `src/data/modifierLibrary.js` (`UPGRADE_LIBRARY`) and scars in `SCAR_LIBRARY`. The player's choice is dispatched as `CHOOSE_MODIFIER` which applies it to `runModifiers`.
+
+### Pending choices
+
+After `END_TURN`, new choices are queued in `state.pendingModifierChoices[]`. Each entry has `{ id, category, options: [...] }`. The UI should show the first pending choice and dispatch `CHOOSE_MODIFIER` to resolve it before the player can end the next turn.
+
+The simulation auto-resolves pending choices randomly after each `END_TURN`.
+
+### Adding a new modifier (upgrade or scar)
+
+Add an entry to `UPGRADE_LIBRARY` or `SCAR_LIBRARY` in `src/data/modifierLibrary.js`:
+
+```js
+{
+  id: 'my_upgrade',
+  category: 'upgrade',             // or 'scar'
+  name: 'My Upgrade',
+  description: '{clearingCellType} becomes more effective',  // template vars supported
+  baseProbability: 1.0,            // relative weight in selection pool
+  eligibleFor: (ctx) => ctx.clearingCellType && ctx.cellConfig?.clearanceRate > 0,
+  rarityLevels: [
+    { rarity: 'common', probability: 0.60, value: 1.15 },
+    { rarity: 'rare',   probability: 0.30, value: 1.25 },
+    { rarity: 'epic',   probability: 0.10, value: 1.40 },
+  ],
+  getPatch: (ctx, value, mods) => {
+    // value = the selected rarity's value; mods = current runModifiers for stacking
+    const current = mods?.cells?.[ctx.clearingCellType]?.clearanceRateMultiplier ?? 1.0;
+    return { cells: { [ctx.clearingCellType]: { clearanceRateMultiplier: current * value } } };
+  },
+  // Optional: applied immediately to state when chosen (not via runModifiers)
+  immediateEffect: (_ctx, value) => ({ tokenCapacityBonus: value }),
+}
+```
+
+**Key design rules:**
+- `eligibleFor` should check **properties** (e.g. `clearanceRate > 0`, `isRecon === true`), not hardcoded IDs. This ensures the modifier pool remains valid as cell/pathogen configs evolve.
+- `getPatch` is called at **apply time** (not generation time) with the then-current `runModifiers`, ensuring correct multiplier stacking even when multiple choices are queued.
+- Single-rarity modifiers set `probability: 1.0` on the one entry.
+- `baseProbability` controls how often this modifier appears relative to others in the pool.
+
+### Eligibility context
+
+**Upgrade context** (`ctx`):
+```js
+{
+  category: 'upgrade',
+  clearingCellType: 'responder',      // null if no clear-contributing cell found
+  clearedPathogenType: 'virus',
+  nodeId: 'CHEST',
+  cellConfig: CELL_CONFIG['responder'],
+  pathogenConfig: PATHOGEN_REGISTRY['virus'],
+  runModifiers: { ... },
+}
+```
+
+**Scar context** (`ctx`):
+```js
+{
+  category: 'scar',
+  nodeId: 'CHEST',                    // null for systemic scars
+  scarType: 'site_integrity',         // or 'systemic_integrity'
+  threshold: 50,                      // 50 | 25 | 0
+  isMinor: true,                      // threshold === 50
+  isCritical: false,                  // threshold === 0
+  nodeConfig: NODES['CHEST'],
+  runModifiers: { ... },
+}
+```
+
+### Modifier schema quick-reference
+
+New fields added alongside existing ones (see `runModifiers.js` for full schema):
+
+| Path | Effect |
+|---|---|
+| `cells[type].detectionRollsBonus` | Extra detection rolls per visit (integer) |
+| `pathogens[type].inflammationRateMultiplier` | Scales inflammation output per turn |
+| `nodes[nodeId].cellClearanceMultiplier` | Scales all cell clearance at this node |
+| `nodes[nodeId].inflammationDecayMultiplier` | Scales inflammation decay rate at this node |
+| `systemic.globalSpawnWeightMultiplier` | Scales all pathogen type spawn weights globally |
+
+### Applying a modifier directly (bypasses choice system)
+
+For testing or scripted events, dispatch `APPLY_MODIFIER` with a `patch`:
 
 ```js
 // Boost responder clearance 30%:
@@ -65,9 +156,6 @@ dispatch({ type: 'APPLY_MODIFIER', patch: { cells: { responder: { clearanceRateM
 
 // Improve scout classification accuracy:
 dispatch({ type: 'APPLY_MODIFIER', patch: { cells: { dendritic: { trainingTicksDelta: 10 } } } });
-
-// Boost B-Cell effectiveness when classified:
-dispatch({ type: 'APPLY_MODIFIER', patch: { cells: { b_cell: { effectivenessLevelBonus: { classified: 0.05 } } } } });
 
 // Open a new route (decision):
 dispatch({ type: 'APPLY_MODIFIER', patch: { nodes: { LIVER: { addedConnections: ['CHEST'] } } } });

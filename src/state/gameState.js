@@ -77,6 +77,14 @@ export function initGameState(runConfig = DEFAULT_RUN_CONFIG) {
     // Win tracking — counts unique pathogen spawns (not spreads)
     totalPathogensSpawned: 0,
 
+    // Modifier choices awaiting player resolution.
+    // Each entry: { id, category, options: [...] }
+    // First entry must be resolved (CHOOSE_MODIFIER) before END_TURN is meaningful.
+    pendingModifierChoices: [],
+
+    // Record of all modifiers chosen during this run (for post-mortem / UI display)
+    modifierHistory: [],
+
     // Phase
     phase: GAME_PHASES.PLAYING,
     lossReason: null,

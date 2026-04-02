@@ -128,6 +128,28 @@ function buildReport(results, args) {
   // Dead content check — pathogen types that were never cleared in any run
   const neverCleared = Object.keys(spawns).filter(t => !(t in clears));
 
+  // Modifier statistics — split by category
+  const upgradeCounts = {};
+  const scarChoiceCounts = {};
+  const scarCounts = {};
+  for (const r of results) {
+    for (const ev of (r.namedEvents ?? [])) {
+      if (ev.type === 'modifier_chosen') {
+        const key = `${ev.detail?.modifierId ?? '?'} (${ev.detail?.rarity ?? '?'})`;
+        if (ev.detail?.category === 'scar') {
+          scarChoiceCounts[key] = (scarChoiceCounts[key] ?? 0) + 1;
+        } else {
+          upgradeCounts[key] = (upgradeCounts[key] ?? 0) + 1;
+        }
+      }
+      if (ev.type === 'scar_earned') {
+        const key = ev.detail?.scarId ?? '?';
+        scarCounts[key] = (scarCounts[key] ?? 0) + 1;
+      }
+    }
+  }
+  const modifierCounts = { ...upgradeCounts, ...scarChoiceCounts };
+
   // Stress spikes and node events
   const integrityHitRuns = results.filter(r =>
     (r.namedEvents ?? []).some(e => e.type === 'integrity_hit')
@@ -145,6 +167,9 @@ function buildReport(results, args) {
       seed: args.seed,
       maxTurns: args.maxTurns,
     },
+    upgradeCounts,
+    scarChoiceCounts,
+    scarCounts,
     outcomes: {
       win:     wins.length,
       loss:    losses.length,
@@ -180,7 +205,8 @@ function buildReport(results, args) {
 
 function printReport(report) {
   const { config, outcomes, turnCounts, lossTurnCounts, actionFrequency,
-          pathogenSpawns, pathogenClears, neverClearedPathogens, systemicEvents } = report;
+          pathogenSpawns, pathogenClears, neverClearedPathogens, systemicEvents,
+          upgradeCounts, scarChoiceCounts, scarCounts } = report;
 
   const hr = '─'.repeat(58);
 
@@ -239,6 +265,33 @@ function printReport(report) {
   console.log('SYSTEMIC EVENTS');
   console.log(`  Runs with integrity damage : ${systemicEvents.runsWithIntegrityHit} / ${config.runs}`);
   console.log(`  Runs with stress ≥ 80      : ${systemicEvents.runsWithStressSpike} / ${config.runs}`);
+
+  if (Object.keys(upgradeCounts).length > 0) {
+    console.log('');
+    console.log('TOP UPGRADES CHOSEN (across all runs)');
+    const topMods = Object.entries(upgradeCounts).sort((a, b) => b[1] - a[1]).slice(0, 10);
+    for (const [key, count] of topMods) {
+      console.log(`  ${key.padEnd(42)} ${count.toString().padStart(5)}`);
+    }
+  }
+
+  if (Object.keys(scarChoiceCounts).length > 0) {
+    console.log('');
+    console.log('TOP SCAR CHOICES (across all runs)');
+    const topScarChoices = Object.entries(scarChoiceCounts).sort((a, b) => b[1] - a[1]).slice(0, 10);
+    for (const [key, count] of topScarChoices) {
+      console.log(`  ${key.padEnd(42)} ${count.toString().padStart(5)}`);
+    }
+  }
+
+  if (Object.keys(scarCounts).length > 0) {
+    console.log('');
+    console.log('SCARS EARNED (across all runs)');
+    const topScars = Object.entries(scarCounts).sort((a, b) => b[1] - a[1]).slice(0, 10);
+    for (const [key, count] of topScars) {
+      console.log(`  ${key.padEnd(42)} ${count.toString().padStart(5)}`);
+    }
+  }
 
   console.log('');
   console.log(hr);

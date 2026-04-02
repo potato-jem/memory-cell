@@ -96,6 +96,16 @@ export function runGame({
       const stateBeforeEndTurn = state;
       state = gameReducer(state, { type: ACTION_TYPES.END_TURN });
 
+      // ── Auto-resolve pending modifier choices (random selection) ───────────
+      // In the real game the player picks; here we choose uniformly at random.
+      // Math.random is monkey-patched to the seeded RNG so choices are reproducible.
+      while ((state.pendingModifierChoices?.length ?? 0) > 0 && state.phase === 'playing') {
+        const choice = state.pendingModifierChoices[0];
+        const optionIndex = Math.floor(Math.random() * choice.options.length);
+        actionFrequency[ACTION_TYPES.CHOOSE_MODIFIER] = (actionFrequency[ACTION_TYPES.CHOOSE_MODIFIER] ?? 0) + 1;
+        state = gameReducer(state, { type: ACTION_TYPES.CHOOSE_MODIFIER, optionIndex });
+      }
+
       // ── Detect named events by diffing states ──────────────────────────────
       const turnEvents = extractNamedEvents(stateBeforeEndTurn, state, state.turn);
       allNamedEvents.push(...turnEvents);
@@ -269,6 +279,22 @@ function extractNamedEvents(before, after, turn) {
   const aStress = after.systemicStress ?? 0;
   if (bStress < 80 && aStress >= 80) {
     events.push({ type: 'stress_spike', turn, nodeId: null, detail: { stress: Math.round(aStress) } });
+  }
+
+  // New scars
+  const bScarIds = new Set((before.scars ?? []).map(s => s.id));
+  for (const scar of (after.scars ?? [])) {
+    if (!bScarIds.has(scar.id)) {
+      events.push({ type: 'scar_earned', turn, nodeId: scar.nodeId ?? null, detail: { scarId: scar.id, type: scar.type } });
+    }
+  }
+
+  // Modifier choices resolved
+  const bModCount = (before.modifierHistory ?? []).length;
+  const aModCount = (after.modifierHistory ?? []).length;
+  for (let i = bModCount; i < aModCount; i++) {
+    const entry = after.modifierHistory[i];
+    events.push({ type: 'modifier_chosen', turn, nodeId: null, detail: { modifierId: entry.modifierId, rarity: entry.rarity, category: entry.category } });
   }
 
   return events;

@@ -15,12 +15,20 @@ import {
   assignPatrolDestinations,
   computeTokensInUse,
 } from '../engine/cells.js';
-import { CELL_CONFIG, RECON_CELL_TYPES } from '../data/cellConfig.js';
+import { CELL_CONFIG, RECON_CELL_TYPES, getEffectiveClearanceRate } from '../data/cellConfig.js';
 import { NODES, computeVisibility } from '../data/nodes.js';
 import { TICKS_PER_TURN, GAME_PHASES, LOSS_REASONS } from './gameState.js';
 import { TOKEN_CAPACITY_MAX, TOKEN_CAPACITY_REGEN_INTERVAL, WIN_PATHOGEN_TARGET } from '../data/gameConfig.js';
-import { nodeHasActivePathogen } from '../data/pathogens.js';
+import { nodeHasActivePathogen, PATHOGEN_REGISTRY } from '../data/pathogens.js';
 import { applyModifierPatch } from '../data/runModifiers.js';
+import {
+  selectUpgradeOptions,
+  selectScarOptions,
+  makeUpgradeContext,
+  makeScarContext,
+  computeOptionPatch,
+  MODIFIER_CHOICE_COUNT,
+} from '../data/modifierSelector.js';
 
 export const ACTION_TYPES = {
   END_TURN:           'END_TURN',
@@ -31,9 +39,11 @@ export const ACTION_TYPES = {
   RECALL_UNIT:        'RECALL_UNIT',
   RESTART:            'RESTART',
   SELECT_NODE:        'SELECT_NODE',
-  // Upgrades, scars, and decisions dispatch this with a `patch` object.
+  // Direct modifier patch (bypasses the choice system — for testing / direct application).
   // See runModifiers.js for the modifier schema.
   APPLY_MODIFIER:     'APPLY_MODIFIER',
+  // Player resolves a pending modifier choice. action.optionIndex is the chosen option index.
+  CHOOSE_MODIFIER:    'CHOOSE_MODIFIER',
 };
 
 export function gameReducer(state, action) {
@@ -52,6 +62,7 @@ export function gameReducer(state, action) {
     case ACTION_TYPES.RESTART:            return action.initialState;
     case ACTION_TYPES.SELECT_NODE:        return { ...state, selectedNodeId: action.nodeId };
     case ACTION_TYPES.APPLY_MODIFIER:     return handleApplyModifier(state, action.patch);
+    case ACTION_TYPES.CHOOSE_MODIFIER:    return handleChooseModifier(state, action.optionIndex);
     default: return state;
   }
 }
@@ -87,7 +98,7 @@ function handleEndTurn(state) {
   const totalPathogensSpawned = state.totalPathogensSpawned + pendingSpawns.length;
 
   // 5. Advance ground truth (pathogens, inflammation, tissue integrity)
-  const { newGroundTruth, perSiteOutputs } = advanceGroundTruth(
+  const { newGroundTruth, events: groundTruthEvents, perSiteOutputs } = advanceGroundTruth(
     groundTruthAfterDetection,
     updatedCells,
     newTurn,
@@ -133,6 +144,11 @@ function handleEndTurn(state) {
   const newScars = computeNewScars(newGroundTruth.nodeStates, state.scars, newIntegrity, prevIntegrity);
   const scars = [...state.scars, ...newScars];
 
+  // ── Generate modifier choices ────────────────────────────────────────────
+  const newPendingChoices = generateModifierChoices(
+    groundTruthEvents, newScars, updatedCells, state.runModifiers, mods
+  );
+
   const systemicStressHistory = [
     ...state.systemicStressHistory,
     { turn: newTurn, stress: newStress, integrity: newIntegrity },
@@ -176,6 +192,10 @@ function handleEndTurn(state) {
     phase,
     lossReason,
     postMortem,
+    pendingModifierChoices: [
+      ...(state.pendingModifierChoices ?? []),
+      ...newPendingChoices,
+    ],
   };
 }
 
@@ -240,6 +260,134 @@ function handleRecallUnit(state, cellId) {
 function handleApplyModifier(state, patch) {
   const runModifiers = applyModifierPatch(state.runModifiers, patch);
   return { ...state, runModifiers };
+}
+
+/**
+ * Resolve the first pending modifier choice.
+ * The patch is recomputed from current runModifiers so stacking is correct
+ * even when multiple choices are queued in the same turn.
+ */
+function handleChooseModifier(state, optionIndex) {
+  const pending = state.pendingModifierChoices ?? [];
+  if (pending.length === 0) return state;
+
+  const choice = pending[0];
+  const option = choice.options[optionIndex ?? 0];
+  if (!option) return state;
+
+  // Recompute patch with the current runModifiers (correct stacking)
+  const patch = computeOptionPatch(option, state.runModifiers);
+  const runModifiers = applyModifierPatch(state.runModifiers, patch);
+
+  // Record the choice
+  const historyEntry = {
+    modifierId:   option.modifierId,
+    category:     option.category,
+    name:         option.name,
+    rarity:       option.rarity,
+    value:        option.value,
+    description:  option.description,
+    turn:         state.turn,
+  };
+
+  let newState = {
+    ...state,
+    runModifiers,
+    pendingModifierChoices: pending.slice(1),
+    modifierHistory: [...(state.modifierHistory ?? []), historyEntry],
+  };
+
+  // Apply immediate effects (e.g., token capacity bonus from immune_surge upgrade)
+  if (option.immediateEffect?.tokenCapacityBonus) {
+    const bonus = option.immediateEffect.tokenCapacityBonus;
+    const newCapacity = Math.min(TOKEN_CAPACITY_MAX, newState.tokenCapacity + bonus);
+    const newAttention = newCapacity - newState.tokensInUse;
+    newState = { ...newState, tokenCapacity: newCapacity, attentionTokens: newAttention };
+  }
+
+  return newState;
+}
+
+// ── Modifier choice generation ─────────────────────────────────────────────────
+
+let _choiceIdCounter = 0;
+
+/**
+ * Generate modifier choice events from ground truth events and new scars.
+ *
+ * @param {Array}  groundTruthEvents  — events returned by advanceGroundTruth
+ * @param {Array}  newScars           — scars returned by computeNewScars this turn
+ * @param {Object} deployedCells      — cells (before auto-return) to identify clearing cell type
+ * @param {Object} runModifiers       — runModifiers at start of turn (for context only)
+ * @param {Object} _mods              — alias of runModifiers (unused here, kept for clarity)
+ * @returns {Array} pending choice entries
+ */
+function generateModifierChoices(groundTruthEvents, newScars, deployedCells, runModifiers) {
+  const choices = [];
+
+  // ── Upgrade choices: one per pathogen cleared ─────────────────────────────
+  const clearedEvents = groundTruthEvents.filter(e => e.type === 'pathogen_cleared');
+
+  for (const event of clearedEvents) {
+    const clearingCellType = findPrimaryClearingCellType(
+      event.nodeId, event.pathogenType, deployedCells, runModifiers
+    );
+    const ctx = makeUpgradeContext(
+      clearingCellType, event.pathogenType, event.nodeId, runModifiers
+    );
+    const options = selectUpgradeOptions(ctx, runModifiers, MODIFIER_CHOICE_COUNT);
+    if (options.length > 0) {
+      choices.push({
+        id: `choice_${++_choiceIdCounter}`,
+        category: 'upgrade',
+        trigger: 'pathogen_cleared',
+        nodeId: event.nodeId,
+        pathogenType: event.pathogenType,
+        options,
+      });
+    }
+  }
+
+  // ── Scar choices: one per new scar ────────────────────────────────────────
+  for (const scar of newScars) {
+    const ctx = makeScarContext(
+      scar.nodeId ?? null, scar.type, scar.threshold ?? null, runModifiers
+    );
+    const options = selectScarOptions(ctx, runModifiers, MODIFIER_CHOICE_COUNT);
+    if (options.length > 0) {
+      choices.push({
+        id: `choice_${++_choiceIdCounter}`,
+        category: 'scar',
+        trigger: 'scar_threshold',
+        nodeId: scar.nodeId ?? null,
+        scarId: scar.id,
+        threshold: scar.threshold ?? null,
+        options,
+      });
+    }
+  }
+
+  return choices;
+}
+
+/**
+ * Identify the primary cell type responsible for clearing a pathogen at a node.
+ * Returns the attack/recon cell type with highest effective clearance for that pathogen,
+ * or null if no cells with clearance were present.
+ */
+function findPrimaryClearingCellType(nodeId, pathogenType, deployedCells, modifiers) {
+  let bestType = null;
+  let bestRate = 0;
+
+  for (const cell of Object.values(deployedCells)) {
+    if (cell.nodeId !== nodeId || cell.phase !== 'arrived') continue;
+    const clearMod = CELL_CONFIG[cell.type]?.clearablePathogens?.[pathogenType] ?? 0;
+    if (clearMod === 0) continue;
+    const rate = getEffectiveClearanceRate(cell.type, modifiers) * clearMod;
+    if (rate > bestRate) { bestType = cell.type; bestRate = rate; }
+  }
+
+  return bestType;
 }
 
 // ── Post-mortem ────────────────────────────────────────────────────────────────

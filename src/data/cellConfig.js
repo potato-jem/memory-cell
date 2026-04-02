@@ -345,3 +345,13 @@ export function getEffectiveEffectiveness(cellType, detectedLevel, modifiers) {
   const bonus = modifiers?.cells?.[cellType]?.effectivenessLevelBonus?.[detectedLevel] ?? 0;
   return Math.min(1.0, base + bonus);
 }
+
+/**
+ * Returns the effective number of detection rolls for a recon cell this visit.
+ * Adds detectionRollsBonus from modifiers (upgrade: heightened_senses).
+ */
+export function getEffectiveDetectionRolls(cellType, modifiers) {
+  const base = CELL_CONFIG[cellType]?.detectionRolls ?? 0;
+  const bonus = modifiers?.cells?.[cellType]?.detectionRollsBonus ?? 0;
+  return Math.max(0, base + bonus);
+}

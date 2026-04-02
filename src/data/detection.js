@@ -13,7 +13,7 @@
 // first (upgrade before discover). Each roll has a probability of upgrading a
 // pathogen's detected_level by one step (detectionUpgradeProbs on CELL_CONFIG).
 
-import { CELL_CONFIG } from './cellConfig.js';
+import { CELL_CONFIG, getEffectiveDetectionRolls } from './cellConfig.js';
 import { getPrimaryLoad, PATHOGEN_REGISTRY } from './pathogens.js';
 import { getDetectionAccuracyBonus } from './runModifiers.js';
 
@@ -62,7 +62,7 @@ const LEVEL_PRIORITY = {
  */
 export function performDetection(cellType, nodePathogens, nodeInflammation = 0, modifiers = null) {
   const cellCfg = CELL_CONFIG[cellType];
-  const rolls = cellCfg?.detectionRolls ?? 0;
+  const rolls = getEffectiveDetectionRolls(cellType, modifiers);
   if (rolls === 0 || !nodePathogens?.length) return nodePathogens;
 
   // Build sorted candidate list (highest priority first; skip 'classified')

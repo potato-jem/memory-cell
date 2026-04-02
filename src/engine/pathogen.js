@@ -26,6 +26,8 @@ import {
   getEffectiveSpreadThreshold,
   getEffectiveDamageRate,
   getEffectivePathogenClearanceMultiplier,
+  getEffectiveInflammationRate,
+  getNodeCellClearanceMultiplier,
 } from '../data/runModifiers.js';
 
 // ── Clearance ─────────────────────────────────────────────────────────────────
@@ -62,6 +64,9 @@ export function getClearancePower(instance, nodeId, deployedCells, nodeState, mo
 
   // Pathogen-specific clearance multiplier (e.g. upgrade makes a type easier to clear)
   total *= getEffectivePathogenClearanceMultiplier(pathogenType, modifiers);
+
+  // Node-level clearance multiplier (scar: cellular_exhaustion reduces clearance at a node)
+  total *= getNodeCellClearanceMultiplier(nodeId, modifiers);
 
   // Parasite immune suppression: all clearance at this node halved
   if (nodeState?.immuneSuppressed) total *= 0.5;
@@ -103,7 +108,7 @@ export function advanceInstance(instance, nodeId, deployedCells, nodeState, syst
   const loadFraction = currentLoad / 100;
   const effectiveDamageRate = getEffectiveDamageRate(instance.type, def.tissueDamageRate ?? 0, modifiers);
   let tissueIntegrityDelta = -effectiveDamageRate * loadFraction;
-  let inflammationDelta = (def.inflammationRate ?? 0) * loadFraction;
+  let inflammationDelta = getEffectiveInflammationRate(instance.type, def.inflammationRate ?? 0, modifiers) * loadFraction;
 
   // Prion: no inflammation, but tissue damage above hidden threshold
   if (instance.type === 'prion') {

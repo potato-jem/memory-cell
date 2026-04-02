@@ -26,7 +26,7 @@ import {
   KILLER_T_INFLAMMATION_ON_CLEAN,
   PARASITE_TRANSIT_PENALTY_PER_BURDEN,
 } from '../data/gameConfig.js';
-import { getEffectiveIntegrityRecovery } from '../data/runModifiers.js';
+import { getEffectiveIntegrityRecovery, getEffectiveInflammationDecayMultiplier } from '../data/runModifiers.js';
 
 // ── Initialisation ─────────────────────────────────────────────────────────────
 
@@ -131,7 +131,9 @@ export function advanceGroundTruth(groundTruth, deployedCells, turn, systemicStr
     const hasInfection = updatedPathogens.length > 0;
     const suppressionActive = ns.immuneSuppressed;
     const effectiveInflammationAdd = suppressionActive ? totalInflammationAdded * 0.5 : totalInflammationAdded;
-    const decayRate = hasInfection ? INFLAMMATION_DECAY_RATE_INFECTED : INFLAMMATION_DECAY_RATE_CLEAR;
+    const baseDecayRate = hasInfection ? INFLAMMATION_DECAY_RATE_INFECTED : INFLAMMATION_DECAY_RATE_CLEAR;
+    // Node-level decay multiplier (scar: inflammatory_memory slows recovery)
+    const decayRate = baseDecayRate * getEffectiveInflammationDecayMultiplier(nodeId, modifiers);
     const newInflammation = Math.min(100, Math.max(0,
       ns.inflammation + effectiveInflammationAdd - decayRate
     ));

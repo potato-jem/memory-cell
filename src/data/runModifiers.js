@@ -10,33 +10,38 @@
 // ── Modifier schema ───────────────────────────────────────────────────────────
 //
 // cells[cellType]:
-//   clearanceRateMultiplier     — multiplies base clearanceRate from cellConfig
-//   trainingTicksDelta          — added to base trainingTicks (negative = faster)
-//   deploymentCostDelta         — added to base deployCost (clamped to min 1)
-//   effectivenessLevelBonus     — { [detected_level]: bonus } added to effectivenessByLevel
-//                                  e.g. { classified: 0.1 } gives +10% when classified
+//   clearanceRateMultiplier      — multiplies base clearanceRate from cellConfig
+//   trainingTicksDelta           — added to base trainingTicks (negative = faster)
+//   deploymentCostDelta          — added to base deployCost (clamped to min 1)
+//   effectivenessLevelBonus      — { [detected_level]: bonus } added to effectivenessByLevel
+//                                   e.g. { classified: 0.1 } gives +10% when classified
 //   autoimmuneSurchargeMultiplier — scales inflammation added when attacking clean sites
+//   detectionRollsBonus          — integer added to detectionRolls (recon cells only)
 //
 // nodes[nodeId]:
-//   addedConnections    — array of nodeIds this node gains edges to
-//   removedConnections  — array of nodeIds whose edge to this node is blocked
-//   exitCostDelta       — added to signalTravelCost (negative = faster to leave)
-//   spawnWeightMultiplier — scales spawn probability for this node across all types
+//   addedConnections           — array of nodeIds this node gains edges to
+//   removedConnections         — array of nodeIds whose edge to this node is blocked
+//   exitCostDelta              — added to signalTravelCost (negative = faster to leave)
+//   spawnWeightMultiplier      — scales spawn probability for this node across all types
+//   cellClearanceMultiplier    — multiplies effective clearance power at this node (scar)
+//   inflammationDecayMultiplier — multiplies inflammation decay rate at this node (scar)
 //
 // pathogens[pathogenType]:
-//   growthRateMultiplier    — multiplies replicationRate
-//   spreadThresholdDelta    — added to spreadThreshold (higher = harder to spread)
-//   damageRateMultiplier    — multiplies tissueDamageRate
-//   clearanceRateMultiplier — multiplies how fast this pathogen is cleared
+//   growthRateMultiplier        — multiplies replicationRate
+//   spreadThresholdDelta        — added to spreadThreshold (higher = harder to spread)
+//   damageRateMultiplier        — multiplies tissueDamageRate
+//   clearanceRateMultiplier     — multiplies how fast this pathogen is cleared
+//   inflammationRateMultiplier  — multiplies inflammationRate output per turn
 //
 // detection[cellType][threatType]:
 //   accuracyBonus — added to correctId probability (redistributed from miss)
 //
 // systemic:
-//   stressDecayBonus         — added to STRESS_DECAY_RATE
-//   feverStressMultiplier    — multiplies STRESS_FEVER_PER_TURN
-//   integrityRecoveryBonus   — added to TISSUE_RECOVERY_RATE per site per turn
-//   tokenCapacityBonus       — added to INITIAL_TOKEN_CAPACITY at run start
+//   stressDecayBonus             — added to STRESS_DECAY_RATE
+//   feverStressMultiplier        — multiplies STRESS_FEVER_PER_TURN
+//   integrityRecoveryBonus       — added to TISSUE_RECOVERY_RATE per site per turn
+//   tokenCapacityBonus           — added to INITIAL_TOKEN_CAPACITY at run start
+//   globalSpawnWeightMultiplier  — multiplies all pathogen type spawn weights globally
 //
 // spawn[pathogenType]:
 //   weightMultiplier — multiplies TYPE_BASE_WEIGHT for this pathogen
@@ -155,4 +160,27 @@ export function getDetectionAccuracyBonus(cellType, threatType, modifiers) {
 
 export function getSpawnTypeWeightMultiplier(pathogenType, modifiers) {
   return modifiers?.spawn?.[pathogenType]?.weightMultiplier ?? 1.0;
+}
+
+export function getGlobalSpawnWeightMultiplier(modifiers) {
+  return modifiers?.systemic?.globalSpawnWeightMultiplier ?? 1.0;
+}
+
+// ── Pathogen inflammation modifier accessor ───────────────────────────────────
+
+export function getEffectiveInflammationRate(pathogenType, baseRate, modifiers) {
+  const multiplier = modifiers?.pathogens?.[pathogenType]?.inflammationRateMultiplier ?? 1.0;
+  return baseRate * multiplier;
+}
+
+// ── Node-level modifier accessors ─────────────────────────────────────────────
+
+/** Multiplier applied to all clearance power at a specific node (scar: cellular_exhaustion). */
+export function getNodeCellClearanceMultiplier(nodeId, modifiers) {
+  return modifiers?.nodes?.[nodeId]?.cellClearanceMultiplier ?? 1.0;
+}
+
+/** Multiplier applied to inflammation decay rate at a specific node (scar: inflammatory_memory). */
+export function getEffectiveInflammationDecayMultiplier(nodeId, modifiers) {
+  return modifiers?.nodes?.[nodeId]?.inflammationDecayMultiplier ?? 1.0;
 }
