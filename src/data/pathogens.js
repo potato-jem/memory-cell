@@ -18,20 +18,6 @@ export const PATHOGEN_TYPES = {
   AUTOIMMUNE:             'autoimmune',
 };
 
-// Maps pathogen type → signal vocabulary key (used by signalGenerator)
-export const PATHOGEN_SIGNAL_TYPE = {
-  extracellular_bacteria: 'bacterial',
-  intracellular_bacteria: 'bacterial',
-  virus:                  'viral',
-  fungi:                  'fungal',
-  parasite:               'parasitic',
-  toxin_producer:         'toxin',
-  prion:                  'prion',
-  benign:                 'benign',
-  cancer:                 'cancer',
-  autoimmune:             'autoimmune',
-};
-
 // Human-readable display names
 export const PATHOGEN_DISPLAY_NAMES = {
   extracellular_bacteria: 'Bacteria',

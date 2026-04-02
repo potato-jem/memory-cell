@@ -99,7 +99,7 @@ export const CELL_CONFIG = {
   macrophage: {
     displayName:           'Macrophage',
     deployCost:            1,
-    clearanceRate:         4,
+    clearanceRate:         2,
     trainingTicks:         10,
     displayOrder:          2,
     color:                 '#fbbf24',
