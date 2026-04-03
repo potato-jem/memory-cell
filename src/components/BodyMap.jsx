@@ -11,13 +11,14 @@
 //   Inner dots   = friendly cells present (colour = cell type, sorted)
 //   Yellow badge = count of unknown-level pathogens
 
+import { useState } from 'react';
 import { NODES } from '../data/nodes.js';
-import { getPrimaryLoad, PATHOGEN_RING_COLORS } from '../data/pathogens.js';
+import { getPrimaryLoad, PATHOGEN_RING_COLORS, PATHOGEN_DISPLAY_NAMES } from '../data/pathogens.js';
 import { CELL_CONFIG, CELL_TYPE_ORDER } from '../data/cellConfig.js';
 
 const SVG_W = 420;
 const SVG_H = 420;
-const NODE_R = 22;
+const NODE_R = 25;  // slightly larger nodes for readability
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -31,7 +32,6 @@ function inflammationStyle(pct) {
 }
 
 // Partial circle arc, starting at 12 o'clock, sweeping clockwise by `pct` (0..1).
-// Returns an SVG path `d` string (open arc — no fill, use stroke).
 function arcPath(cx, cy, r, pct) {
   if (pct <= 0) return '';
   const p = Math.min(pct, 0.9999);
@@ -45,14 +45,11 @@ function arcPath(cx, cy, r, pct) {
   return `M ${x0.toFixed(2)} ${y0.toFixed(2)} A ${r} ${r} 0 ${large} 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`;
 }
 
-// Build rings and badge counts from pathogen detected_levels.
-// Rings are sorted: classified/misclassified innermost, then threat, then unknown (outermost).
 function getPathogenDisplay(nodeId, gtNodeStates, isVisible) {
   const pathogens = gtNodeStates?.[nodeId]?.pathogens ?? [];
   const rings = [];
   let unknownCount = 0;
 
-  // Separate by level for ordered rendering
   const classified = [], threats = [], unknowns = [];
   for (const inst of pathogens) {
     if (inst.detected_level === 'classified' || inst.detected_level === 'misclassified') classified.push(inst);
@@ -61,22 +58,19 @@ function getPathogenDisplay(nodeId, gtNodeStates, isVisible) {
   }
   unknownCount = unknowns.length;
 
-  // classified/misclassified: solid type-colour ring; arc = actual load when visible, lastKnownLoad when not
   for (const inst of classified) {
     const displayType = inst.perceived_type ?? inst.type;
     const color = PATHOGEN_RING_COLORS[displayType] ?? '#aaa';
-    const load =  getPrimaryLoad(inst, isVisible);
+    const load = getPrimaryLoad(inst, isVisible);
     if (load <= 0) continue;
     const loadPct = Math.min(0.999, load / 100);
     rings.push({ uid: inst.uid, loadPct, color, dashed: false, dashArray: undefined });
   }
 
-  // threat: dashed orange ring, fixed arc (load unknown to player)
   for (const inst of threats) {
     rings.push({ uid: inst.uid, loadPct: 0.15, color: '#f97316', dashed: true, dashArray: '5 3' });
   }
 
-  // unknown: thin dashed grey ring, short fixed arc
   for (const inst of unknowns) {
     rings.push({ uid: inst.uid, loadPct: 0.15, color: '#6b7280', dashed: true, dashArray: '3 4' });
   }
@@ -85,12 +79,71 @@ function getPathogenDisplay(nodeId, gtNodeStates, isVisible) {
 }
 
 function getCellDots(nodeId, deployedCells) {
-  // Show cells at this node regardless of phase (arrived, outbound-passing-through, returning)
-  // Outbound/returning cells at their current intermediate position appear as dimmed dots
   return Object.values(deployedCells)
     .filter(c => c.nodeId === nodeId &&
       (c.phase === 'arrived' || c.phase === 'outbound' || c.phase === 'returning'))
     .sort((a, b) => CELL_TYPE_ORDER.indexOf(a.type) - CELL_TYPE_ORDER.indexOf(b.type));
+}
+
+// ── Hover tooltip ─────────────────────────────────────────────────────────────
+
+function NodeTooltip({ nodeId, gtNodeStates, visibleNodes, x, y }) {
+  const node = NODES[nodeId];
+  if (!node) return null;
+
+  const ns = gtNodeStates?.[nodeId];
+  const isVisible = visibleNodes?.has(nodeId) ?? false;
+  const inflammation = isVisible ? (ns?.inflammation ?? 0) : (ns?.lastKnownInflammation ?? 0);
+  const integrity = ns?.tissueIntegrity ?? 100;
+  const pathogens = (ns?.pathogens ?? []).filter(p => p.detected_level !== 'none');
+
+  const inflLabel = inflammation > 70 ? 'HIGH' : inflammation > 40 ? 'MOD' : 'LOW';
+  const inflColor = inflammation > 70 ? '#f87171' : inflammation > 40 ? '#fb923c' : '#6b7280';
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        left: x + 14,
+        top: y - 10,
+        pointerEvents: 'none',
+        zIndex: 40,
+        minWidth: 130,
+      }}
+      className="bg-gray-900 border border-gray-600 rounded-md px-3 py-2 shadow-2xl text-xs"
+    >
+      <div className="font-mono font-bold text-gray-100 mb-1.5">{node.label}</div>
+      <div className="space-y-0.5">
+        <div className="flex justify-between gap-4">
+          <span className="text-gray-600">Inflammation</span>
+          <span className="font-mono" style={{ color: inflColor }}>{Math.round(inflammation)} {inflLabel}</span>
+        </div>
+        <div className="flex justify-between gap-4">
+          <span className="text-gray-600">Integrity</span>
+          <span className={`font-mono ${integrity < 40 ? 'text-red-400' : integrity < 70 ? 'text-yellow-400' : 'text-green-400'}`}>
+            {Math.round(integrity)}
+          </span>
+        </div>
+        {pathogens.length > 0 && (
+          <div className="mt-1 pt-1 border-t border-gray-800 space-y-0.5">
+            {pathogens.map(p => {
+              const level = p.detected_level;
+              const isKnown = level === 'classified' || level === 'misclassified';
+              const label = isKnown
+                ? (PATHOGEN_DISPLAY_NAMES[p.perceived_type ?? p.type] ?? p.type)
+                : level === 'threat' ? 'Unclassified threat' : 'Anomaly';
+              return (
+                <div key={p.uid ?? p.type} className="text-orange-500 text-xs">{label}</div>
+              );
+            })}
+          </div>
+        )}
+        {!isVisible && (
+          <div className="text-gray-700 italic mt-1" style={{ fontSize: '10px' }}>No surveillance</div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
@@ -103,9 +156,10 @@ export default function BodyMap({
   onNodeContextMenu,
   visibleNodes = new Set(),
 }) {
+  const [hoveredNode, setHoveredNode] = useState(null); // { nodeId, x, y }
+
   const nodeList = Object.values(NODES);
 
-  // Deduplicated edges
   const edges = [];
   const seenEdges = new Set();
   for (const node of nodeList) {
@@ -119,13 +173,45 @@ export default function BodyMap({
   }
 
   return (
-    <div className="w-full h-full flex items-center justify-center bg-gray-950 select-none">
+    <div className="w-full h-full flex items-center justify-center bg-gray-950 select-none relative">
       <svg
         viewBox={`0 0 ${SVG_W} ${SVG_H}`}
         className="w-full h-full"
         style={{ maxHeight: '100%' }}
       >
         <defs>
+          {/* Cell type icon paths — referenced via <use href="#cell-icon-TYPE"> */}
+          {/* Each icon is defined in a 24x24 viewBox; callers scale with transform */}
+          <g id="cell-icon-neutrophil">
+            <circle cx="9"  cy="8.5" r="5.2" />
+            <circle cx="15" cy="8.5" r="5.2" />
+            <circle cx="12" cy="15"  r="5.2" />
+          </g>
+          <g id="cell-icon-dendritic">
+            <circle cx="12" cy="12" r="3.5" />
+            <rect x="10.75" y="2"  width="2.5" height="7"  rx="1.25" />
+            <rect x="10.75" y="15" width="2.5" height="7"  rx="1.25" />
+            <rect x="2"  y="10.75" width="7"  height="2.5" rx="1.25" />
+            <rect x="15" y="10.75" width="7"  height="2.5" rx="1.25" />
+          </g>
+          <g id="cell-icon-macrophage">
+            <path d="M12 3 C15.5 3 19 6 19.5 9.5 C20.5 10.5 21.5 11 21.5 13 C21.5 14.5 20.5 15 19.5 14.5 C18.5 16.5 16 19 12 19 C7 19 3.5 16 3.5 12 C3.5 7.5 7 3 12 3 Z" />
+          </g>
+          <g id="cell-icon-responder">
+            <path d="M12 2 L20 5.5 L20 12 C20 16.8 12 21.5 12 21.5 C12 21.5 4 16.8 4 12 L4 5.5 Z" />
+          </g>
+          <g id="cell-icon-killer_t">
+            <path d="M12 2 L20 20 L12 14.5 L4 20 Z" />
+          </g>
+          <g id="cell-icon-b_cell">
+            <circle cx="12" cy="12" r="10" />
+            <circle cx="12" cy="12" r="6.5" fill="rgba(0,0,0,0.4)" />
+            <circle cx="12" cy="12" r="2.75" />
+          </g>
+          <g id="cell-icon-nk_cell">
+            <path d="M18.5 12 L15.25 17.9 L8.75 17.9 L5.5 12 L8.75 6.1 L15.25 6.1 Z" />
+          </g>
+
           {/* Per-node integrity clip paths */}
           {nodeList.map(node => {
             const gt = groundTruthNodeStates?.[node.id];
@@ -159,6 +245,15 @@ export default function BodyMap({
               </feMerge>
             </filter>
           ))}
+
+          {/* High-inflammation glow filter */}
+          <filter id="glow-red-hot" x="-80%" y="-80%" width="260%" height="260%">
+            <feGaussianBlur stdDeviation="4" result="blur" />
+            <feMerge>
+              <feMergeNode in="blur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
         </defs>
 
         {/* Connection lines */}
@@ -167,7 +262,7 @@ export default function BodyMap({
             key={`${from.id}-${to.id}`}
             x1={from.position.x} y1={from.position.y}
             x2={to.position.x}   y2={to.position.y}
-            stroke="#1e293b" strokeWidth="1.5" opacity="0.5"
+            stroke="#1e293b" strokeWidth="2" opacity="0.6"
           />
         ))}
 
@@ -182,15 +277,12 @@ export default function BodyMap({
           const isSelected = node.id === selectedNodeId;
           const { rings, unknownCount } = getPathogenDisplay(node.id, groundTruthNodeStates, isVisible);
           const cellDots = getCellDots(node.id, deployedCells);
+          const isHighInflamm = inflammPct >= 0.65;
 
-          // Pathogen rings: start just outside the node border, spaced 6px apart
           const ringBase = NODE_R + 5;
           const ringStep = 6;
+          const selectR = ringBase + rings.length * ringStep + 7;
 
-          // Selection ring sits outside all pathogen rings
-          const selectR = ringBase + rings.length * ringStep + 6;
-
-          // Multi-line label for "Bone Marrow"
           const words = node.label.split(' ');
 
           return (
@@ -198,21 +290,36 @@ export default function BodyMap({
               key={node.id}
               onClick={() => onSelectNode(node.id === selectedNodeId ? null : node.id)}
               onContextMenu={e => { e.preventDefault(); onNodeContextMenu?.(node.id); }}
+              onMouseEnter={e => setHoveredNode({ nodeId: node.id, x: e.clientX, y: e.clientY })}
+              onMouseLeave={() => setHoveredNode(h => h?.nodeId === node.id ? null : h)}
+              onMouseMove={e => setHoveredNode(h => h?.nodeId === node.id ? { ...h, x: e.clientX, y: e.clientY } : h)}
               className="cursor-pointer"
             >
-              {/* Selection ring — outside fog layer so it's always crisp when selected */}
+              {/* Selection ring */}
               {isSelected && (
                 <circle
                   cx={cx} cy={cy} r={selectR}
                   fill="none"
                   stroke="#60a5fa"
-                  strokeWidth="1.5"
-                  strokeDasharray="4 3"
-                  opacity="0.8"
+                  strokeWidth="2"
+                  strokeDasharray="5 3"
+                  opacity="0.9"
                 />
               )}
 
-              {/* Fog layer — dims everything when no visibility (cell dots and selection excluded) */}
+              {/* High-inflammation outer glow ring (pulsing via CSS animation) */}
+              {isHighInflamm && isVisible && (
+                <circle
+                  cx={cx} cy={cy} r={NODE_R + 3}
+                  fill="none"
+                  stroke={stroke}
+                  strokeWidth="3"
+                  className="inflammation-pulse"
+                  filter="url(#glow-red-hot)"
+                />
+              )}
+
+              {/* Fog layer */}
               <g opacity={isVisible ? 1 : 0.35}>
 
                 {/* Pathogen arc rings */}
@@ -225,10 +332,10 @@ export default function BodyMap({
                       d={d}
                       fill="none"
                       stroke={ring.color}
-                      strokeWidth={ring.dashed ? 1.5 : 2.5}
+                      strokeWidth={ring.dashed ? 1.5 : 3}
                       strokeLinecap="round"
                       strokeDasharray={ring.dashArray}
-                      opacity={ring.dashed ? 0.55 : 0.85}
+                      opacity={ring.dashed ? 0.55 : 0.9}
                       filter={ring.dashed ? undefined : `url(#glow-${ring.color.slice(1)})`}
                     />
                   ) : null;
@@ -237,13 +344,13 @@ export default function BodyMap({
                 {/* HQ outer ring */}
                 {node.isHQ && (
                   <circle cx={cx} cy={cy} r={NODE_R + 3}
-                    fill="none" stroke="#7c3aed" strokeWidth="1" opacity="0.5" />
+                    fill="none" stroke="#7c3aed" strokeWidth="1.5" opacity="0.6" />
                 )}
 
                 {/* Dark background circle */}
                 <circle cx={cx} cy={cy} r={NODE_R} fill="#050d18" />
 
-                {/* Inflammation fill (fog-aware colour), clipped to tissue integrity level (always GT) */}
+                {/* Inflammation fill, clipped to tissue integrity */}
                 <circle
                   cx={cx} cy={cy} r={NODE_R - 0.75}
                   fill={fill}
@@ -255,29 +362,29 @@ export default function BodyMap({
                   cx={cx} cy={cy} r={NODE_R}
                   fill="none"
                   stroke={stroke}
-                  strokeWidth={node.isBottleneck ? 2.5 : 1.5}
+                  strokeWidth={node.isBottleneck ? 3 : 2}
                 />
 
-                {/* Node label — split "Bone Marrow" onto two lines */}
+                {/* Node label */}
                 {words.length > 1 ? (
                   <text
                     textAnchor="middle"
                     fontFamily="monospace"
-                    fontWeight={node.isHQ ? '600' : '500'}
+                    fontWeight={node.isHQ ? '700' : '600'}
                     fill={node.isHQ ? '#a78bfa' : stroke}
                     className="pointer-events-none select-none"
                   >
-                    <tspan x={cx} y={cy - 3} fontSize="6.5">{words[0]}</tspan>
-                    <tspan x={cx} dy="9"     fontSize="6.5">{words[1]}</tspan>
+                    <tspan x={cx} y={cy - 4} fontSize="8">{words[0]}</tspan>
+                    <tspan x={cx} dy="10"    fontSize="8">{words[1]}</tspan>
                   </text>
                 ) : (
                   <text
                     x={cx} y={cy + 1}
                     textAnchor="middle"
                     dominantBaseline="middle"
-                    fontSize="7"
+                    fontSize="9"
                     fontFamily="monospace"
-                    fontWeight={node.isHQ ? '600' : '500'}
+                    fontWeight={node.isHQ ? '700' : '600'}
                     fill={node.isHQ ? '#a78bfa' : stroke}
                     className="pointer-events-none select-none"
                   >
@@ -285,17 +392,17 @@ export default function BodyMap({
                   </text>
                 )}
 
-                {/* Yellow badge — count of unknown-level pathogens */}
+                {/* Unknown-pathogen badge */}
                 {unknownCount > 0 && (
                   <g>
                     <circle
-                      cx={cx - NODE_R + 4} cy={cy - NODE_R + 3}
-                      r={6} fill="#78350f" stroke="#d97706" strokeWidth="0.75"
+                      cx={cx - NODE_R + 5} cy={cy - NODE_R + 4}
+                      r={7} fill="#78350f" stroke="#d97706" strokeWidth="1"
                     />
                     <text
-                      x={cx - NODE_R + 4} y={cy - NODE_R + 3}
+                      x={cx - NODE_R + 5} y={cy - NODE_R + 4}
                       textAnchor="middle" dominantBaseline="middle"
-                      fontSize="6" fontFamily="monospace" fontWeight="bold"
+                      fontSize="7" fontFamily="monospace" fontWeight="bold"
                       fill="#fde68a"
                       className="pointer-events-none select-none"
                     >
@@ -304,22 +411,25 @@ export default function BodyMap({
                   </g>
                 )}
 
-              </g>{/* end fog layer */}
+              </g>
 
-              {/* Friendly cell dots — always full opacity (globally visible) */}
-              {/* Arrived = full opacity; outbound/returning = dimmed (passing through) */}
+              {/* Friendly cell icons — always full opacity */}
               {cellDots.map((cell, i) => {
                 const angle = (i / Math.max(1, cellDots.length)) * 2 * Math.PI - Math.PI / 2;
-                const dr = NODE_R - 6;
+                const dr = NODE_R - 8;
+                const iconSize = 10; // rendered size in SVG units
+                const iconX = cx + dr * Math.cos(angle);
+                const iconY = cy + dr * Math.sin(angle);
                 const inTransit = cell.phase === 'outbound' || cell.phase === 'returning';
+                const iconColor = CELL_CONFIG[cell.type]?.color ?? '#888';
+                const scale = iconSize / 24;
                 return (
-                  <circle
+                  <use
                     key={cell.id}
-                    cx={cx + dr * Math.cos(angle)}
-                    cy={cy + dr * Math.sin(angle)}
-                    r={inTransit ? 2 : 2.5}
-                    fill={CELL_CONFIG[cell.type]?.color ?? '#888'}
+                    href={`#cell-icon-${cell.type}`}
+                    fill={iconColor}
                     opacity={inTransit ? 0.35 : 0.95}
+                    transform={`translate(${(iconX - iconSize / 2).toFixed(2)}, ${(iconY - iconSize / 2).toFixed(2)}) scale(${scale.toFixed(4)})`}
                   />
                 );
               })}
@@ -327,6 +437,17 @@ export default function BodyMap({
           );
         })}
       </svg>
+
+      {/* Hover tooltip — rendered outside SVG for proper HTML positioning */}
+      {hoveredNode && (
+        <NodeTooltip
+          nodeId={hoveredNode.nodeId}
+          gtNodeStates={groundTruthNodeStates}
+          visibleNodes={visibleNodes}
+          x={hoveredNode.x}
+          y={hoveredNode.y}
+        />
+      )}
     </div>
   );
 }

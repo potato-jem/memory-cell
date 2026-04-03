@@ -127,7 +127,7 @@ export function computeNewScars(nodeStates, existingScars, systemicIntegrity, pr
   const existingScarIds = new Set(existingScars.map(s => s.id));
 
   // Site-specific scars at integrity thresholds
-  const SCAR_THRESHOLDS = [50, 25, 0];
+  const SCAR_THRESHOLDS = [50, 0];
   for (const nodeId of NODE_IDS) {
     const ns = nodeStates[nodeId];
     if (!ns) continue;

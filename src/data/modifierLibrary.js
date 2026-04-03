@@ -39,6 +39,8 @@ export const UPGRADE_LIBRARY = [
     category: 'upgrade',
     name: 'Clearance Surge',
     description: '{clearingCellType} clearance rate increased',
+    effectLabel: (_ctx, value) => `+${Math.round((value - 1) * 100)}% clearance rate`,
+    effectColorKey: 'cell',
     baseProbability: 1.2,
     eligibleFor: (ctx) => !!ctx.clearingCellType && (ctx.cellConfig?.clearanceRate ?? 0) > 0,
     rarityLevels: [
@@ -57,6 +59,8 @@ export const UPGRADE_LIBRARY = [
     category: 'upgrade',
     name: 'Rapid Development',
     description: '{clearingCellType} training time reduced',
+    effectLabel: (_ctx, value) => `${value / 5}T faster training`,
+    effectColorKey: 'cell',
     baseProbability: 0.9,
     eligibleFor: (ctx) => !!ctx.clearingCellType,
     rarityLevels: [
@@ -75,6 +79,8 @@ export const UPGRADE_LIBRARY = [
     category: 'upgrade',
     name: 'Efficient Deployment',
     description: '{clearingCellType} deployment token cost reduced',
+    effectLabel: (_ctx, value) => `${value} token cost`,
+    effectColorKey: 'cell',
     baseProbability: 0.7,
     eligibleFor: (ctx) => !!ctx.clearingCellType && (ctx.cellConfig?.deployCost ?? 1) > 1,
     rarityLevels: [
@@ -92,6 +98,8 @@ export const UPGRADE_LIBRARY = [
     category: 'upgrade',
     name: 'Heightened Senses',
     description: '{clearingCellType} makes extra detection rolls per visit',
+    effectLabel: (_ctx, value) => `+${value} detection roll${value > 1 ? 's' : ''} per visit`,
+    effectColorKey: 'cell',
     baseProbability: 1.0,
     eligibleFor: (ctx) => !!ctx.clearingCellType && ctx.cellConfig?.isRecon === true,
     rarityLevels: [
@@ -110,6 +118,8 @@ export const UPGRADE_LIBRARY = [
     category: 'upgrade',
     name: 'Specialized Recognition',
     description: '{clearingCellType} more accurately identifies {clearedPathogenType}',
+    effectLabel: (_ctx, value) => `+${Math.round(value * 100)}% classification accuracy`,
+    effectColorKey: 'pathogen',
     baseProbability: 0.8,
     eligibleFor: (ctx) => !!ctx.clearingCellType && !!ctx.clearedPathogenType && ctx.cellConfig?.isRecon === true,
     rarityLevels: [
@@ -134,8 +144,9 @@ export const UPGRADE_LIBRARY = [
     category: 'upgrade',
     name: 'Combat Adaptability',
     description: '{clearingCellType} is more effective against unidentified threats',
+    effectLabel: (_ctx, value) => `+${Math.round(value * 100)}% effectiveness vs unclassified`,
+    effectColorKey: 'cell',
     baseProbability: 1.0,
-    // Only offer if there is room to grow at the 'none' level (less than full effectiveness)
     eligibleFor: (ctx) => !!ctx.clearingCellType
       && ctx.cellConfig?.isAttack === true
       && (ctx.cellConfig?.effectivenessByLevel?.none ?? 1.0) < 0.95,
@@ -160,6 +171,8 @@ export const UPGRADE_LIBRARY = [
     category: 'upgrade',
     name: 'Reduced Collateral Damage',
     description: '{clearingCellType} causes less autoimmune inflammation on clean sites',
+    effectLabel: (_ctx, value) => `-${Math.round((1 - value) * 100)}% collateral inflammation`,
+    effectColorKey: 'cell',
     baseProbability: 0.7,
     eligibleFor: (ctx) => !!ctx.clearingCellType && ctx.cellConfig?.isAttack === true,
     rarityLevels: [
@@ -180,6 +193,8 @@ export const UPGRADE_LIBRARY = [
     category: 'upgrade',
     name: 'Pathogen Vulnerability',
     description: 'All cells clear {clearedPathogenType} faster for the rest of this run',
+    effectLabel: (_ctx, value) => `+${Math.round((value - 1) * 100)}% global clearance rate`,
+    effectColorKey: 'pathogen',
     baseProbability: 1.1,
     eligibleFor: (ctx) => !!ctx.clearedPathogenType,
     rarityLevels: [
@@ -198,6 +213,8 @@ export const UPGRADE_LIBRARY = [
     category: 'upgrade',
     name: 'Containment Protocol',
     description: '{clearedPathogenType} requires higher burden before it can spread',
+    effectLabel: (_ctx, value) => `+${value} spread threshold`,
+    effectColorKey: 'pathogen',
     baseProbability: 0.8,
     eligibleFor: (ctx) => !!ctx.clearedPathogenType && ctx.pathogenConfig?.spreadThreshold != null,
     rarityLevels: [
@@ -216,6 +233,8 @@ export const UPGRADE_LIBRARY = [
     category: 'upgrade',
     name: 'Tissue Resilience',
     description: '{clearedPathogenType} causes less direct tissue damage',
+    effectLabel: (_ctx, value) => `-${Math.round((1 - value) * 100)}% tissue damage`,
+    effectColorKey: 'pathogen',
     baseProbability: 0.9,
     eligibleFor: (ctx) => !!ctx.clearedPathogenType && (ctx.pathogenConfig?.tissueDamageRate ?? 0) > 0,
     rarityLevels: [
@@ -234,6 +253,8 @@ export const UPGRADE_LIBRARY = [
     category: 'upgrade',
     name: 'Anti-Inflammatory Response',
     description: '{clearedPathogenType} provokes less inflammation',
+    effectLabel: (_ctx, value) => `-${Math.round((1 - value) * 100)}% inflammation rate`,
+    effectColorKey: 'pathogen',
     baseProbability: 0.9,
     eligibleFor: (ctx) => !!ctx.clearedPathogenType && (ctx.pathogenConfig?.inflammationRate ?? 0) > 0,
     rarityLevels: [
@@ -252,6 +273,8 @@ export const UPGRADE_LIBRARY = [
     category: 'upgrade',
     name: 'Replication Inhibitor',
     description: '{clearedPathogenType} replicates more slowly',
+    effectLabel: (_ctx, value) => `-${Math.round((1 - value) * 100)}% replication rate`,
+    effectColorKey: 'pathogen',
     baseProbability: 1.0,
     eligibleFor: (ctx) => !!ctx.clearedPathogenType && (ctx.pathogenConfig?.replicationRate ?? 0) > 0,
     rarityLevels: [
@@ -272,6 +295,8 @@ export const UPGRADE_LIBRARY = [
     category: 'upgrade',
     name: 'Systemic Recovery',
     description: 'Tissue integrity recovers faster throughout the body',
+    effectLabel: (_ctx, value) => `+${value} integrity/turn recovery`,
+    effectColorKey: 'systemic',
     baseProbability: 0.8,
     eligibleFor: (_ctx) => true,
     rarityLevels: [
@@ -290,6 +315,8 @@ export const UPGRADE_LIBRARY = [
     category: 'upgrade',
     name: 'Stress Hardening',
     description: 'Systemic stress decays faster',
+    effectLabel: (_ctx, value) => `+${value} stress decay/turn`,
+    effectColorKey: 'systemic',
     baseProbability: 0.8,
     eligibleFor: (_ctx) => true,
     rarityLevels: [
@@ -308,6 +335,8 @@ export const UPGRADE_LIBRARY = [
     category: 'upgrade',
     name: 'Adaptive Memory',
     description: '{clearedPathogenType} is less likely to spawn for the rest of this run',
+    effectLabel: (_ctx, value) => `-${Math.round((1 - value) * 100)}% spawn weight`,
+    effectColorKey: 'pathogen',
     baseProbability: 0.7,
     eligibleFor: (ctx) => !!ctx.clearedPathogenType,
     rarityLevels: [
@@ -326,6 +355,8 @@ export const UPGRADE_LIBRARY = [
     category: 'upgrade',
     name: 'Fever Optimization',
     description: 'Fever generates less systemic stress, making it more viable to sustain',
+    effectLabel: (_ctx, value) => `-${Math.round((1 - value) * 100)}% fever stress cost`,
+    effectColorKey: 'systemic',
     baseProbability: 0.6,
     eligibleFor: (_ctx) => true,
     rarityLevels: [
@@ -344,6 +375,8 @@ export const UPGRADE_LIBRARY = [
     category: 'upgrade',
     name: 'Immune Surge',
     description: 'The immune response floods the system — gain additional token capacity',
+    effectLabel: (_ctx, value) => `+${value} token capacity`,
+    effectColorKey: 'systemic',
     baseProbability: 0.5,
     eligibleFor: (_ctx) => true,
     rarityLevels: [
@@ -360,9 +393,9 @@ export const UPGRADE_LIBRARY = [
     id: 'viral_counter_protocol',
     category: 'upgrade',
     name: 'Viral Counter-Protocol',
-    // Extra clearance rate specifically vs exponential-growth pathogens (virus)
-    // Implemented as a pathogen clearance multiplier bonus for exponential types
     description: 'Immunity optimised against rapidly-replicating pathogens',
+    effectLabel: (_ctx, value) => `+${Math.round((value - 1) * 100)}% clearance rate`,
+    effectColorKey: 'pathogen',
     baseProbability: 0.7,
     eligibleFor: (ctx) => !!ctx.clearedPathogenType && ctx.pathogenConfig?.growthModel === 'exponential',
     rarityLevels: [
@@ -379,10 +412,10 @@ export const UPGRADE_LIBRARY = [
   {
     id: 'deep_tissue_scan',
     category: 'upgrade',
-    // PLACEHOLDER: full mechanic requires per-node detection accuracy system.
-    // Currently implemented as a global accuracyBonus for all recon cells vs all pathogen types.
     name: 'Deep Tissue Scan',
     description: 'Improved scanning techniques boost detection accuracy across the board',
+    effectLabel: (_ctx, value) => `+${Math.round(value * 100)}% global detection accuracy`,
+    effectColorKey: 'systemic',
     baseProbability: 0.6,
     eligibleFor: (_ctx) => true,
     rarityLevels: [
@@ -409,8 +442,9 @@ export const UPGRADE_LIBRARY = [
     category: 'upgrade',
     name: 'Metabolic Efficiency',
     description: 'Stress recovery is improved — {clearingCellType} has been battle-tested',
+    effectLabel: (_ctx, value) => `+${value} stress decay/turn`,
+    effectColorKey: 'cell',
     baseProbability: 0.65,
-    // Offered only for attack cells (simulates exhaustion → adaptation)
     eligibleFor: (ctx) => !!ctx.clearingCellType && ctx.cellConfig?.isAttack === true,
     rarityLevels: [
       { rarity: 'common', probability: 0.60, value: 1 },
@@ -435,6 +469,8 @@ export const SCAR_LIBRARY = [
     category: 'scar',
     name: 'Signal Interference',
     description: 'Scar tissue at {nodeId} disrupts immune signalling — transit cost increased',
+    effectLabel: (_ctx, value) => `+${value} transit cost`,
+    effectColorKey: 'systemic',
     baseProbability: 1.2,
     eligibleFor: (ctx) => !!ctx.nodeId,
     rarityLevels: [
@@ -453,6 +489,8 @@ export const SCAR_LIBRARY = [
     category: 'scar',
     name: 'Infection Gateway',
     description: 'Damaged tissue at {nodeId} is more vulnerable to future infection',
+    effectLabel: (_ctx, value) => `+${Math.round((value - 1) * 100)}% spawn vulnerability`,
+    effectColorKey: 'systemic',
     baseProbability: 1.1,
     eligibleFor: (ctx) => !!ctx.nodeId,
     rarityLevels: [
@@ -471,6 +509,8 @@ export const SCAR_LIBRARY = [
     category: 'scar',
     name: 'Cellular Exhaustion',
     description: 'Chronic injury at {nodeId} reduces immune cell clearance effectiveness there',
+    effectLabel: (_ctx, value) => `-${Math.round((1 - value) * 100)}% clearance effectiveness`,
+    effectColorKey: 'systemic',
     baseProbability: 1.0,
     eligibleFor: (ctx) => !!ctx.nodeId,
     rarityLevels: [
@@ -489,6 +529,8 @@ export const SCAR_LIBRARY = [
     category: 'scar',
     name: 'Inflammatory Memory',
     description: 'Sensitised tissue at {nodeId} — inflammation decays more slowly there',
+    effectLabel: (_ctx, value) => `-${Math.round((1 - value) * 100)}% inflammation decay`,
+    effectColorKey: 'systemic',
     baseProbability: 0.9,
     eligibleFor: (ctx) => !!ctx.nodeId,
     rarityLevels: [
@@ -509,6 +551,8 @@ export const SCAR_LIBRARY = [
     // Currently implemented as an increased spawn weight (node is compromised, easier to infect).
     name: 'Rerouted Response',
     description: 'Nerve damage at {nodeId} delays immune cell arrival — signals rerouted',
+    effectLabel: (_ctx, value) => `+${value} transit cost`,
+    effectColorKey: 'systemic',
     baseProbability: 0.7,
     eligibleFor: (ctx) => !!ctx.nodeId,
     rarityLevels: [
@@ -530,6 +574,8 @@ export const SCAR_LIBRARY = [
     category: 'scar',
     name: 'Immune Exhaustion',
     description: 'Sustained fighting has slowed immune cell training across the board',
+    effectLabel: (_ctx, value) => `+${value} tick${value !== 1 ? 's' : ''} training time`,
+    effectColorKey: 'systemic',
     baseProbability: 0.9,
     eligibleFor: (_ctx) => true,
     rarityLevels: [
@@ -553,6 +599,8 @@ export const SCAR_LIBRARY = [
     category: 'scar',
     name: 'Systemic Inflammation',
     description: 'Elevated baseline inflammation makes fever significantly more taxing',
+    effectLabel: (_ctx, value) => `+${Math.round((value - 1) * 100)}% fever stress cost`,
+    effectColorKey: 'systemic',
     baseProbability: 0.8,
     eligibleFor: (_ctx) => true,
     rarityLevels: [
@@ -571,6 +619,8 @@ export const SCAR_LIBRARY = [
     category: 'scar',
     name: 'Compromised Recovery',
     description: 'Widespread damage has impaired the body\'s natural healing ability',
+    effectLabel: (_ctx, value) => `${value} integrity/turn recovery`,
+    effectColorKey: 'systemic',
     baseProbability: 0.8,
     eligibleFor: (_ctx) => true,
     rarityLevels: [
@@ -589,6 +639,8 @@ export const SCAR_LIBRARY = [
     category: 'scar',
     name: 'Heightened Susceptibility',
     description: 'Systemic weakness makes the body more vulnerable to new infections globally',
+    effectLabel: (_ctx, value) => `+${Math.round((value - 1) * 100)}% global spawn vulnerability`,
+    effectColorKey: 'systemic',
     baseProbability: 0.7,
     eligibleFor: (ctx) => ctx.scarType === 'systemic_integrity',
     rarityLevels: [
@@ -607,6 +659,8 @@ export const SCAR_LIBRARY = [
     category: 'scar',
     name: 'Chronic Stress Response',
     description: 'The body overreacts to prolonged threats — stress accumulates faster',
+    effectLabel: (_ctx, value) => `${value} stress decay/turn`,
+    effectColorKey: 'systemic',
     baseProbability: 0.7,
     eligibleFor: (_ctx) => true,
     rarityLevels: [
@@ -626,6 +680,8 @@ export const SCAR_LIBRARY = [
     category: 'scar',
     name: 'Detection Noise',
     description: 'Scarring creates false signals — detection accuracy reduced',
+    effectLabel: (_ctx, value) => `${Math.round(value * 100)}% detection accuracy`,
+    effectColorKey: 'systemic',
     baseProbability: 0.6,
     eligibleFor: (_ctx) => true,
     rarityLevels: [

@@ -232,19 +232,24 @@ export function advanceCells(deployedCells, tick, modifiers = null) {
     }
 
     // ── Outbound movement (path-based) ────────────────────────────────────────
-    if (c.phase === 'outbound' && c.path && c.pathIndex < c.path.length - 1) {
-      let budget = 1;
-      while (c.pathIndex < c.path.length - 1) {
-        const baseExitCost = NODES[c.path[c.pathIndex]]?.signalTravelCost ?? 1;
-        const exitCost = getEffectiveExitCost(c.path[c.pathIndex], baseExitCost, modifiers);
-        if (exitCost > 0 && budget < exitCost) break;
-        budget -= exitCost;
-        c.pathIndex++;
-        c.nodeId = c.path[c.pathIndex];
-        nodesVisited.push({ cellId, cellType: c.type, nodeId: c.nodeId });
-        if (budget <= 0) break;
+    if (c.phase === 'outbound' && c.path) {
+      // Move along path (only if not already at destination)
+      if (c.pathIndex < c.path.length - 1) {
+        let budget = 1;
+        while (c.pathIndex < c.path.length - 1) {
+          const baseExitCost = NODES[c.path[c.pathIndex]]?.signalTravelCost ?? 1;
+          const exitCost = getEffectiveExitCost(c.path[c.pathIndex], baseExitCost, modifiers);
+          if (exitCost > 0 && budget < exitCost) break;
+          budget -= exitCost;
+          c.pathIndex++;
+          c.nodeId = c.path[c.pathIndex];
+          nodesVisited.push({ cellId, cellType: c.type, nodeId: c.nodeId });
+          if (budget <= 0) break;
+        }
       }
 
+      // Arrival check — evaluated separately so zero-distance paths (e.g. deploy to BLOOD)
+      // also transition to 'arrived' immediately on the same tick.
       if (c.pathIndex >= c.path.length - 1) {
         c.phase = 'arrived';
         if (CELL_CONFIG[c.type]?.isScout) {
@@ -292,18 +297,22 @@ export function advanceCells(deployedCells, tick, modifiers = null) {
     }
 
     // ── Returning movement (path-based) ───────────────────────────────────────
-    if (c.phase === 'returning' && c.path && c.pathIndex < c.path.length - 1) {
-      let budget = 1;
-      while (c.pathIndex < c.path.length - 1) {
-        const baseExitCost = NODES[c.path[c.pathIndex]]?.signalTravelCost ?? 1;
-        const exitCost = getEffectiveExitCost(c.path[c.pathIndex], baseExitCost, modifiers);
-        if (exitCost > 0 && budget < exitCost) break;
-        budget -= exitCost;
-        c.pathIndex++;
-        c.nodeId = c.path[c.pathIndex];
-        if (budget <= 0) break;
+    if (c.phase === 'returning' && c.path) {
+      // Move along path (only if not already at HQ)
+      if (c.pathIndex < c.path.length - 1) {
+        let budget = 1;
+        while (c.pathIndex < c.path.length - 1) {
+          const baseExitCost = NODES[c.path[c.pathIndex]]?.signalTravelCost ?? 1;
+          const exitCost = getEffectiveExitCost(c.path[c.pathIndex], baseExitCost, modifiers);
+          if (exitCost > 0 && budget < exitCost) break;
+          budget -= exitCost;
+          c.pathIndex++;
+          c.nodeId = c.path[c.pathIndex];
+          if (budget <= 0) break;
+        }
       }
 
+      // Arrival at HQ — evaluated separately so zero-distance returns also complete.
       if (c.pathIndex >= c.path.length - 1) {
         events.push({ type: 'cell_returned', cellId, nodeId: c.nodeId, cellType: c.type });
         c.phase = 'ready';

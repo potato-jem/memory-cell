@@ -23,10 +23,13 @@
 import { UPGRADE_LIBRARY, SCAR_LIBRARY } from './modifierLibrary.js';
 import { CELL_CONFIG } from './cellConfig.js';
 import { PATHOGEN_REGISTRY, PATHOGEN_DISPLAY_NAMES } from './pathogens.js';
+
+// Fallback color for systemic / node-scoped modifiers with no cell or pathogen anchor.
+const SYSTEMIC_EFFECT_COLOR = '#94a3b8'; // slate-400
 import { NODES } from './nodes.js';
 
 // Number of options presented per choice event. Configurable here.
-export const MODIFIER_CHOICE_COUNT = 3;
+export const MODIFIER_CHOICE_COUNT = 2;
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -149,6 +152,17 @@ function weightedSampleWithoutReplacement(pool, count) {
   return result;
 }
 
+/** Resolve a hex color from a modifier's effectColorKey and the current context. */
+function resolveEffectColor(effectColorKey, context) {
+  if (effectColorKey === 'cell' && context.clearingCellType) {
+    return CELL_CONFIG[context.clearingCellType]?.color ?? SYSTEMIC_EFFECT_COLOR;
+  }
+  if (effectColorKey === 'pathogen' && context.clearedPathogenType) {
+    return PATHOGEN_REGISTRY[context.clearedPathogenType]?.ringColor ?? SYSTEMIC_EFFECT_COLOR;
+  }
+  return SYSTEMIC_EFFECT_COLOR;
+}
+
 /** Build a serialisable option object from a modifier + rarity entry + context. */
 function buildOption(modifier, rarityEntry, context) {
   return {
@@ -158,6 +172,8 @@ function buildOption(modifier, rarityEntry, context) {
     rarity:         rarityEntry.rarity,
     value:          rarityEntry.value,
     description:    interpolateDescription(modifier.description ?? '', context),
+    effectLabel:    modifier.effectLabel ? modifier.effectLabel(context, rarityEntry.value) : null,
+    effectColor:    modifier.effectColorKey ? resolveEffectColor(modifier.effectColorKey, context) : null,
     // Serialisable context (primitive values only) — used to recompute patch at apply time
     context: {
       category:            context.category,
