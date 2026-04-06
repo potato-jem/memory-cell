@@ -175,8 +175,10 @@ export default function NodeDetail({
   groundTruthNodeState,
   deployedCells,
   currentTurn,
+  selectedCellId,
   onRecall,
   onClose,
+  onDeployToNode,
   visibleNodes,
 }) {
   const node = NODES[nodeId];
@@ -295,11 +297,24 @@ export default function NodeDetail({
           )}
         </section>
 
-        {/* Deploy hint */}
+        {/* Deploy */}
         <section className="px-4 py-3">
-          <div className="text-xs text-gray-700 italic">
-            Select a unit from the roster, then right-click this node to deploy.
-          </div>
+          {selectedCellId && deployedCells[selectedCellId]?.phase === 'ready' ? (() => {
+            const cell = deployedCells[selectedCellId];
+            const cc = CELL_TYPE_CONFIG[cell.type];
+            return (
+              <button
+                onClick={() => onDeployToNode?.(nodeId)}
+                className="w-full py-2 px-3 text-xs font-mono font-bold uppercase tracking-widest border border-green-700 bg-green-950 text-green-300 hover:bg-green-900 rounded transition-colors"
+              >
+                Deploy {cc?.displayName ?? cell.type} here
+              </button>
+            );
+          })() : (
+            <div className="text-xs text-gray-700 italic">
+              Select a ready unit from the roster, then right-click this node (or tap Deploy) to deploy.
+            </div>
+          )}
         </section>
 
       </div>

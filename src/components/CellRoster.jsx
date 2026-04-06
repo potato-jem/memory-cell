@@ -4,8 +4,8 @@
 // Click ↩ on a deployed cell to recall it.
 
 import { useState } from 'react';
-import { CELL_TYPES, CELL_DISPLAY_NAMES, DEPLOY_COSTS } from '../engine/cells.js';
-import { CELL_CONFIG, RECON_CELL_TYPES } from '../data/cellConfig.js';
+import { CELL_DISPLAY_NAMES, DEPLOY_COSTS } from '../engine/cells.js';
+import { CELL_CONFIG, ALL_CELL_TYPES } from '../data/cellConfig.js';
 import { PATHOGEN_RING_COLORS, PATHOGEN_DISPLAY_NAMES } from '../data/pathogens.js';
 import { TOKEN_CAPACITY_MAX, TOKEN_CAPACITY_REGEN_INTERVAL, TICKS_PER_TURN } from '../data/gameConfig.js';
 import { NODES, computePathCost } from '../data/nodes.js';
@@ -121,8 +121,8 @@ export default function CellRoster({
   const turnsUntilRegen = Math.max(1, Math.ceil(ticksUntilRegen / TICKS_PER_TURN));
   const atCap = tokenCapacity >= TOKEN_CAPACITY_MAX;
 
-  const availableAttack = runConfig?.availableResponders ?? [];
-  const allTrainable = [...RECON_CELL_TYPES, ...availableAttack];
+  // const availableAttack = runConfig?.availableResponders ?? [];
+  const allTrainable = [...ALL_CELL_TYPES];
 
   const allCells = Object.values(deployedCells).sort((a, b) => {
     const order = { training: 0, ready: 1, outbound: 2, arrived: 3, returning: 4 };

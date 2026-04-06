@@ -438,15 +438,17 @@ export default function BodyMap({
         })}
       </svg>
 
-      {/* Hover tooltip — rendered outside SVG for proper HTML positioning */}
+      {/* Hover tooltip — desktop only (mobile uses node bar instead) */}
       {hoveredNode && (
-        <NodeTooltip
-          nodeId={hoveredNode.nodeId}
-          gtNodeStates={groundTruthNodeStates}
-          visibleNodes={visibleNodes}
-          x={hoveredNode.x}
-          y={hoveredNode.y}
-        />
+        <div className="hidden md:block">
+          <NodeTooltip
+            nodeId={hoveredNode.nodeId}
+            gtNodeStates={groundTruthNodeStates}
+            visibleNodes={visibleNodes}
+            x={hoveredNode.x}
+            y={hoveredNode.y}
+          />
+        </div>
       )}
     </div>
   );

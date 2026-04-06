@@ -34,8 +34,8 @@ const ICONS = {
     </svg>
   ),
 
-  // Responder — shield (defensive, responds to threats)
-  responder: ({ size, color }) => (
+  // eosinophil — shield (defensive, responds to threats)
+  eosinophil: ({ size, color }) => (
     <svg viewBox="0 0 24 24" width={size} height={size} style={{ display: 'block', flexShrink: 0 }}>
       <path
         d="M12 2 L20 5.5 L20 12 C20 16.8 12 21.5 12 21.5 C12 21.5 4 16.8 4 12 L4 5.5 Z"

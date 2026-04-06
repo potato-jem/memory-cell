@@ -2,7 +2,7 @@
 // Header: turn, systemic stress, systemic integrity, fever, tokens.
 // Left: Cell Roster. Centre: Body Map. Right: Node Detail / Overview.
 
-import { useReducer, useCallback, useState } from 'react';
+import { useReducer, useCallback, useState, useEffect } from 'react';
 import { initGameState, GAME_PHASES } from '../state/gameState.js';
 import { gameReducer, ACTION_TYPES } from '../state/actions.js';
 import { DEFAULT_RUN_CONFIG } from '../data/runConfig.js';
@@ -10,17 +10,19 @@ import { WIN_PATHOGEN_TARGET } from '../data/gameConfig.js';
 import { CELL_DISPLAY_NAMES, DEPLOY_COSTS } from '../engine/cells.js';
 import { CELL_CONFIG, CELL_TYPE_ORDER } from '../data/cellConfig.js';
 import { NODES, computeVisibility } from '../data/nodes.js';
-import { PATHOGEN_DISPLAY_NAMES } from '../data/pathogens.js';
+import { PATHOGEN_DISPLAY_NAMES, getPrimaryLoad, PATHOGEN_RING_COLORS } from '../data/pathogens.js';
 import BodyMap from './BodyMap.jsx';
 import CellRoster from './CellRoster.jsx';
 import NodeDetail from './NodeDetail.jsx';
 import PostMortem from './PostMortem.jsx';
 import ModifierChoice from './ModifierChoice.jsx';
+import MobileRoster from './MobileRoster.jsx';
 import CellIcon from './CellIcon.jsx';
+import { saveRun, loadRun, clearRun } from '../state/persistence.js';
 
 
 export default function GameShell() {
-  const [started, setStarted] = useState(false);
+  const [started, setStarted] = useState(() => loadRun()?.phase === GAME_PHASES.PLAYING);
   const [startingCounts, setStartingCounts] = useState(() =>
     Object.fromEntries(
       Object.entries(CELL_CONFIG)
@@ -32,8 +34,16 @@ export default function GameShell() {
   const [state, dispatch] = useReducer(
     gameReducer,
     null,
-    () => initGameState(DEFAULT_RUN_CONFIG, null)
+    () => loadRun() ?? initGameState(DEFAULT_RUN_CONFIG, null)
   );
+
+  useEffect(() => {
+    if (state.phase === GAME_PHASES.PLAYING) {
+      saveRun(state);
+    } else if (state.phase === GAME_PHASES.LOST || state.phase === GAME_PHASES.WON) {
+      clearRun();
+    }
+  }, [state]);
 
   const handleStartRun = useCallback(() => {
     const startingUnits = Object.entries(startingCounts)
@@ -44,19 +54,47 @@ export default function GameShell() {
     setStarted(true);
   }, [startingCounts]);
 
+  const [selectedCellId, setSelectedCellId] = useState(null);
+  // openDrawer: which mobile drawer is open — 'roster' | 'overview' | 'node' | null
+  const [openDrawer, setOpenDrawer] = useState(null);
+  const [tooltipNode, setTooltipNode] = useState(null); // node shown in mini-tooltip / node drawer
+  const [menuOpen, setMenuOpen] = useState(false);
+
   const handleRestart = useCallback(() => {
+    clearRun();
     setStarted(false);
   }, [state.postMortem]);
 
-  const handleSelectNode = useCallback((nodeId) => {
-    dispatch({ type: ACTION_TYPES.SELECT_NODE, nodeId });
+  // Only one drawer at a time; toggle if same name
+  const handleOpenDrawer = useCallback((name) => {
+    setOpenDrawer(prev => prev === name ? null : name);
+    setMenuOpen(false);
   }, []);
+
+  const handleSelectNode = useCallback((nodeId) => {
+    if (!nodeId) {
+      // Tapping background: deselect
+      setTooltipNode(null);
+      setOpenDrawer(prev => prev === 'node' ? null : prev);
+      dispatch({ type: ACTION_TYPES.SELECT_NODE, nodeId: null });
+      return;
+    }
+    dispatch({ type: ACTION_TYPES.SELECT_NODE, nodeId });
+    if (openDrawer === 'node') {
+      // Drawer already open: switch to new node
+      setTooltipNode(nodeId);
+    } else if (nodeId === tooltipNode) {
+      // Second tap on same node: open full node view
+      setOpenDrawer('node');
+    } else {
+      // First tap on a node: show mini tooltip
+      setTooltipNode(nodeId);
+    }
+  }, [tooltipNode, openDrawer]);
 
   const handleRecall = useCallback((cellId) => {
     dispatch({ type: ACTION_TYPES.RECALL_UNIT, cellId });
   }, []);
-
-  const [selectedCellId, setSelectedCellId] = useState(null);
 
   const handleTrainCell = useCallback((cellType) => {
     dispatch({ type: ACTION_TYPES.TRAIN_CELL, cellType });
@@ -70,11 +108,33 @@ export default function GameShell() {
     setSelectedCellId(cellId);
   }, []);
 
+  // Mobile: select a cell for deployment (from roster bar/drawer)
+  const handleSelectCellForDeploy = useCallback((cellId) => {
+    setSelectedCellId(cellId);
+    setOpenDrawer(null); // close any open drawer so user can see the map
+  }, []);
+
+  // Deploy to a node — used by desktop right-click, NodeDetail button, MiniNodeTooltip
   const handleNodeContextMenu = useCallback((nodeId) => {
     if (!selectedCellId) return;
     dispatch({ type: ACTION_TYPES.DEPLOY_FROM_ROSTER, cellId: selectedCellId, nodeId });
     setSelectedCellId(null);
   }, [selectedCellId]);
+
+  // Mobile deploy from tooltip or node drawer: also close the drawer
+  const handleDeployToNode = useCallback((nodeId) => {
+    if (!selectedCellId) return;
+    dispatch({ type: ACTION_TYPES.DEPLOY_FROM_ROSTER, cellId: selectedCellId, nodeId });
+    setSelectedCellId(null);
+    setOpenDrawer(null);
+  }, [selectedCellId]);
+
+  // Direct deploy with explicit cellId — used by MobileRoster when a node is already selected
+  const handleDeployDirect = useCallback((cellId, nodeId) => {
+    dispatch({ type: ACTION_TYPES.DEPLOY_FROM_ROSTER, cellId, nodeId });
+    setSelectedCellId(null);
+    setOpenDrawer(null);
+  }, []);
 
   const handleEndTurn = useCallback(() => {
     dispatch({ type: ACTION_TYPES.END_TURN });
@@ -176,43 +236,73 @@ export default function GameShell() {
   const stress = state.systemicStress ?? 0;
   const integrity = state.systemicIntegrity ?? 100;
   const visibleNodes = computeVisibility(state.deployedCells);
+  const rosterOpen = openDrawer === 'roster';
 
   return (
     <div className="flex flex-col h-screen bg-gray-950 text-gray-300 overflow-hidden">
 
       {/* ── Header ── */}
-      <header className="flex items-center justify-between px-5 py-3 bg-gray-900 border-b border-gray-800 shrink-0 gap-4">
+      {/* Mobile: tapping anywhere (except buttons) opens the overview drawer */}
+      <header
+        className="relative flex items-center px-2 md:px-5 py-2 md:py-3 bg-gray-900 border-b border-gray-800 shrink-0 gap-2 md:gap-4 cursor-pointer md:cursor-default"
+        onClick={() => handleOpenDrawer('overview')}
+      >
+        {/* Left: hamburger (always) + title + desktop turn (stops header click) */}
+        <div className="flex items-center gap-2 md:gap-3 shrink-0 relative" onClick={e => e.stopPropagation()}>
 
-        {/* Left: title + turn */}
-        <div className="flex items-center gap-3 shrink-0">
-          <span className="text-xs font-mono font-bold text-gray-500 uppercase tracking-widest hidden sm:block">
+          {/* Hamburger menu button */}
+          <button
+            onClick={() => setMenuOpen(m => !m)}
+            className="w-9 h-9 flex flex-col items-center justify-center gap-1.5 rounded hover:bg-gray-800 active:bg-gray-700 transition-colors shrink-0"
+            aria-label="Menu"
+          >
+            <span className="w-5 h-px bg-gray-500" />
+            <span className="w-5 h-px bg-gray-500" />
+            <span className="w-5 h-px bg-gray-500" />
+          </button>
+
+          {/* Hamburger dropdown */}
+          {menuOpen && (
+            <div className="absolute top-full left-0 mt-1 z-50 bg-gray-900 border border-gray-700 rounded-lg shadow-2xl overflow-hidden min-w-48">
+              <button
+                onClick={() => { handleRestart(); setMenuOpen(false); }}
+                className="w-full text-left px-4 py-3 text-sm font-mono text-gray-400 hover:bg-gray-800 hover:text-gray-200 transition-colors border-b border-gray-800"
+              >
+                ← Return to Menu
+              </button>
+              {/* Future menu items */}
+            </div>
+          )}
+
+          {/* Desktop: title + turn */}
+          <span className="text-xs font-mono font-bold text-gray-500 uppercase tracking-widest hidden md:block">
             Memory Cell
           </span>
-          <span className="text-gray-800 hidden sm:block">|</span>
-          <div className="flex items-center gap-1">
+          <span className="text-gray-800 hidden md:block">|</span>
+          <div className="hidden md:flex items-center gap-1">
             <span className="text-xs text-gray-700 font-mono">T</span>
-            <span className="text-lg font-mono font-bold text-gray-400 tabular-nums leading-none">
-              {state.turn}
-            </span>
+            <span className="text-lg font-mono font-bold text-gray-400 tabular-nums leading-none">{state.turn}</span>
           </div>
         </div>
 
-        {/* Centre: systemic values */}
-        <div className="flex items-center gap-6 shrink-0">
+        {/* Centre: mobile compact stats (clickable area — propagates to header) */}
+        <div className="flex md:hidden items-center gap-1.5 flex-1 justify-center min-w-0">
+          <span className={`text-xs font-mono font-bold tabular-nums ${stressColor(stress)}`}>{stress}%</span>
+          <span className="text-gray-800 text-xs">·</span>
+          <span className={`text-xs font-mono font-bold tabular-nums ${integrityColor(integrity)}`}>{integrity}%</span>
+          <span className="text-gray-600 text-xs ml-1">↓</span>
+        </div>
 
-          {/* Systemic Stress */}
+        {/* Desktop full stats */}
+        <div className="hidden md:flex items-center gap-6 shrink-0 flex-1 justify-center" onClick={e => e.stopPropagation()}>
           <div className="flex flex-col items-center gap-0.5">
             <span className="text-xs text-gray-700 uppercase tracking-widest leading-none">Stress</span>
             <StressGauge stress={stress} />
           </div>
-
-          {/* Systemic Integrity */}
           <div className="flex flex-col items-center gap-0.5">
             <span className="text-xs text-gray-700 uppercase tracking-widest leading-none">Integrity</span>
             <IntegrityBar integrity={integrity} />
           </div>
-
-          {/* Fever toggle */}
           <button
             onClick={handleToggleFever}
             className={`px-2.5 py-1 text-xs font-mono border rounded transition-colors ${
@@ -224,8 +314,6 @@ export default function GameShell() {
           >
             {state.fever?.active ? '🌡 FEVER' : '🌡 fever'}
           </button>
-
-          {/* Win progress */}
           <div className="flex flex-col items-center gap-0.5">
             <span className="text-xs text-gray-700 uppercase tracking-widest leading-none">Encountered</span>
             <span className={`text-base font-mono font-bold tabular-nums leading-none ${state.totalPathogensSpawned >= WIN_PATHOGEN_TARGET ? 'text-green-400' : 'text-gray-400'}`}>
@@ -233,39 +321,35 @@ export default function GameShell() {
               <span className="text-gray-700 text-xs font-normal">/{WIN_PATHOGEN_TARGET}</span>
             </span>
           </div>
-
-          {/* Token pool */}
           <div className="flex flex-col items-center gap-0.5">
             <span className="text-xs text-gray-700 uppercase tracking-widest leading-none">Tokens</span>
             <TokenPool used={state.tokensInUse} capacity={state.tokenCapacity} />
           </div>
-
         </div>
 
-        {/* Right: menu + end turn */}
-        <div className="flex items-center gap-2 shrink-0">
-          <button
-            onClick={handleRestart}
-            className="px-3 py-1.5 text-xs font-mono text-gray-700 hover:text-gray-400 border border-gray-800 hover:border-gray-700 rounded transition-colors"
-          >
-            ← Menu
-          </button>
+        {/* Right: mobile turn + end turn (stops header click) */}
+        <div className="flex items-center gap-1.5 shrink-0" onClick={e => e.stopPropagation()}>
+          {/* Turn — mobile only (desktop shows it on left) */}
+          <div className="flex items-center gap-0.5 md:hidden">
+            <span className="text-xs text-gray-700 font-mono">T</span>
+            <span className="text-base font-mono font-bold text-gray-400 tabular-nums leading-none">{state.turn}</span>
+          </div>
           {isPlaying && (
             <button
               onClick={handleEndTurn}
-              className="px-5 py-2 bg-green-900 hover:bg-green-800 text-green-200 text-sm font-mono font-bold uppercase tracking-wider border border-green-700 rounded transition-colors cta-breathe"
+              className="px-3 md:px-5 py-1.5 md:py-2 bg-green-900 hover:bg-green-800 text-green-200 text-sm font-mono font-bold uppercase tracking-wider border border-green-700 rounded transition-colors cta-breathe"
             >
-              End Turn →
+              <span className="hidden md:inline">End Turn </span>→
             </button>
           )}
         </div>
       </header>
 
       {/* ── Main area ── */}
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 overflow-hidden min-h-0">
 
-        {/* Cell roster — left sidebar */}
-        <div className="w-64 shrink-0 border-r border-gray-800 overflow-hidden">
+        {/* Desktop: cell roster left sidebar */}
+        <div className="hidden md:flex border-r border-gray-800 overflow-hidden flex-col w-64 shrink-0">
           <CellRoster
             deployedCells={state.deployedCells}
             tokenCapacity={state.tokenCapacity}
@@ -280,36 +364,83 @@ export default function GameShell() {
           />
         </div>
 
-        {/* Body map */}
+        {/* Body map — full-width on mobile, relative for bottom overlay */}
         <div
-          className="flex-1 min-w-0 overflow-hidden cursor-default"
+          className="flex-1 min-w-0 overflow-hidden relative cursor-default"
           onClick={e => { if (e.target === e.currentTarget) handleSelectNode(null); }}
         >
           <BodyMap
             groundTruthNodeStates={state.groundTruth.nodeStates}
             deployedCells={state.deployedCells}
-            selectedNodeId={selectedNodeId}
+            selectedNodeId={tooltipNode}
             onSelectNode={handleSelectNode}
             onNodeContextMenu={handleNodeContextMenu}
             visibleNodes={visibleNodes}
           />
+
+          {/* ── Mobile: bottom overlay (z-30 so it sits above overview z-20 but below drawers z-40) ── */}
+          <div className="md:hidden absolute bottom-0 left-0 right-0 flex flex-col z-30" onClick={e => e.stopPropagation()}>
+            {/* Node bar — hidden only when its own drawer or roster drawer is open */}
+            {tooltipNode && openDrawer !== 'node' && openDrawer !== 'roster' && (
+              <NodeBar
+                nodeId={tooltipNode}
+                gtNodeStates={state.groundTruth.nodeStates}
+                visibleNodes={visibleNodes}
+                deployedCells={state.deployedCells}
+                selectedCellId={selectedCellId}
+                onOpenFull={() => handleOpenDrawer('node')}
+                onDeployDirect={handleDeployDirect}
+                onSelectCell={handleSelectCell}
+              />
+            )}
+            {/* Roster bar */}
+            <MobileRoster
+              deployedCells={state.deployedCells}
+              tokenCapacity={state.tokenCapacity}
+              tokensInUse={state.tokensInUse}
+              runConfig={state.runConfig}
+              isOpen={rosterOpen}
+              onOpenRoster={() => handleOpenDrawer('roster')}
+              onClose={() => setOpenDrawer(null)}
+              onTrainCell={handleTrainCell}
+              onSelectCellForDeploy={handleSelectCellForDeploy}
+              onRecall={handleRecall}
+              onDecommission={handleDecommission}
+              tooltipNode={tooltipNode}
+              onDeployDirect={handleDeployDirect}
+              nodeBarSlot={tooltipNode ? (
+                <NodeBar
+                  nodeId={tooltipNode}
+                  gtNodeStates={state.groundTruth.nodeStates}
+                  visibleNodes={visibleNodes}
+                  deployedCells={state.deployedCells}
+                  selectedCellId={selectedCellId}
+                  onOpenFull={() => handleOpenDrawer('node')}
+                  onDeployDirect={handleDeployDirect}
+                  onSelectCell={handleSelectCell}
+                />
+              ) : null}
+            />
+          </div>
         </div>
 
-        {/* Right panel: node detail or overview */}
+        {/* Desktop: right panel (node detail or overview) */}
         {selectedNodeId ? (
-          <div className="shrink-0 overflow-hidden flex flex-col border-l border-gray-800" style={{ width: 420 }}>
+          <div className="hidden md:flex overflow-hidden flex-col border-l border-gray-800 w-[420px] shrink-0">
             <NodeDetail
               nodeId={selectedNodeId}
               groundTruthNodeState={state.groundTruth.nodeStates[selectedNodeId]}
               deployedCells={state.deployedCells}
               currentTurn={state.turn}
+              selectedCellId={selectedCellId}
               onRecall={handleRecall}
               onClose={() => handleSelectNode(null)}
+              onDeployToNode={handleNodeContextMenu}
               visibleNodes={visibleNodes}
             />
           </div>
         ) : (
-          <div className="shrink-0 border-l border-gray-800 overflow-y-auto" style={{ width: 300 }}>
+          <div className="hidden md:block border-l border-gray-800 overflow-y-auto w-[300px] shrink-0">
             <OverviewPanel
               deployedCells={state.deployedCells}
               systemicStress={stress}
@@ -324,15 +455,94 @@ export default function GameShell() {
         )}
       </div>
 
-      {/* Modifier choice overlay */}
+      {/* ── Mobile drawer: node view (slides from bottom; roster bar visible below via bottom-[60px]) ── */}
+      {openDrawer === 'node' && tooltipNode && (
+        <div className="md:hidden fixed inset-x-0 top-0 bottom-[60px] z-40 flex flex-col justify-end">
+          {/* Scrim */}
+          <div className="absolute inset-0 bg-black/60" onClick={() => setOpenDrawer(null)} />
+          {/* Panel */}
+          <div
+            className="relative bg-gray-950 border-t border-gray-700 rounded-t-xl overflow-hidden flex flex-col"
+            style={{ maxHeight: '90%' }}
+          >
+            <NodeBar
+              nodeId={tooltipNode}
+              gtNodeStates={state.groundTruth.nodeStates}
+              visibleNodes={visibleNodes}
+              deployedCells={state.deployedCells}
+              selectedCellId={selectedCellId}
+              onOpenFull={null}
+              onDeployDirect={handleDeployDirect}
+              onSelectCell={handleSelectCell}
+              showCloseButton
+              onClose={() => setOpenDrawer(null)}
+            />
+            <div className="flex-1 overflow-y-auto">
+              <NodeDetail
+                nodeId={tooltipNode}
+                groundTruthNodeState={state.groundTruth.nodeStates[tooltipNode]}
+                deployedCells={state.deployedCells}
+                currentTurn={state.turn}
+                selectedCellId={selectedCellId}
+                onRecall={handleRecall}
+                onClose={() => setOpenDrawer(null)}
+                onDeployToNode={handleDeployToNode}
+                visibleNodes={visibleNodes}
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Mobile drawer: overview (slides from top, z-20 so bottom bars z-30 stay tappable) ── */}
+      {openDrawer === 'overview' && (
+        <div className="md:hidden fixed inset-0 z-20 flex flex-col" onClick={() => setOpenDrawer(null)}>
+          {/* Panel */}
+          <div
+            className="bg-gray-900 border-b border-gray-700 overflow-y-auto flex flex-col"
+            style={{ maxHeight: '70vh' }}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Drawer header */}
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800 shrink-0">
+              <div className="flex items-center gap-3">
+                <span className="text-xs font-mono uppercase tracking-widest text-gray-400">Overview</span>
+                <button
+                  onClick={e => { e.stopPropagation(); handleToggleFever(); }}
+                  className={`px-1.5 py-0.5 text-xs font-mono border rounded transition-colors ${
+                    state.fever?.active
+                      ? 'bg-orange-950 border-orange-700 text-orange-300'
+                      : 'bg-gray-900 border-gray-700 text-gray-600'
+                  }`}
+                >
+                  🌡 {state.fever?.active ? 'FEVER' : 'fever'}
+                </button>
+              </div>
+              <button onClick={() => setOpenDrawer(null)} className="text-gray-500 hover:text-gray-300 text-lg leading-none px-1">↑</button>
+            </div>
+            <OverviewPanel
+              deployedCells={state.deployedCells}
+              systemicStress={stress}
+              systemicIntegrity={integrity}
+              stressHistory={state.systemicStressHistory}
+              fever={state.fever}
+              scars={state.scars}
+              groundTruthNodeStates={state.groundTruth.nodeStates}
+              onSelectNode={(nodeId) => { handleSelectNode(nodeId); setOpenDrawer(null); }}
+            />
+          </div>
+          {/* Scrim below — tap to close */}
+          <div className="flex-1" />
+        </div>
+      )}
+
+      {/* Game overlays */}
       {state.phase === GAME_PHASES.PLAYING && (state.pendingModifierChoices?.length ?? 0) > 0 && (
         <ModifierChoice
           pendingModifierChoices={state.pendingModifierChoices}
           dispatch={dispatch}
         />
       )}
-
-      {/* Post-mortem overlay */}
       {state.phase !== GAME_PHASES.PLAYING && state.postMortem && (
         <PostMortem
           postMortem={state.postMortem}
@@ -340,6 +550,119 @@ export default function GameShell() {
           onRestart={handleRestart}
         />
       )}
+    </div>
+  );
+}
+
+// ── Node bar (mobile) ─────────────────────────────────────────────────────────
+// 3-line strip showing selected node info. Shown above roster bar, and at top
+// of both drawers. Tap to open node drawer (if onOpenFull is set).
+
+function NodeBar({ nodeId, gtNodeStates, visibleNodes, deployedCells, selectedCellId,
+                   onOpenFull, onDeployDirect, onSelectCell, showCloseButton, onClose }) {
+  const node = NODES[nodeId];
+  if (!node) return null;
+
+  const gt = gtNodeStates?.[nodeId];
+  const isVisible = visibleNodes?.has(nodeId) ?? false;
+  const inflammation = isVisible ? (gt?.inflammation ?? 0) : (gt?.lastKnownInflammation ?? 0);
+  const integrity = gt?.tissueIntegrity ?? 100;
+  const pathogens = (gt?.pathogens ?? []).filter(p => p.detected_level !== 'none');
+  const cellsHere = Object.values(deployedCells).filter(c => c.nodeId === nodeId && c.phase === 'arrived');
+  const cellsEnRoute = Object.values(deployedCells).filter(c => c.destNodeId === nodeId && c.phase === 'outbound');
+
+  const inflColor = inflammation > 70 ? 'text-red-400' : inflammation > 40 ? 'text-orange-400' : 'text-gray-500';
+  const integColor = integrity < 40 ? 'text-red-400' : integrity < 70 ? 'text-yellow-400' : 'text-gray-400';
+
+  const readyCell = selectedCellId ? deployedCells[selectedCellId] : null;
+  const canDeploy = readyCell?.phase === 'ready';
+
+  return (
+    <div
+      className={`bg-gray-900 border-t border-gray-700 ${onOpenFull ? 'cursor-pointer active:bg-gray-800' : ''}`}
+      onClick={onOpenFull ?? undefined}
+    >
+      {/* Line 1: Node name + visibility + inflammation + integrity + close/expand */}
+      <div className="flex items-center gap-1.5 px-3 pt-2 pb-0.5">
+        <span className="text-sm font-mono font-bold text-gray-100 flex-1 truncate min-w-0">{node.label}</span>
+        {node.isHQ && <span className="text-xs text-purple-500 font-mono shrink-0">HQ</span>}
+        {!isVisible && <span className="text-xs text-gray-600 italic font-mono shrink-0">dark</span>}
+        <span className={`text-xs font-mono tabular-nums shrink-0 ${inflColor}`}>{Math.round(inflammation)} infl</span>
+        <span className={`text-xs font-mono tabular-nums shrink-0 ${integColor}`}>{Math.round(integrity)}%</span>
+        {showCloseButton ? (
+          <button
+            onClick={e => { e.stopPropagation(); onClose?.(); }}
+            className="text-gray-500 hover:text-gray-300 text-lg leading-none px-1 -mr-1 shrink-0"
+          >↓</button>
+        ) : onOpenFull ? (
+          <span className="text-gray-600 text-xs shrink-0">▶</span>
+        ) : null}
+      </div>
+
+      {/* Line 2: Pathogens with ring colors + load % */}
+      <div className="flex items-center flex-wrap gap-x-2 gap-y-0 px-3 py-0.5 min-h-[1.25rem]">
+        {pathogens.length === 0 ? (
+          <span className="text-xs text-gray-700 font-mono italic">clear</span>
+        ) : pathogens.map(p => {
+          const lvl = p.detected_level;
+          const isKnown = lvl === 'classified' || lvl === 'misclassified';
+          const displayType = p.perceived_type ?? p.type;
+          const label = isKnown
+            ? (PATHOGEN_DISPLAY_NAMES[displayType] ?? '?')
+            : lvl === 'threat' ? 'threat' : 'anomaly';
+          const load = isKnown ? getPrimaryLoad(p, isVisible) : null;
+          const ringColor = isKnown
+            ? (PATHOGEN_RING_COLORS[displayType] ?? '#f43f5e')
+            : lvl === 'threat' ? '#f97316' : '#6b7280';
+          return (
+            <span key={p.uid ?? p.type} className="text-xs font-mono flex items-center gap-1" style={{ color: ringColor }}>
+              <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: ringColor }} />
+              {label}{load != null ? ` ${Math.round(load)}%` : ''}
+            </span>
+          );
+        })}
+      </div>
+
+      {/* Line 3: Cells present (tappable to select) on left, en-route on right + deploy */}
+      <div className="flex items-center gap-2 px-3 pb-2 pt-0.5">
+        {/* Present cells — tap to select for redeploy */}
+        <div className="flex items-center gap-0.5 flex-1 min-w-0 flex-wrap">
+          {cellsHere.length === 0 ? (
+            <span className="text-xs text-gray-700 font-mono italic">no cells</span>
+          ) : cellsHere.map(cell => {
+            const cc = CELL_CONFIG[cell.type];
+            const isSelected = cell.id === selectedCellId;
+            return (
+              <button
+                key={cell.id}
+                onClick={e => { e.stopPropagation(); onSelectCell?.(isSelected ? null : cell.id); }}
+                className={`rounded p-0.5 transition-colors ${isSelected ? 'bg-blue-900 ring-1 ring-blue-500' : 'hover:bg-gray-800 active:bg-gray-700'}`}
+                title={cc?.displayName ?? cell.type}
+              >
+                <CellIcon type={cell.type} size={14} color={isSelected ? '#93c5fd' : (cc?.color ?? '#6b7280')} />
+              </button>
+            );
+          })}
+        </div>
+        {/* En-route cells */}
+        {cellsEnRoute.length > 0 && (
+          <div className="flex items-center gap-0.5 shrink-0 opacity-50">
+            <span className="text-xs text-gray-600 font-mono">→</span>
+            {cellsEnRoute.map(cell => (
+              <CellIcon key={cell.id} type={cell.type} size={12} color={CELL_CONFIG[cell.type]?.color ?? '#6b7280'} />
+            ))}
+          </div>
+        )}
+        {/* Deploy button */}
+        {canDeploy && (
+          <button
+            onClick={e => { e.stopPropagation(); onDeployDirect(readyCell.id, nodeId); }}
+            className="text-xs font-mono px-1.5 py-0.5 border border-green-700 bg-green-950 text-green-300 rounded hover:bg-green-900 active:bg-green-800 transition-colors shrink-0"
+          >
+            Deploy →
+          </button>
+        )}
+      </div>
     </div>
   );
 }

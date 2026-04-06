@@ -43,7 +43,7 @@ export const CELL_CONFIG = {
   // ── Recon ──────────────────────────────────────────────────────────────────
 
   dendritic: {
-    displayName:           'Scout',
+    displayName:           'Dendritic',
     deployCost:            2,        // tokens held for cell's lifetime
     clearanceRate:         0,        // recon only — no pathogen clearance
     trainingTicks:         20,
@@ -69,33 +69,6 @@ export const CELL_CONFIG = {
     },
   },
 
-  neutrophil: {
-    displayName:           'Patrol',
-    deployCost:            1,
-    clearanceRate:         0,        // patrols do not clear pathogens
-    trainingTicks:         10,
-    displayOrder:          1,
-    color:                 '#60a5fa',
-    textClass:             'text-blue-400',
-    dotClass:              'bg-blue-600',
-    startingCount:         0,
-    // ── Role flags ──
-    isRecon:               true,
-    isAttack:              false,
-    isPatrol:              true,     // cycles adjacent nodes on a dwell timer
-    isScout:               false,
-    requiresClassified:    false,
-    coversAdjacentNodes:   false,
-    // ── Detection ──
-    detectionRolls:        2,
-    detectionUpgradeProbs: NEUTROPHIL_DETECTION_PROBS,
-    // ── Clearance ──
-    clearablePathogens:    {},       // clearanceRate=0 — included here for completeness
-    effectivenessByLevel:  {         // N/A — clearanceRate=0
-      none: 1.0, unknown: 1.0, threat: 1.0, misclassified: 1.0, classified: 1.0,
-    },
-  },
-
   macrophage: {
     displayName:           'Macrophage',
     deployCost:            1,
@@ -109,12 +82,12 @@ export const CELL_CONFIG = {
     // ── Role flags ──
     isRecon:               true,
     isAttack:              false,
-    isPatrol:              false,
+    isPatrol:              true,    // cycles adjacent nodes on a dwell timer
     isScout:               false,
     requiresClassified:    false,
     coversAdjacentNodes:   true,     // grants visibility to adjacent nodes
     // ── Detection ──
-    detectionRolls:        0,
+    detectionRolls:        1,
     detectionUpgradeProbs: MACROPHAGE_DETECTION_PROBS,
     // ── Clearance ──
     clearablePathogens: {
@@ -132,10 +105,44 @@ export const CELL_CONFIG = {
 
   // ── Attack ──────────────────────────────────────────────────────────────────
 
-  responder: {
-    displayName:           'Responder',
+  neutrophil: {
+    displayName:           'Neutrophil',
+    deployCost:            1,
+    clearanceRate:         5,        
+    trainingTicks:         5,
+    displayOrder:          1,
+    color:                 '#60a5fa',
+    textClass:             'text-blue-400',
+    dotClass:              'bg-blue-600',
+    startingCount:         0,
+    // ── Role flags ──
+    isRecon:               false,
+    isAttack:              true,
+    isPatrol:              false, 
+    isScout:               false,
+    requiresClassified:    false,
+    coversAdjacentNodes:   false,
+    // ── Detection ──
+    detectionRolls:        0,
+    detectionUpgradeProbs: NEUTROPHIL_DETECTION_PROBS,
+    // ── Clearance ──
+    clearablePathogens:    {
+      extracellular_bacteria: 1.0,
+      fungi:                  1.0,
+      benign:   1.0,
+    } , 
+    effectivenessByLevel:  {        
+      none: 0, 
+      unknown: .8, 
+      threat: .9, 
+      misclassified: .9, 
+      classified: 1.0,
+    },
+  },
+  eosinophil: {
+    displayName:           'Eosinophil',
     deployCost:            3,
-    clearanceRate:         12,
+    clearanceRate:         5,
     trainingTicks:         15,
     displayOrder:          4,
     color:                 '#f87171',
@@ -154,16 +161,13 @@ export const CELL_CONFIG = {
     detectionUpgradeProbs: null,
     // ── Clearance ──
     clearablePathogens: {
-      extracellular_bacteria: 1.0,
-      fungi:                  1.0,
-      toxin_producer:         1.0,
-      benign:                 1.0,
+      parasite: 1.0,
     },
     effectivenessByLevel: {         // penalty without classified intel
-      none:          0.6,
-      unknown:       0.6,
-      threat:        0.6,
-      misclassified: 0.6,
+      none:          0.5,
+      unknown:       0.5,
+      threat:        0.5,
+      misclassified: 0.5,
       classified:    1.0,
     },
   },
@@ -207,7 +211,7 @@ export const CELL_CONFIG = {
   b_cell: {
     displayName:           'B-Cell',
     deployCost:            2,
-    clearanceRate:         8,
+    clearanceRate:         3,
     trainingTicks:         20,
     displayOrder:          6,
     color:                 '#4ade80',
@@ -227,13 +231,18 @@ export const CELL_CONFIG = {
     // ── Clearance ──
     clearablePathogens: {
       extracellular_bacteria: 1.0,
+      virus: 1.0,
+      fungi: 1.0,
+      parasite: .5, 
+      intracellular_bacteria: .5,
+      toxin_producer: 1.0,
       benign:                 1.0,
     },
-    effectivenessByLevel: {         // small penalty without classified intel
-      none:          0.85,
-      unknown:       0.85,
-      threat:        0.85,
-      misclassified: 0.85,
+    effectivenessByLevel: {        
+      none:          0,
+      unknown:       0,
+      threat:        0.25,
+      misclassified: 0.25,
       classified:    1.0,
     },
   },
@@ -261,11 +270,11 @@ export const CELL_CONFIG = {
     // ── Clearance ──
     clearablePathogens: {
       virus:    1.0,
-      parasite: 1.0,  // NK cells target parasite-infected host cells
+      intracellular_bacteria: 1.0,  // NK cells target parasite-infected host cells
       cancer:   1.0,
       benign:   1.0,
     },
-    effectivenessByLevel: {         // operates without prior intelligence
+    effectivenessByLevel: {   
       none:          1.0,
       unknown:       1.0,
       threat:        1.0,
@@ -293,6 +302,9 @@ export const RECON_CELL_TYPES = new Set(
 
 export const PATROL_CELL_TYPES = new Set(
   Object.entries(CELL_CONFIG).filter(([, v]) => v.isPatrol).map(([k]) => k)
+);
+export const ALL_CELL_TYPES = new Set(
+  Object.entries(CELL_CONFIG).map(([k]) => k)
 );
 
 // ── Derived flat tables (backward compatibility and quick lookups) ─────────────
