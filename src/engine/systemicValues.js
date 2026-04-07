@@ -126,33 +126,20 @@ export function computeNewScars(nodeStates, existingScars, systemicIntegrity, pr
   const newScars = [];
   const existingScarIds = new Set(existingScars.map(s => s.id));
 
-  // Site-specific scars at integrity thresholds
-  const SCAR_THRESHOLDS = [50, 0];
+  // Site-specific scars — only when tissue integrity reaches 0%
   for (const nodeId of NODE_IDS) {
     const ns = nodeStates[nodeId];
     if (!ns) continue;
-    for (const threshold of SCAR_THRESHOLDS) {
-      const scarId = `site_${nodeId}_${threshold}`;
-      if (existingScarIds.has(scarId)) continue;
-      if (ns.tissueIntegrity <= threshold) {
-        newScars.push({
-          id: scarId,
-          type: 'site_integrity',
-          nodeId,
-          threshold,
-          description: `${nodeId} integrity fell to ${threshold}%`,
-        });
-      }
+    const scarId = `site_${nodeId}_0`;
+    if (!existingScarIds.has(scarId) && ns.tissueIntegrity <= 0) {
+      newScars.push({
+        id: scarId,
+        type: 'site_integrity',
+        nodeId,
+        threshold: 0,
+        description: `${nodeId} tissue completely destroyed`,
+      });
     }
-  }
-
-  // Systemic integrity scar at 50%
-  if (!existingScarIds.has('systemic_50') && systemicIntegrity <= 50 && previousIntegrity > 50) {
-    newScars.push({
-      id: 'systemic_50',
-      type: 'systemic_integrity',
-      description: 'Systemic integrity dropped below 50%',
-    });
   }
 
   return newScars;

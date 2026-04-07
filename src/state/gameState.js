@@ -77,6 +77,9 @@ export function initGameState(runConfig = DEFAULT_RUN_CONFIG) {
     // Win tracking — counts unique pathogen spawns (not spreads)
     totalPathogensSpawned: 0,
 
+    // Upgrade trigger tracking — upgrades fire every 3rd pathogen cleared
+    totalPathogensCleared: 0,
+
     // Modifier choices awaiting player resolution.
     // Each entry: { id, category, options: [...] }
     // First entry must be resolved (CHOOSE_MODIFIER) before END_TURN is meaningful.

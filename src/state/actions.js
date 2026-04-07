@@ -152,8 +152,10 @@ function handleEndTurn(state) {
   const scars = [...state.scars, ...newScars];
 
   // ── Generate modifier choices ────────────────────────────────────────────
+  const clearedCount = groundTruthEvents.filter(e => e.type === 'pathogen_cleared').length;
+  const newTotalCleared = state.totalPathogensCleared + clearedCount;
   const newPendingChoices = generateModifierChoices(
-    groundTruthEvents, newScars, updatedCells, state.runModifiers, mods
+    groundTruthEvents, newScars, updatedCells, state.runModifiers, state.totalPathogensCleared
   );
 
   const systemicStressHistory = [
@@ -196,6 +198,7 @@ function handleEndTurn(state) {
     systemicStressHistory,
     scars,
     totalPathogensSpawned,
+    totalPathogensCleared: newTotalCleared,
     phase,
     lossReason,
     postMortem,
@@ -341,13 +344,21 @@ let _choiceIdCounter = 0;
  * @param {Object} _mods              — alias of runModifiers (unused here, kept for clarity)
  * @returns {Array} pending choice entries
  */
-function generateModifierChoices(groundTruthEvents, newScars, deployedCells, runModifiers) {
+function generateModifierChoices(groundTruthEvents, newScars, deployedCells, runModifiers, prevPathogensCleared = 0) {
   const choices = [];
 
-  // ── Upgrade choices: one per pathogen cleared ─────────────────────────────
+  // ── Upgrade choices: one per every 3rd pathogen cleared ──────────────────
   const clearedEvents = groundTruthEvents.filter(e => e.type === 'pathogen_cleared');
+  const newTotal = prevPathogensCleared + clearedEvents.length;
+  const upgradesToGrant = Math.floor(newTotal / 3) - Math.floor(prevPathogensCleared / 3);
 
-  for (const event of clearedEvents) {
+  for (let i = 0; i < upgradesToGrant; i++) {
+    // Use the event that crossed the threshold for context; fall back to last event
+    const triggerIndex = Math.min(
+      clearedEvents.length - 1,
+      (3 - (prevPathogensCleared % 3)) - 1 + i * 3
+    );
+    const event = clearedEvents[Math.min(triggerIndex, clearedEvents.length - 1)];
     const clearingCellType = findPrimaryClearingCellType(
       event.nodeId, event.pathogenType, deployedCells, runModifiers
     );
