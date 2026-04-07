@@ -179,6 +179,7 @@ export default function NodeDetail({
   onRecall,
   onClose,
   onDeployToNode,
+  onStartPatrol,
   visibleNodes,
 }) {
   const node = NODES[nodeId];
@@ -194,9 +195,9 @@ export default function NodeDetail({
       }
     : null;
 
-  const cellsHere    = Object.values(deployedCells).filter(c => c.nodeId === nodeId && c.phase === 'arrived');
+  const cellsHere    = Object.values(deployedCells).filter(c => c.nodeId === nodeId && c.phase === 'arrived' && !c.isPatrolling);
   const cellsTransit = Object.values(deployedCells).filter(c =>
-    c.nodeId === nodeId && (c.phase === 'outbound' || c.phase === 'returning'));
+    c.nodeId === nodeId && (c.phase === 'outbound' || c.phase === 'returning' || (c.phase === 'arrived' && c.isPatrolling)));
 
   return (
     <div className="flex flex-col h-full bg-gray-950 border-l border-gray-800">
@@ -276,11 +277,15 @@ export default function NodeDetail({
               </div>
               {cellsTransit.map(cell => {
                 const cc = CELL_TYPE_CONFIG[cell.type] ?? { displayName: cell.type, textClass: 'text-gray-600', color: '#4b5563' };
+                const isPatrollingHere = cell.isPatrolling && cell.phase === 'arrived';
                 const isOutbound = cell.phase === 'outbound';
-                const destLabel = isOutbound
-                  ? (NODES[cell.destNodeId]?.label ?? cell.destNodeId ?? '?')
-                  : 'HQ';
-                const eta = (cell.path && cell.pathIndex != null)
+                const indicator = isPatrollingHere ? '↻' : isOutbound ? '→' : '↩';
+                const destLabel = isPatrollingHere
+                  ? 'patrol'
+                  : isOutbound
+                    ? (NODES[cell.destNodeId]?.label ?? cell.destNodeId ?? '?')
+                    : 'HQ';
+                const eta = (!isPatrollingHere && cell.path && cell.pathIndex != null)
                   ? computePathCost(cell.path, cell.pathIndex)
                   : null;
                 return (
@@ -288,7 +293,7 @@ export default function NodeDetail({
                     <CellIcon type={cell.type} size={13} color={cc.color ?? '#4b5563'} />
                     <span className={`text-xs font-mono ${cc.textClass} flex-1`}>{cc.displayName}</span>
                     <span className="text-xs text-gray-600 font-mono">
-                      {isOutbound ? '→' : '↩'} {destLabel}{eta != null ? ` ${eta}T` : ''}
+                      {indicator} {destLabel}{eta != null ? ` ${eta}T` : ''}
                     </span>
                   </div>
                 );
@@ -297,18 +302,29 @@ export default function NodeDetail({
           )}
         </section>
 
-        {/* Deploy */}
+        {/* Deploy / Patrol */}
         <section className="px-4 py-3">
           {selectedCellId && deployedCells[selectedCellId]?.phase === 'ready' ? (() => {
             const cell = deployedCells[selectedCellId];
             const cc = CELL_TYPE_CONFIG[cell.type];
+            const isRecon = cc?.isRecon ?? false;
             return (
-              <button
-                onClick={() => onDeployToNode?.(nodeId)}
-                className="w-full py-2 px-3 text-xs font-mono font-bold uppercase tracking-widest border border-green-700 bg-green-950 text-green-300 hover:bg-green-900 rounded transition-colors"
-              >
-                Deploy {cc?.displayName ?? cell.type} here
-              </button>
+              <div className="flex flex-col gap-2">
+                <button
+                  onClick={() => onDeployToNode?.(nodeId)}
+                  className="w-full py-2 px-3 text-xs font-mono font-bold uppercase tracking-widest border border-green-700 bg-green-950 text-green-300 hover:bg-green-900 rounded transition-colors"
+                >
+                  Deploy {cc?.displayName ?? cell.type} here
+                </button>
+                {isRecon && (
+                  <button
+                    onClick={() => onStartPatrol?.(selectedCellId)}
+                    className="w-full py-2 px-3 text-xs font-mono font-bold uppercase tracking-widest border border-amber-700 bg-amber-950 text-amber-300 hover:bg-amber-900 rounded transition-colors"
+                  >
+                    Patrol ↻
+                  </button>
+                )}
+              </div>
             );
           })() : (
             <div className="text-xs text-gray-700 italic">
