@@ -585,8 +585,8 @@ function NodeBar({ nodeId, gtNodeStates, visibleNodes, deployedCells, selectedCe
   const cellsHere = Object.values(deployedCells).filter(c => c.nodeId === nodeId && c.phase === 'arrived');
   const cellsEnRoute = Object.values(deployedCells).filter(c => c.destNodeId === nodeId && c.phase === 'outbound');
 
-  const inflColor = inflammation > 70 ? 'text-red-400' : inflammation > 40 ? 'text-orange-400' : 'text-gray-500';
-  const integColor = integrity < 40 ? 'text-red-400' : integrity < 70 ? 'text-yellow-400' : 'text-gray-400';
+  const inflColor = inflammation > 70 ? 'text-red-400' : inflammation > 40 ? 'text-orange-400' : 'text-gray-400';
+  const integColor = integrity < 40 ? 'text-red-400' : integrity < 70 ? 'text-yellow-400' : 'text-gray-300';
 
   const readyCell = selectedCellId ? deployedCells[selectedCellId] : null;
   const canDeploy = readyCell?.phase === 'ready';
@@ -600,24 +600,24 @@ function NodeBar({ nodeId, gtNodeStates, visibleNodes, deployedCells, selectedCe
       {/* Line 1: Node name + visibility + inflammation + integrity + close/expand */}
       <div className="flex items-center gap-1.5 px-3 pt-2 pb-0.5">
         <span className="text-sm font-mono font-bold text-gray-100 flex-1 truncate min-w-0">{node.label}</span>
-        {node.isHQ && <span className="text-xs text-purple-500 font-mono shrink-0">HQ</span>}
-        {!isVisible && <span className="text-xs text-gray-600 italic font-mono shrink-0">dark</span>}
+        {node.isHQ && <span className="text-xs text-purple-400 font-mono shrink-0">HQ</span>}
+        {!isVisible && <span className="text-xs text-gray-500 italic font-mono shrink-0">dark</span>}
         <span className={`text-xs font-mono tabular-nums shrink-0 ${inflColor}`}>{Math.round(inflammation)} infl</span>
         <span className={`text-xs font-mono tabular-nums shrink-0 ${integColor}`}>{Math.round(integrity)}%</span>
         {showCloseButton ? (
           <button
             onClick={e => { e.stopPropagation(); onClose?.(); }}
-            className="text-gray-500 hover:text-gray-300 text-lg leading-none px-1 -mr-1 shrink-0"
+            className="text-gray-400 hover:text-gray-200 text-lg leading-none px-1 -mr-1 shrink-0"
           >↓</button>
         ) : onOpenFull ? (
-          <span className="text-gray-600 text-xs shrink-0">▶</span>
+          <span className="text-gray-500 text-xs shrink-0">▶</span>
         ) : null}
       </div>
 
       {/* Line 2: Pathogens with ring colors + load % */}
       <div className="flex items-center flex-wrap gap-x-2 gap-y-0 px-3 py-0.5 min-h-[1.25rem]">
         {pathogens.length === 0 ? (
-          <span className="text-xs text-gray-700 font-mono italic">clear</span>
+          <span className="text-xs text-gray-500 font-mono italic">clear</span>
         ) : pathogens.map(p => {
           const lvl = p.detected_level;
           const isKnown = lvl === 'classified' || lvl === 'misclassified';
@@ -643,7 +643,7 @@ function NodeBar({ nodeId, gtNodeStates, visibleNodes, deployedCells, selectedCe
         {/* Present cells — tap to select for redeploy */}
         <div className="flex items-center gap-0.5 flex-1 min-w-0 flex-wrap">
           {cellsHere.length === 0 ? (
-            <span className="text-xs text-gray-700 font-mono italic">no cells</span>
+            <span className="text-xs text-gray-500 font-mono italic">no cells</span>
           ) : cellsHere.map(cell => {
             const cc = CELL_CONFIG[cell.type];
             const isSelected = cell.id === selectedCellId;
@@ -661,8 +661,8 @@ function NodeBar({ nodeId, gtNodeStates, visibleNodes, deployedCells, selectedCe
         </div>
         {/* En-route cells */}
         {cellsEnRoute.length > 0 && (
-          <div className="flex items-center gap-0.5 shrink-0 opacity-50">
-            <span className="text-xs text-gray-600 font-mono">→</span>
+          <div className="flex items-center gap-0.5 shrink-0 opacity-60">
+            <span className="text-xs text-gray-400 font-mono">→</span>
             {cellsEnRoute.map(cell => (
               <CellIcon key={cell.id} type={cell.type} size={12} color={CELL_CONFIG[cell.type]?.color ?? '#6b7280'} />
             ))}

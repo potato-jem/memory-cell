@@ -150,14 +150,14 @@ export default function MobileRoster({
             )}
 
             {/* Drawer header */}
-            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800 shrink-0">
-              <span className="text-xs font-mono uppercase tracking-widest text-gray-400">Units</span>
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700 shrink-0">
+              <span className="text-xs font-mono uppercase tracking-widest text-gray-300">Units</span>
               <div className="flex items-center gap-4">
                 <span className={`text-xs font-mono font-bold ${tokensInUse >= tokenCapacity ? 'text-red-400' : 'text-cyan-400'}`}>
-                  {tokensInUse}<span className="text-gray-600 font-normal">/{tokenCapacity}</span>
-                  <span className="text-gray-700 font-normal"> tokens</span>
+                  {tokensInUse}<span className="text-gray-400 font-normal">/{tokenCapacity}</span>
+                  <span className="text-gray-400 font-normal"> tokens</span>
                 </span>
-                <button onClick={onClose} className="text-gray-500 hover:text-gray-300 text-lg leading-none px-1">↓</button>
+                <button onClick={onClose} className="text-gray-400 hover:text-gray-200 text-lg leading-none px-1">↓</button>
               </div>
             </div>
 
@@ -172,33 +172,33 @@ export default function MobileRoster({
                 const clearanceEntries = getClearanceEntries(type);
 
                 return (
-                  <div key={type} className="border-b border-gray-800 px-4 py-3.5">
+                  <div key={type} className="border-b border-gray-700 px-4 py-3.5">
 
                     {/* Type header */}
                     <div className="flex items-center gap-3 mb-2.5">
                       <CellIcon type={type} size={20} color={cfg?.color ?? '#888'} />
                       <div className="flex-1 min-w-0">
-                        <div className={`text-sm font-mono font-bold ${cfg?.textClass ?? 'text-gray-300'}`}>
+                        <div className={`text-sm font-mono font-bold ${cfg?.textClass ?? 'text-gray-200'}`}>
                           {cfg?.displayName ?? type}
                         </div>
-                        <div className="text-xs text-gray-600 font-mono">
+                        <div className="text-xs text-gray-400 font-mono">
                           {cost}t deploy · {trainingTurns}T train
                         </div>
                       </div>
                       {/* Status chips */}
                       <div className="flex flex-wrap gap-1 justify-end">
                         {training.length > 0 && (
-                          <span className="text-xs font-mono px-1.5 py-0.5 bg-yellow-950 border border-yellow-800 text-yellow-600 rounded">
+                          <span className="text-xs font-mono px-1.5 py-0.5 bg-yellow-950 border border-yellow-700 text-yellow-400 rounded">
                             {training.length} training
                           </span>
                         )}
                         {ready.length > 0 && (
-                          <span className="text-xs font-mono px-1.5 py-0.5 bg-green-950 border border-green-800 text-green-500 rounded">
+                          <span className="text-xs font-mono px-1.5 py-0.5 bg-green-950 border border-green-700 text-green-400 rounded">
                             {ready.length} ready
                           </span>
                         )}
                         {out.length > 0 && (
-                          <span className="text-xs font-mono px-1.5 py-0.5 bg-cyan-950 border border-cyan-800 text-cyan-600 rounded">
+                          <span className="text-xs font-mono px-1.5 py-0.5 bg-cyan-950 border border-cyan-700 text-cyan-400 rounded">
                             {out.length} out
                           </span>
                         )}
@@ -216,7 +216,7 @@ export default function MobileRoster({
                         ))}
                       </div>
                     ) : (
-                      <div className="text-xs text-gray-700 mb-2.5 italic">Recon / surveillance only</div>
+                      <div className="text-xs text-gray-500 mb-2.5 italic">Recon / surveillance only</div>
                     )}
 
                     {/* Actions */}
@@ -226,8 +226,8 @@ export default function MobileRoster({
                         disabled={!canAfford}
                         className={`flex-1 py-2 text-xs font-mono border rounded transition-colors ${
                           canAfford
-                            ? 'border-gray-600 text-gray-300 hover:bg-gray-800 active:bg-gray-700'
-                            : 'border-gray-800 text-gray-700 cursor-not-allowed'
+                            ? 'border-gray-500 text-gray-200 hover:bg-gray-800 active:bg-gray-700'
+                            : 'border-gray-700 text-gray-600 cursor-not-allowed'
                         }`}
                       >
                         + Train ({cost}t)
@@ -236,7 +236,7 @@ export default function MobileRoster({
                         <DeployBtn
                           onTap={() => handleDeploy(type)}
                           onLongPress={() => handleDeploySelectMode(type)}
-                          className="flex-1 py-2 text-xs font-mono border border-green-700 bg-green-950 text-green-300 rounded hover:bg-green-900 active:bg-green-800 transition-colors select-none"
+                          className="flex-1 py-2 text-xs font-mono border border-green-600 bg-green-950 text-green-300 rounded hover:bg-green-900 active:bg-green-800 transition-colors select-none"
                           title="Tap to deploy to selected node · Hold to choose node"
                         >
                           {deployLabel}
@@ -245,7 +245,7 @@ export default function MobileRoster({
                       {ready.length > 0 && cfg?.isRecon && (
                         <button
                           onClick={() => handlePatrol(type)}
-                          className="flex-1 py-2 text-xs font-mono border border-amber-700 bg-amber-950 text-amber-300 rounded hover:bg-amber-900 active:bg-amber-800 transition-colors"
+                          className="flex-1 py-2 text-xs font-mono border border-amber-600 bg-amber-950 text-amber-300 rounded hover:bg-amber-900 active:bg-amber-800 transition-colors"
                         >
                           Patrol ↻
                         </button>
@@ -267,12 +267,12 @@ export default function MobileRoster({
                         : cell.phase === 'outbound' ? `→ ${destLabel ?? '?'}`
                         : '↩';
                       return (
-                        <div key={cell.id} className="flex items-center justify-between mt-1.5 px-1 py-1 bg-gray-800 rounded text-xs font-mono">
-                          <span className="text-gray-500 truncate flex-1">{statusText}</span>
+                        <div key={cell.id} className="flex items-center justify-between mt-1.5 px-2 py-1 bg-gray-800 rounded text-xs font-mono">
+                          <span className="text-gray-300 truncate flex-1">{statusText}</span>
                           {canRecall && (
                             <button
                               onClick={() => onRecall?.(cell.id)}
-                              className="ml-2 px-1.5 py-0.5 border border-amber-800 text-amber-600 rounded hover:bg-amber-950 transition-colors"
+                              className="ml-2 px-1.5 py-0.5 border border-amber-700 text-amber-400 rounded hover:bg-amber-950 transition-colors"
                             >
                               ↩ recall
                             </button>
@@ -280,7 +280,7 @@ export default function MobileRoster({
                           {canDecom && (
                             <button
                               onClick={() => onDecommission?.(cell.id)}
-                              className="ml-2 px-1.5 py-0.5 border border-red-900 text-red-700 rounded hover:bg-red-950 transition-colors"
+                              className="ml-2 px-1.5 py-0.5 border border-red-800 text-red-400 rounded hover:bg-red-950 transition-colors"
                             >
                               × remove
                             </button>
@@ -297,38 +297,40 @@ export default function MobileRoster({
       )}
 
       {/* ── Horizontal bar ── */}
-      <div className="bg-gray-900 border-t border-gray-800 flex flex-col">
+      <div className="bg-gray-900 border-t border-gray-700 flex flex-col">
 
-        {/* Top strip: token economy + open drawer button */}
-        <div className="flex items-center justify-between px-3 pt-1 pb-0.5 cursor-pointer" onClick={onOpenRoster}>
-          <span className={`text-xs font-mono tabular-nums ${tokensInUse >= tokenCapacity ? 'text-red-400' : 'text-gray-500'}`}>
-            {tokensInUse}<span className="text-gray-700">/{tokenCapacity}</span>
-            <span className="text-gray-700"> t</span>
-          </span>
-          <button
-            onClick={e => { e.stopPropagation(); onOpenRoster(); }}
-            className="w-7 h-5 flex items-center justify-center rounded border border-gray-700 text-gray-500 hover:text-gray-300 hover:border-gray-600 transition-colors text-xs"
-            title="Open unit roster"
+        {/* Top strip: tokens (tappable to open drawer) + End Turn (right) */}
+        <div className="flex items-center gap-2 px-2 pt-1.5 pb-1">
+          {/* Left: tokens + ↑ — tapping opens drawer */}
+          <div
+            className="flex items-center gap-2 flex-1 cursor-pointer"
+            onClick={onOpenRoster}
           >
-            ↑
-          </button>
+            <span className={`text-xs font-mono tabular-nums ${tokensInUse >= tokenCapacity ? 'text-red-400' : 'text-gray-300'}`}>
+              {tokensInUse}<span className="text-gray-500">/{tokenCapacity} t</span>
+            </span>
+            <button
+              onClick={e => { e.stopPropagation(); onOpenRoster(); }}
+              className="w-6 h-5 flex items-center justify-center rounded border border-gray-600 text-gray-400 hover:text-gray-200 hover:border-gray-500 transition-colors text-xs"
+              title="Open unit roster"
+            >
+              ↑
+            </button>
+          </div>
+          {/* Right: End Turn */}
+          {isPlaying && (
+            <button
+              onClick={e => { e.stopPropagation(); onEndTurn(); }}
+              className="shrink-0 px-3 py-1 flex items-center justify-center bg-green-900 hover:bg-green-800 active:bg-green-700 text-green-200 text-sm font-mono font-bold border border-green-700 rounded transition-colors cta-breathe"
+              title="End Turn"
+            >
+              End →
+            </button>
+          )}
         </div>
 
-        {/* Bottom strip: end turn (pinned left) + scrollable cell type 2×2 grids */}
-        <div className="flex items-stretch pb-1">
-
-          {/* End Turn — pinned left, non-scrollable */}
-          <div className="shrink-0 flex items-center px-1.5 border-r border-gray-800" onClick={e => e.stopPropagation()}>
-            {isPlaying && (
-              <button
-                onClick={onEndTurn}
-                className="h-full min-h-[2.5rem] px-2 flex items-center justify-center bg-green-900 hover:bg-green-800 active:bg-green-700 text-green-200 text-base font-mono font-bold border border-green-700 rounded transition-colors cta-breathe"
-                title="End Turn"
-              >
-                →
-              </button>
-            )}
-          </div>
+        {/* Bottom strip: scrollable cell type slots */}
+        <div className="flex items-stretch pb-1.5">
 
           {/* Scrollable cell type slots */}
           <div className="flex overflow-x-auto flex-1">
@@ -369,8 +371,8 @@ export default function MobileRoster({
                       disabled={!cellAtNode}
                       className={`w-6 h-5 flex items-center justify-center rounded text-xs border transition-colors ${
                         cellAtNode
-                          ? 'border-amber-800 text-amber-500 hover:bg-amber-950 active:bg-amber-900'
-                          : 'border-gray-800 text-gray-800 cursor-default'
+                          ? 'border-amber-700 text-amber-400 hover:bg-amber-950 active:bg-amber-900'
+                          : 'border-gray-700 text-gray-600 cursor-default'
                       }`}
                       title={cellAtNode ? `Recall ${CELL_DISPLAY_NAMES[type] ?? type} from ${NODES[tooltipNode]?.label ?? 'node'}` : undefined}
                     >
@@ -381,8 +383,8 @@ export default function MobileRoster({
                       disabled={!canAfford}
                       className={`w-6 h-5 flex items-center justify-center rounded text-xs border transition-colors ${
                         canAfford
-                          ? 'border-gray-600 text-gray-400 hover:bg-gray-700 active:bg-gray-600'
-                          : 'border-gray-800 text-gray-800 cursor-default'
+                          ? 'border-gray-500 text-gray-300 hover:bg-gray-700 active:bg-gray-600'
+                          : 'border-gray-700 text-gray-600 cursor-default'
                       }`}
                       title={`Train ${CELL_DISPLAY_NAMES[type] ?? type} (${cost}t)`}
                     >
@@ -398,8 +400,8 @@ export default function MobileRoster({
                       disabled={!hasReady}
                       className={`w-6 h-5 flex items-center justify-center rounded text-xs border transition-colors select-none ${
                         hasReady
-                          ? 'border-green-800 text-green-500 hover:bg-green-950 active:bg-green-900'
-                          : 'border-gray-800 text-gray-800 cursor-default'
+                          ? 'border-green-700 text-green-400 hover:bg-green-950 active:bg-green-900'
+                          : 'border-gray-700 text-gray-600 cursor-default'
                       }`}
                       title={hasReady ? (tooltipNode ? `Deploy to ${NODES[tooltipNode]?.label ?? '?'} · Hold to choose` : `Deploy ${CELL_DISPLAY_NAMES[type] ?? type}`) : undefined}
                     >
@@ -411,8 +413,8 @@ export default function MobileRoster({
                         disabled={!hasReady}
                         className={`w-6 h-5 flex items-center justify-center rounded text-xs border transition-colors ${
                           hasReady
-                            ? 'border-amber-800 text-amber-500 hover:bg-amber-950 active:bg-amber-900'
-                            : 'border-gray-800 text-gray-800 cursor-default'
+                            ? 'border-amber-700 text-amber-400 hover:bg-amber-950 active:bg-amber-900'
+                            : 'border-gray-700 text-gray-600 cursor-default'
                         }`}
                         title={hasReady ? `Patrol ${CELL_DISPLAY_NAMES[type] ?? type}` : undefined}
                       >
