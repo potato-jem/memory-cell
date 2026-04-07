@@ -8,10 +8,12 @@ How-to recipes for common feature additions and changes.
 
 1. Add entry to `CELL_CONFIG` in `cellConfig.js` with all fields:
    - `displayName`, `deployCost`, `clearanceRate`, `trainingTicks`, `displayOrder`, `color`, `textClass`, `dotClass`, `startingCount`
-   - Role flags: `isRecon`, `isAttack`, `isPatrol`, `isScout`, `requiresClassified`, `coversAdjacentNodes`
+   - Role flags: `isRecon`, `isAttack`, `isScout`, `requiresClassified`, `coversAdjacentNodes`
    - `detectionRolls`, `detectionUpgradeProbs` (null for non-recon)
    - `clearablePathogens: { [pathogenType]: effectivenessMultiplier }` — what it can clear
    - `effectivenessByLevel: { none, unknown, threat, misclassified, classified }` — effectiveness at each intel level
+   - *(optional)* `stationaryBonus: { gainPerTurn, maxMultiplier }` — clearance grows per turn stationary; auto-handled by `advanceCells` + `getClearancePower`
+   - *(optional)* `specializationSlots`, `specializationGainPerTurn`, `specializationDecayPerTurn`, `specializationMax`, `specializationMin` — per-pathogen-type specialization; auto-handled by `updateCellSpecializations` + `getClearancePower`
 2. Add type constant to `CELL_TYPES` in `cells.js`
 3. If the cell has unique arrival behaviour (e.g. dwell timer), add a flag to `CELL_CONFIG` and handle it in `advanceCells` in `cells.js`
 4. If the cell type should be available to the player for training, add it to `availableResponders` in `runConfig.js`

@@ -42,19 +42,26 @@ Single source of truth for all per-type cell properties. **This is the only plac
 | `textClass` | Tailwind text colour class (UI labels) |
 | `dotClass` | Tailwind background class (roster/detail dots) |
 | `startingCount` | Default units of this type at run start (0 = none) |
-| `isRecon` / `isAttack` / `isPatrol` / `isScout` | Role flags |
+| `isRecon` / `isAttack` / `isScout` | Role flags (`isPatrol` removed — any recon cell can patrol via player action) |
 | `requiresClassified` | Cannot deploy without a classified pathogen at target (Killer T) |
 | `coversAdjacentNodes` | Grants fog-of-war visibility to adjacent nodes (Macrophage) |
 | `detectionRolls` | Detection rolls per node visit (recon cells); 0 for non-recon |
 | `detectionUpgradeProbs` | Per-level upgrade probabilities `{ [detected_level]: { upgradeChance, misclassifyChance? } }` (null for non-recon) |
 | `clearablePathogens` | `{ [pathogenType]: effectivenessMultiplier }` — pathogens this cell can clear and how effectively. Not listed = cannot clear (effectively 0). |
 | `effectivenessByLevel` | `{ [detected_level]: 0–1 }` — clearance effectiveness at each detection level. Higher detection = better intel = higher effectiveness. |
+| `cellLifetime` | *(optional)* integer (ticks) — cell dies this many ticks after `deployedAtTick`; cannot be recalled (recalling kills immediately); does not auto-return when node clears |
+| `stationaryBonus` | *(optional)* `{ gainPerTurn, maxMultiplier }` — clearance scales up the longer the cell holds its position; resets when it moves. Applied in `pathogen.js getClearancePower`. |
+| `specializationSlots` | *(optional)* integer — how many pathogen types the cell can be "top-specialized" in. Enables per-instance `specialization` state on the cell. |
+| `specializationGainPerTurn` | *(optional)* float — specialization score gain per turn actively fighting a top-slot pathogen type |
+| `specializationDecayPerTurn` | *(optional)* float — decay per turn for non-top-slot types (set equal to gain for zero-sum behaviour) |
+| `specializationMax` | *(optional)* float — ceiling on specialization multiplier (e.g. 2.5) |
+| `specializationMin` | *(optional)* float — floor on specialization multiplier (e.g. 0.2) |
 
 **Effectiveness model:** Clearance effectiveness now scales with the pathogen's `detected_level`. For example, Responder has 0.6× at `none/unknown/threat/misclassified` and 1.0× at `classified`. Killer T has 0 at all non-classified levels (enforced by `requiresClassified` at deploy time as well). NK Cell is 1.0× at all levels.
 
 **Derived exports:**
 - `CELL_TYPE_ORDER` — cell type strings sorted by `displayOrder`
-- `ATTACK_CELL_TYPES`, `RECON_CELL_TYPES`, `PATROL_CELL_TYPES` — convenience Sets
+- `ATTACK_CELL_TYPES`, `RECON_CELL_TYPES` — convenience Sets
 - `DEPLOY_COSTS`, `CLEARANCE_RATES`, `CELL_DISPLAY_NAMES` — flat lookup tables (backward compat)
 
 **Modifier-aware accessors (use in engine code):**

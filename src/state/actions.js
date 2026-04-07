@@ -13,7 +13,9 @@ import {
   advanceCells,
   startReturnForClearedNodes,
   assignPatrolDestinations,
+  startPatrol,
   computeTokensInUse,
+  updateCellSpecializations,
 } from '../engine/cells.js';
 import { CELL_CONFIG, RECON_CELL_TYPES, getEffectiveClearanceRate } from '../data/cellConfig.js';
 import { NODES, computeVisibility } from '../data/nodes.js';
@@ -37,6 +39,7 @@ export const ACTION_TYPES = {
   DEPLOY_FROM_ROSTER: 'DEPLOY_FROM_ROSTER',
   DECOMMISSION_CELL:  'DECOMMISSION_CELL',
   RECALL_UNIT:        'RECALL_UNIT',
+  START_PATROL:       'START_PATROL',
   RESTART:            'RESTART',
   SELECT_NODE:        'SELECT_NODE',
   // Direct modifier patch (bypasses the choice system — for testing / direct application).
@@ -59,6 +62,7 @@ export function gameReducer(state, action) {
     case ACTION_TYPES.DEPLOY_FROM_ROSTER: return handleDeployFromRoster(state, action.cellId, action.nodeId);
     case ACTION_TYPES.DECOMMISSION_CELL:  return handleDecommissionCell(state, action.cellId);
     case ACTION_TYPES.RECALL_UNIT:        return handleRecallUnit(state, action.cellId);
+    case ACTION_TYPES.START_PATROL:       return handleStartPatrol(state, action.cellId);
     case ACTION_TYPES.RESTART:            return action.initialState;
     case ACTION_TYPES.SELECT_NODE:        return { ...state, selectedNodeId: action.nodeId };
     case ACTION_TYPES.APPLY_MODIFIER:     return handleApplyModifier(state, action.patch);
@@ -107,6 +111,9 @@ function handleEndTurn(state) {
     mods
   );
   
+  // 5b. Update per-cell specialization scores based on what pathogens survived this turn's clearance
+  updatedCells = updateCellSpecializations(updatedCells, newGroundTruth.nodeStates);
+
   // 6. Auto-return attack cells from cleared nodes
   updatedCells = startReturnForClearedNodes(updatedCells, newGroundTruth.nodeStates, newTick, mods);
 
@@ -233,6 +240,18 @@ function handleDeployFromRoster(state, cellId, nodeId) {
 
 function handleDecommissionCell(state, cellId) {
   const result = decommissionCell(cellId, state.deployedCells);
+  if (!result.success) return state;
+  const tokensInUse = computeTokensInUse(result.newDeployedCells, state.runModifiers);
+  return {
+    ...state,
+    deployedCells: result.newDeployedCells,
+    tokensInUse,
+    attentionTokens: state.tokenCapacity - tokensInUse,
+  };
+}
+
+function handleStartPatrol(state, cellId) {
+  const result = startPatrol(cellId, state.deployedCells, state.groundTruth.nodeStates, state.tick, state.runModifiers);
   if (!result.success) return state;
   const tokensInUse = computeTokensInUse(result.newDeployedCells, state.runModifiers);
   return {

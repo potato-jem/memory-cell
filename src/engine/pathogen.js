@@ -59,7 +59,21 @@ export function getClearancePower(instance, nodeId, deployedCells, nodeState, mo
     if (clearMod === 0) continue;
     const effectiveRate = getEffectiveClearanceRate(cell.type, modifiers);
     const levelEffectiveness = getEffectiveEffectiveness(cell.type, detectedLevel, modifiers);
-    total += effectiveRate * clearMod * levelEffectiveness;
+
+    // Stationary bonus (e.g. macrophage grows stronger the longer it holds a position)
+    let stationaryMult = 1.0;
+    const stationaryBonusCfg = cellCfg?.stationaryBonus;
+    if (stationaryBonusCfg && cell.stationaryTurns > 0) {
+      stationaryMult = Math.min(
+        stationaryBonusCfg.maxMultiplier,
+        1.0 + stationaryBonusCfg.gainPerTurn * cell.stationaryTurns
+      );
+    }
+
+    // Specialization multiplier (e.g. b-cell tuned to a specific pathogen type)
+    const specializationMult = cell.specialization?.[pathogenType] ?? 1.0;
+
+    total += effectiveRate * clearMod * levelEffectiveness * stationaryMult * specializationMult;
   }
 
   // Pathogen-specific clearance multiplier (e.g. upgrade makes a type easier to clear)

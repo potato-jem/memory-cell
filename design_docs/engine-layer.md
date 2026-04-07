@@ -21,8 +21,13 @@ All cell lifecycle logic. Pure functions only.
   pathIndex: 1,               // position in path (nodeId = path[pathIndex])
   deployedAtTick: 5,
   scoutDwellUntilTick: null,  // isScout cells only: when to stop dwelling (from CELL_CONFIG.isScout)
-  patrolConnectionIdx: 0,     // isPatrol cells only: which connection to move to next
-  patrolNextMoveTick: 10,     // isPatrol cells only: when to move to next node
+  isPatrolling: false,        // recon cells only: true when player has chosen to patrol
+  patrolDestNodeId: null,     // patrolling cells only: current patrol destination
+  patrolNextMoveTick: null,   // patrolling cells only: when to move to next hop
+  stationaryTurns: 0,         // cells with CELL_CONFIG.stationaryBonus: turns spent in 'arrived' phase; resets on movement
+  specialization: null,       // cells with CELL_CONFIG.specializationSlots: { [pathogenType]: multiplier }; persists across deployments
+  // cellLifetime is read from CELL_CONFIG[type].cellLifetime — no per-instance field needed.
+  // Timer = deployedAtTick + cellLifetime. Death is checked in advanceCells each tick.
 }
 ```
 
@@ -42,7 +47,8 @@ Cell config and modifier-aware accessors live in `src/data/cellConfig.js`. `cell
 | `deployFromRoster(cellId, nodeId, ..., modifiers?)` | Move cell to a node; uses `computePathWithModifiers` |
 | `recallUnit(cellId, ..., modifiers?)` | Outbound → cancel; arrived → compute return path with modifiers |
 | `decommissionCell(cellId, ...)` | Remove from roster (only ready/training) |
-| `advanceCells(deployedCells, tick, modifiers?)` | **Main tick function.** Returns `{updatedCells, events, nodesVisited}` |
+| `advanceCells(deployedCells, tick, modifiers?)` | **Main tick function.** Returns `{updatedCells, events, nodesVisited}`; also increments `stationaryTurns` for cells with `stationaryBonus` config |
+| `updateCellSpecializations(cells, nodeStates)` | Updates `specialization` scores on cells with `specializationSlots` config, called after `advanceGroundTruth` |
 | `startReturnForClearedNodes(..., modifiers?)` | Auto-returns attack cells when their node is clear |
 | `computeTokensInUse(deployedCells, modifiers?)` | Sum of effective token costs across all cells |
 | `nodeHasClassifiedPathogen(nodeId, nodeStates)` | True if any pathogen at node has `detected_level === 'classified'` — used to gate deployment of cells with `requiresClassified: true` |
@@ -58,7 +64,7 @@ Cell config and modifier-aware accessors live in `src/data/cellConfig.js`. `cell
 - While budget > 0 and path not complete: subtract exit cost, advance pathIndex, add to nodesVisited
 - 0-cost exit (BLOOD/HQ only) keeps budget at 1, allowing a free extra hop
 - `isScout` cells (`CELL_CONFIG[type].isScout`) dwell at destination for `SCOUT_DWELL_TICKS` then auto-return
-- `isPatrol` cells cycle through adjacent nodes every `PATROL_DWELL_TICKS`
+- Cells with `isPatrolling: true` (any recon cell the player has chosen to patrol) cycle through nodes every `PATROL_DWELL_TICKS`, with destinations assigned by `assignPatrolDestinations`
 
 ---
 

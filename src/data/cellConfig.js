@@ -13,7 +13,6 @@
 // misclassifyChance: (threat→classified only) probability of wrong classification
 //
 // Design intent:
-//   Patrols (neutrophil): good at discovery (none→unknown), weak at classification
 //   Macrophages: decent all-round
 //   Scouts (dendritic): excellent at all levels, especially classification
 
@@ -55,7 +54,6 @@ export const CELL_CONFIG = {
     // ── Role flags ──
     isRecon:               true,
     isAttack:              false,
-    isPatrol:              false,
     isScout:               true,     // dwells then auto-returns; emits scout_arrived event
     requiresClassified:    false,
     coversAdjacentNodes:   false,
@@ -75,6 +73,10 @@ export const CELL_CONFIG = {
     clearanceRate:         2,
     trainingTicks:         10,
     displayOrder:          2,
+    stationaryBonus: {
+      gainPerTurn:   0.25,  // +25% clearance rate per stationary turn
+      maxMultiplier: 3.0,   // cap at 3× base clearance rate
+    },
     color:                 '#fbbf24',
     textClass:             'text-amber-400',
     dotClass:              'bg-amber-600',
@@ -82,7 +84,6 @@ export const CELL_CONFIG = {
     // ── Role flags ──
     isRecon:               true,
     isAttack:              false,
-    isPatrol:              true,    // cycles adjacent nodes on a dwell timer
     isScout:               false,
     requiresClassified:    false,
     coversAdjacentNodes:   true,     // grants visibility to adjacent nodes
@@ -108,9 +109,10 @@ export const CELL_CONFIG = {
   neutrophil: {
     displayName:           'Neutrophil',
     deployCost:            1,
-    clearanceRate:         5,        
+    clearanceRate:         5,
     trainingTicks:         5,
     displayOrder:          1,
+    cellLifetime:          15,  // 3 turns × 5 ticks/turn — dies after deployment, cannot be recalled
     color:                 '#60a5fa',
     textClass:             'text-blue-400',
     dotClass:              'bg-blue-600',
@@ -118,7 +120,6 @@ export const CELL_CONFIG = {
     // ── Role flags ──
     isRecon:               false,
     isAttack:              true,
-    isPatrol:              false, 
     isScout:               false,
     requiresClassified:    false,
     coversAdjacentNodes:   false,
@@ -152,7 +153,6 @@ export const CELL_CONFIG = {
     // ── Role flags ──
     isRecon:               false,
     isAttack:              true,
-    isPatrol:              false,
     isScout:               false,
     requiresClassified:    false,
     coversAdjacentNodes:   false,
@@ -185,7 +185,6 @@ export const CELL_CONFIG = {
     // ── Role flags ──
     isRecon:               false,
     isAttack:              true,
-    isPatrol:              false,
     isScout:               false,
     requiresClassified:    true,    // cannot deploy without a classified pathogen at target
     coversAdjacentNodes:   false,
@@ -214,6 +213,11 @@ export const CELL_CONFIG = {
     clearanceRate:         3,
     trainingTicks:         20,
     displayOrder:          6,
+    specializationSlots:        1,    // max pathogen types to maintain top specialization in
+    specializationGainPerTurn:  0.15, // specialization score gain per turn actively fighting that type
+    specializationDecayPerTurn: 0.15, // decay per turn for non-top-slot types (zero-sum)
+    specializationMax:          2.5,  // max clearance multiplier for a specialized type
+    specializationMin:          0.2,  // floor for non-specialized types
     color:                 '#4ade80',
     textClass:             'text-green-400',
     dotClass:              'bg-green-600',
@@ -221,7 +225,6 @@ export const CELL_CONFIG = {
     // ── Role flags ──
     isRecon:               false,
     isAttack:              true,
-    isPatrol:              false,
     isScout:               false,
     requiresClassified:    false,
     coversAdjacentNodes:   false,
@@ -260,7 +263,6 @@ export const CELL_CONFIG = {
     // ── Role flags ──
     isRecon:               false,
     isAttack:              true,
-    isPatrol:              false,
     isScout:               false,
     requiresClassified:    false,
     coversAdjacentNodes:   false,
@@ -300,9 +302,6 @@ export const RECON_CELL_TYPES = new Set(
   Object.entries(CELL_CONFIG).filter(([, v]) => v.isRecon).map(([k]) => k)
 );
 
-export const PATROL_CELL_TYPES = new Set(
-  Object.entries(CELL_CONFIG).filter(([, v]) => v.isPatrol).map(([k]) => k)
-);
 export const ALL_CELL_TYPES = new Set(
   Object.entries(CELL_CONFIG).map(([k]) => k)
 );

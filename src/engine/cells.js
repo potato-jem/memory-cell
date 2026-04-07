@@ -45,6 +45,13 @@ export const CELL_TYPES = {
 let _cellIdCounter = 1;
 function nextCellId() { return `cell_${_cellIdCounter++}`; }
 
+// Returns initial specialization scores for cells that support it, null otherwise.
+function initSpecialization(type) {
+  const cfg = CELL_CONFIG[type];
+  if (!cfg?.specializationSlots) return null;
+  return Object.fromEntries(Object.keys(cfg.clearablePathogens).map(k => [k, 1.0]));
+}
+
 // ── Token accounting ──────────────────────────────────────────────────────────
 
 export function computeTokensInUse(deployedCells, modifiers = null) {
@@ -75,6 +82,8 @@ export function makeReadyCell(type) {
     path: null,
     pathIndex: 0,
     destNodeId: null,
+    stationaryTurns: 0,
+    specialization: initSpecialization(type),
   };
 }
 
@@ -100,6 +109,8 @@ export function trainCell(type, deployedCells, tokenCapacity, tick, modifiers = 
     path: null,
     pathIndex: 0,
     destNodeId: null,
+    stationaryTurns: 0,
+    specialization: initSpecialization(type),
   };
   return { success: true, newDeployedCells: { ...deployedCells, [cell.id]: cell }, cost };
 }
@@ -149,8 +160,8 @@ export function deployFromRoster(cellId, nodeId, deployedCells, tick, nodeStates
 // Extra fields set on the cell state at deploy time (type-specific runtime state only).
 // Effectiveness is now computed dynamically per pathogen instance — not stored on cell.
 function _deployExtra(type) {
-  if (CELL_CONFIG[type]?.isPatrol) {
-    return { patrolDestNodeId: null, patrolNextMoveTick: null };
+  if (CELL_CONFIG[type]?.isRecon) {
+    return { isPatrolling: false, patrolDestNodeId: null, patrolNextMoveTick: null };
   }
   return {};
 }
@@ -177,6 +188,12 @@ export function recallUnit(cellId, deployedCells, tick, modifiers = null) {
     return { success: false, error: 'Cell is not deployed' };
   }
 
+  // Lifetime cells cannot return — recalling them kills them immediately.
+  if (CELL_CONFIG[cell.type]?.cellLifetime != null) {
+    const { [cellId]: _dead, ...rest } = deployedCells;
+    return { success: true, newDeployedCells: rest, died: true };
+  }
+
   if (cell.phase === 'outbound') {
     return {
       success: true,
@@ -191,6 +208,10 @@ export function recallUnit(cellId, deployedCells, tick, modifiers = null) {
           destNodeId: null,
           deployedAtTick: null,
           arrivalTick: null,
+          isPatrolling: false,
+          patrolDestNodeId: null,
+          patrolNextMoveTick: null,
+          stationaryTurns: 0,
         },
       },
     };
@@ -208,6 +229,9 @@ export function recallUnit(cellId, deployedCells, tick, modifiers = null) {
         pathIndex: 0,
         destNodeId: HQ_NODE_ID,
         returnTick: null,
+        isPatrolling: false,
+        patrolDestNodeId: null,
+        patrolNextMoveTick: null,
       },
     },
   };
@@ -223,6 +247,13 @@ export function advanceCells(deployedCells, tick, modifiers = null) {
 
   for (const [cellId, cell] of Object.entries(deployedCells)) {
     let c = { ...cell };
+
+    // ── Lifetime expiry ───────────────────────────────────────────────────────
+    const lifetime = CELL_CONFIG[c.type]?.cellLifetime;
+    if (lifetime != null && c.deployedAtTick != null && tick >= c.deployedAtTick + lifetime) {
+      events.push({ type: 'cell_died', cellId, nodeId: c.nodeId, cellType: c.type });
+      continue; // omit from updated — cell is removed from roster
+    }
 
     // ── Training → ready ──────────────────────────────────────────────────────
     if (c.phase === 'training' && tick >= c.trainingCompleteTick) {
@@ -256,7 +287,7 @@ export function advanceCells(deployedCells, tick, modifiers = null) {
           c.scoutDwellUntilTick = tick + SCOUT_DWELL_TICKS;
           events.push({ type: 'scout_arrived', cellId, nodeId: c.nodeId });
         } else {
-          if (CELL_CONFIG[c.type]?.isPatrol) {
+          if (c.isPatrolling) {
             c.patrolNextMoveTick = tick + PATROL_DWELL_TICKS;
           }
           events.push({ type: 'cell_arrived', cellId, nodeId: c.nodeId, cellType: c.type });
@@ -276,7 +307,7 @@ export function advanceCells(deployedCells, tick, modifiers = null) {
     }
 
     // ── Patrol movement (destination-based) ──────────────────────────────────
-    if (CELL_CONFIG[c.type]?.isPatrol && c.phase === 'arrived') {
+    if (c.isPatrolling && c.phase === 'arrived') {
       if (c.patrolDestNodeId && c.nodeId !== c.patrolDestNodeId) {
         // Traveling toward destination — move one hop per dwell cycle
         if (c.patrolNextMoveTick != null && tick >= c.patrolNextMoveTick) {
@@ -323,6 +354,10 @@ export function advanceCells(deployedCells, tick, modifiers = null) {
         c.arrivalTick = null;
         c.deployedAtTick = null;
         c.returnTick = null;
+        c.isPatrolling = false;
+        c.patrolDestNodeId = null;
+        c.patrolNextMoveTick = null;
+        c.stationaryTurns = 0;
       }
     }
 
@@ -334,6 +369,16 @@ export function advanceCells(deployedCells, tick, modifiers = null) {
       c.returnTick = null;
       c.arrivalTick = null;
       c.deployedAtTick = null;
+      c.stationaryTurns = 0;
+    }
+
+    // Stationary bonus tracker: increment while stationed, reset when moving.
+    if (CELL_CONFIG[c.type]?.stationaryBonus) {
+      if (c.phase === 'arrived') {
+        c.stationaryTurns = (c.stationaryTurns ?? 0) + 1;
+      } else {
+        c.stationaryTurns = 0;
+      }
     }
 
     updated[cellId] = c;
@@ -348,6 +393,7 @@ export function startReturnForClearedNodes(deployedCells, nodeStates, tick, modi
   for (const [cellId, cell] of Object.entries(updated)) {
     if (!ATTACK_CELL_TYPES.has(cell.type)) continue;
     if (cell.phase !== 'arrived') continue;
+    if (CELL_CONFIG[cell.type]?.cellLifetime != null) continue; // lifetime cells fight to the end
     const ns = nodeStates[cell.nodeId];
     const hasPathogen = nodeHasActivePathogen(ns);
     if (!hasPathogen) {
@@ -390,7 +436,7 @@ export function nodeHasClassifiedPathogen(nodeId, nodeStates) {
  */
 export function assignPatrolDestinations(deployedCells, nodeStates, tick, modifiers = null) {
   const needsAssignment = Object.values(deployedCells).filter(
-    c => CELL_CONFIG[c.type]?.isPatrol && c.phase === 'arrived' && !c.patrolDestNodeId
+    c => c.isPatrolling && c.phase === 'arrived' && !c.patrolDestNodeId
   );
   if (needsAssignment.length === 0) return deployedCells;
 
@@ -399,7 +445,7 @@ export function assignPatrolDestinations(deployedCells, nodeStates, tick, modifi
   // Nodes already targeted by patrols that are en-route (don't double-assign)
   const alreadyTargeted = new Set(
     Object.values(deployedCells)
-      .filter(c => CELL_CONFIG[c.type]?.isPatrol && c.patrolDestNodeId)
+      .filter(c => c.isPatrolling && c.patrolDestNodeId)
       .map(c => c.patrolDestNodeId)
   );
 
@@ -451,6 +497,123 @@ export function assignPatrolDestinations(deployedCells, nodeStates, tick, modifi
   }
 
   return updated;
+}
+
+/**
+ * Start a patrol for a recon cell. Picks the first destination using the same
+ * priority logic as assignPatrolDestinations and sends the cell outbound.
+ * Called immediately when the player taps Patrol.
+ */
+export function startPatrol(cellId, deployedCells, nodeStates, tick, modifiers = null) {
+  const cell = deployedCells[cellId];
+  if (!cell) return { success: false, error: 'Cell not found' };
+  if (!CELL_CONFIG[cell.type]?.isRecon) return { success: false, error: 'Not a recon cell' };
+  if (cell.phase !== 'ready') return { success: false, error: 'Cell is not ready' };
+
+  // Temporarily mark the cell as arrived at HQ so assignPatrolDestinations can pick a destination
+  const tempCells = {
+    ...deployedCells,
+    [cellId]: {
+      ...cell,
+      phase: 'arrived',
+      nodeId: HQ_NODE_ID,
+      isPatrolling: true,
+      patrolDestNodeId: null,
+      patrolNextMoveTick: null,
+    },
+  };
+  const assigned = assignPatrolDestinations(tempCells, nodeStates, tick, modifiers);
+  const destNodeId = assigned[cellId]?.patrolDestNodeId ?? null;
+
+  if (!destNodeId || destNodeId === HQ_NODE_ID) {
+    // No useful destination — stay at HQ as arrived, patrol will pick up next turn
+    return {
+      success: true,
+      newDeployedCells: {
+        ...deployedCells,
+        [cellId]: {
+          ...cell,
+          phase: 'arrived',
+          nodeId: HQ_NODE_ID,
+          deployedAtTick: tick,
+          arrivalTick: tick,
+          isPatrolling: true,
+          patrolDestNodeId: null,
+          patrolNextMoveTick: tick,
+        },
+      },
+    };
+  }
+
+  const path = computePathWithModifiers(HQ_NODE_ID, destNodeId, modifiers);
+  return {
+    success: true,
+    newDeployedCells: {
+      ...deployedCells,
+      [cellId]: {
+        ...cell,
+        nodeId: HQ_NODE_ID,
+        phase: 'outbound',
+        path,
+        pathIndex: 0,
+        destNodeId,
+        deployedAtTick: tick,
+        arrivalTick: null,
+        returnTick: null,
+        scoutDwellUntilTick: null,
+        isPatrolling: true,
+        patrolDestNodeId: destNodeId,
+        patrolNextMoveTick: null,
+      },
+    },
+  };
+}
+
+/**
+ * Update per-cell specialization scores based on what pathogens were present after this turn's clearance.
+ * Called after advanceGroundTruth so the bonus takes effect on subsequent turns.
+ * Config-driven: any cell type with `specializationSlots` in CELL_CONFIG participates.
+ */
+export function updateCellSpecializations(cells, nodeStates) {
+  let changed = false;
+  const updated = {};
+  for (const [id, cell] of Object.entries(cells)) {
+    const cfg = CELL_CONFIG[cell.type];
+    if (!cfg?.specializationSlots || !cell.specialization || cell.phase !== 'arrived' || !cell.nodeId) {
+      updated[id] = cell;
+      continue;
+    }
+
+    const presentTypes = new Set(
+      (nodeStates[cell.nodeId]?.pathogens ?? [])
+        .filter(p => p.actualLoad > 0)
+        .map(p => p.type)
+    );
+
+    const { specializationSlots, specializationGainPerTurn, specializationDecayPerTurn,
+            specializationMax, specializationMin } = cfg;
+
+    const spec = { ...cell.specialization };
+
+    // Top-N types by current score (before this turn's update, for stability)
+    const sorted = Object.entries(spec).sort(([, a], [, b]) => b - a);
+    const topTypes = new Set(sorted.slice(0, specializationSlots).map(([t]) => t));
+
+    for (const pathogenType of Object.keys(spec)) {
+      if (presentTypes.has(pathogenType) && topTypes.has(pathogenType)) {
+        // Actively fighting a top-slot type — gain specialization
+        spec[pathogenType] = Math.min(specializationMax, spec[pathogenType] + specializationGainPerTurn);
+      } else if (!topTypes.has(pathogenType)) {
+        // Not a top-slot type — decay (whether present or absent)
+        spec[pathogenType] = Math.max(specializationMin, spec[pathogenType] - specializationDecayPerTurn);
+      }
+      // Present but not in top slots: no change (avoids penalising multi-infection encounters)
+    }
+
+    updated[id] = { ...cell, specialization: spec };
+    changed = true;
+  }
+  return changed ? updated : cells;
 }
 
 /**
