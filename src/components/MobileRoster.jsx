@@ -65,12 +65,15 @@ export default function MobileRoster({
   tokensInUse,
   runConfig,
   isOpen,
+  isPlaying,            // whether the game is in playing phase (show end turn button)
   onOpenRoster,         // toggle-open the drawer
   onClose,
   onTrainCell,
   onSelectCellForDeploy, // (cellId) => void — enter select-node mode
   onRecall,              // (cellId) => void
   onDecommission,        // (cellId) => void
+  onStartPatrol,         // (cellId) => void — start patrol for a recon cell
+  onEndTurn,             // () => void — end the turn
   tooltipNode,           // currently selected node id (or null)
   onDeployDirect,        // (cellId, nodeId) => void — deploy directly
   nodeBarSlot,           // JSX to show at top of drawer when a node is selected
@@ -116,6 +119,13 @@ export default function MobileRoster({
     const { ready } = getTypeSummary(type);
     if (!ready.length) return;
     onSelectCellForDeploy(ready[0].id);
+    onClose();
+  }
+
+  function handlePatrol(type) {
+    const { ready } = getTypeSummary(type);
+    if (!ready.length) return;
+    onStartPatrol?.(ready[0].id);
     onClose();
   }
 
@@ -232,6 +242,14 @@ export default function MobileRoster({
                           {deployLabel}
                         </DeployBtn>
                       )}
+                      {ready.length > 0 && cfg?.isRecon && (
+                        <button
+                          onClick={() => handlePatrol(type)}
+                          className="flex-1 py-2 text-xs font-mono border border-amber-700 bg-amber-950 text-amber-300 rounded hover:bg-amber-900 active:bg-amber-800 transition-colors"
+                        >
+                          Patrol ↻
+                        </button>
+                      )}
                     </div>
 
                     {/* Deployed cells of this type — recall/decommission */}
@@ -243,7 +261,9 @@ export default function MobileRoster({
                       const destLabel = cell.destNodeId ? (NODES[cell.destNodeId]?.label ?? cell.destNodeId) : null;
                       const statusText = cell.phase === 'training' ? 'training'
                         : cell.phase === 'ready' ? 'ready'
+                        : cell.phase === 'arrived' && cell.isPatrolling ? `↻ ${nodeLabel ?? 'patrol'}`
                         : cell.phase === 'arrived' ? (nodeLabel ?? 'on site')
+                        : cell.phase === 'outbound' && cell.isPatrolling ? `↻ → ${destLabel ?? '?'}`
                         : cell.phase === 'outbound' ? `→ ${destLabel ?? '?'}`
                         : '↩';
                       return (
@@ -277,97 +297,133 @@ export default function MobileRoster({
       )}
 
       {/* ── Horizontal bar ── */}
-      {/* Whole bar is clickable to open drawer; cell slot divs stop propagation */}
-      <div
-        className="flex items-center bg-gray-900 border-t border-gray-800 overflow-x-auto cursor-pointer"
-        style={{ minHeight: 60 }}
-        onClick={onOpenRoster}
-      >
-        {allTrainable.map(type => {
-          const cfg = CELL_CONFIG[type];
-          const cost = DEPLOY_COSTS[type] ?? 0;
-          const canAfford = tokensAvailable >= cost;
-          const { ready, training, total } = getTypeSummary(type);
-          const hasReady = ready.length > 0;
-          const iconColor = total > 0 ? (cfg?.color ?? '#888') : (canAfford ? '#4b5563' : '#374151');
+      <div className="bg-gray-900 border-t border-gray-800 flex flex-col">
 
-          return (
-            <div
-              key={type}
-              className="flex flex-col items-center gap-1 px-2.5 py-2 shrink-0"
-              onClick={e => e.stopPropagation()}
-            >
-              {/* Icon with count badge */}
-              <div className="relative">
-                <CellIcon type={type} size={22} color={iconColor} />
-                {total > 0 && (
-                  <span
-                    className={`absolute -top-1 -right-1.5 w-4 h-4 flex items-center justify-center rounded-full text-gray-200 font-mono font-bold ${
-                      hasReady ? 'bg-green-800' : training.length > 0 ? 'bg-yellow-900' : 'bg-gray-700'
-                    }`}
-                    style={{ fontSize: 9 }}
-                  >
-                    {total}
-                  </span>
-                )}
-              </div>
-
-              {/* +/- and deploy buttons */}
-              <div className="flex gap-0.5">
-                {firstCellAtNodeByType[type] ? (
-                  /* − recall first cell of this type from selected node */
-                  <button
-                    onClick={e => { e.stopPropagation(); onRecall?.(firstCellAtNodeByType[type]); }}
-                    className="w-6 h-6 flex items-center justify-center rounded text-sm border border-amber-800 text-amber-600 hover:bg-amber-950 active:bg-amber-900 transition-colors"
-                    title={`Recall ${CELL_DISPLAY_NAMES[type] ?? type} from ${NODES[tooltipNode]?.label ?? 'node'}`}
-                  >
-                    −
-                  </button>
-                ) : (
-                  /* + train new cell */
-                  <button
-                    onClick={e => { e.stopPropagation(); canAfford && onTrainCell(type); }}
-                    disabled={!canAfford}
-                    className={`w-6 h-6 flex items-center justify-center rounded text-sm border transition-colors ${
-                      canAfford
-                        ? 'border-gray-600 text-gray-400 hover:bg-gray-700 active:bg-gray-600'
-                        : 'border-gray-800 text-gray-800'
-                    }`}
-                    title={`Train ${CELL_DISPLAY_NAMES[type] ?? type} (${cost}t)`}
-                  >
-                    +
-                  </button>
-                )}
-                {hasReady && (
-                  <DeployBtn
-                    onTap={() => handleDeploy(type)}
-                    onLongPress={() => handleDeploySelectMode(type)}
-                    className="w-6 h-6 flex items-center justify-center rounded text-xs border border-green-800 text-green-500 hover:bg-green-950 active:bg-green-900 transition-colors select-none"
-                    title={tooltipNode ? `Deploy to ${NODES[tooltipNode]?.label ?? '?'} · Hold to choose` : `Deploy ${CELL_DISPLAY_NAMES[type] ?? type} · tap node to select`}
-                  >
-                    {tooltipNode ? '→' : '▶'}
-                  </DeployBtn>
-                )}
-              </div>
-            </div>
-          );
-        })}
-
-        {/* Flexible spacer — clicks propagate to bar (open drawer) */}
-        <div className="flex-1 self-stretch" />
-
-        {/* Token count + ↑ button */}
-        <div className="flex items-center gap-2 shrink-0 px-3 py-2">
-          <span className={`text-xs font-mono tabular-nums ${tokensInUse >= tokenCapacity ? 'text-red-400' : 'text-gray-600'}`}>
-            {tokensInUse}/{tokenCapacity}t
+        {/* Top strip: token economy + open drawer button */}
+        <div className="flex items-center justify-between px-3 pt-1 pb-0.5 cursor-pointer" onClick={onOpenRoster}>
+          <span className={`text-xs font-mono tabular-nums ${tokensInUse >= tokenCapacity ? 'text-red-400' : 'text-gray-500'}`}>
+            {tokensInUse}<span className="text-gray-700">/{tokenCapacity}</span>
+            <span className="text-gray-700"> t</span>
           </span>
           <button
             onClick={e => { e.stopPropagation(); onOpenRoster(); }}
-            className="w-9 h-9 flex items-center justify-center rounded border border-gray-700 text-gray-400 hover:text-gray-200 hover:border-gray-600 transition-colors text-base"
+            className="w-7 h-5 flex items-center justify-center rounded border border-gray-700 text-gray-500 hover:text-gray-300 hover:border-gray-600 transition-colors text-xs"
             title="Open unit roster"
           >
             ↑
           </button>
+        </div>
+
+        {/* Bottom strip: end turn (pinned left) + scrollable cell type 2×2 grids */}
+        <div className="flex items-stretch pb-1">
+
+          {/* End Turn — pinned left, non-scrollable */}
+          <div className="shrink-0 flex items-center px-1.5 border-r border-gray-800" onClick={e => e.stopPropagation()}>
+            {isPlaying && (
+              <button
+                onClick={onEndTurn}
+                className="h-full min-h-[2.5rem] px-2 flex items-center justify-center bg-green-900 hover:bg-green-800 active:bg-green-700 text-green-200 text-base font-mono font-bold border border-green-700 rounded transition-colors cta-breathe"
+                title="End Turn"
+              >
+                →
+              </button>
+            )}
+          </div>
+
+          {/* Scrollable cell type slots */}
+          <div className="flex overflow-x-auto flex-1">
+            {allTrainable.map(type => {
+              const cfg = CELL_CONFIG[type];
+              const cost = DEPLOY_COSTS[type] ?? 0;
+              const canAfford = tokensAvailable >= cost;
+              const { ready, training, total } = getTypeSummary(type);
+              const hasReady = ready.length > 0;
+              const iconColor = total > 0 ? (cfg?.color ?? '#888') : (canAfford ? '#4b5563' : '#374151');
+              const cellAtNode = firstCellAtNodeByType[type];
+
+              return (
+                <div
+                  key={type}
+                  className="shrink-0 flex flex-col items-center gap-0.5 px-1.5 pt-1"
+                  onClick={e => e.stopPropagation()}
+                >
+                  {/* Icon + count badge */}
+                  <div className="relative mb-0.5">
+                    <CellIcon type={type} size={18} color={iconColor} />
+                    {total > 0 && (
+                      <span
+                        className={`absolute -top-1 -right-1.5 w-3.5 h-3.5 flex items-center justify-center rounded-full text-gray-200 font-mono font-bold ${
+                          hasReady ? 'bg-green-800' : training.length > 0 ? 'bg-yellow-900' : 'bg-gray-700'
+                        }`}
+                        style={{ fontSize: 8 }}
+                      >
+                        {total}
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Row 1: − recall / + train */}
+                  <div className="flex gap-0.5">
+                    <button
+                      onClick={e => { e.stopPropagation(); cellAtNode && onRecall?.(cellAtNode); }}
+                      disabled={!cellAtNode}
+                      className={`w-6 h-5 flex items-center justify-center rounded text-xs border transition-colors ${
+                        cellAtNode
+                          ? 'border-amber-800 text-amber-500 hover:bg-amber-950 active:bg-amber-900'
+                          : 'border-gray-800 text-gray-800 cursor-default'
+                      }`}
+                      title={cellAtNode ? `Recall ${CELL_DISPLAY_NAMES[type] ?? type} from ${NODES[tooltipNode]?.label ?? 'node'}` : undefined}
+                    >
+                      −
+                    </button>
+                    <button
+                      onClick={e => { e.stopPropagation(); canAfford && onTrainCell(type); }}
+                      disabled={!canAfford}
+                      className={`w-6 h-5 flex items-center justify-center rounded text-xs border transition-colors ${
+                        canAfford
+                          ? 'border-gray-600 text-gray-400 hover:bg-gray-700 active:bg-gray-600'
+                          : 'border-gray-800 text-gray-800 cursor-default'
+                      }`}
+                      title={`Train ${CELL_DISPLAY_NAMES[type] ?? type} (${cost}t)`}
+                    >
+                      +
+                    </button>
+                  </div>
+
+                  {/* Row 2: deploy / patrol */}
+                  <div className="flex gap-0.5">
+                    <DeployBtn
+                      onTap={() => handleDeploy(type)}
+                      onLongPress={() => handleDeploySelectMode(type)}
+                      disabled={!hasReady}
+                      className={`w-6 h-5 flex items-center justify-center rounded text-xs border transition-colors select-none ${
+                        hasReady
+                          ? 'border-green-800 text-green-500 hover:bg-green-950 active:bg-green-900'
+                          : 'border-gray-800 text-gray-800 cursor-default'
+                      }`}
+                      title={hasReady ? (tooltipNode ? `Deploy to ${NODES[tooltipNode]?.label ?? '?'} · Hold to choose` : `Deploy ${CELL_DISPLAY_NAMES[type] ?? type}`) : undefined}
+                    >
+                      {tooltipNode ? '→' : '▶'}
+                    </DeployBtn>
+                    {cfg?.isRecon && (
+                      <button
+                        onClick={e => { e.stopPropagation(); hasReady && handlePatrol(type); }}
+                        disabled={!hasReady}
+                        className={`w-6 h-5 flex items-center justify-center rounded text-xs border transition-colors ${
+                          hasReady
+                            ? 'border-amber-800 text-amber-500 hover:bg-amber-950 active:bg-amber-900'
+                            : 'border-gray-800 text-gray-800 cursor-default'
+                        }`}
+                        title={hasReady ? `Patrol ${CELL_DISPLAY_NAMES[type] ?? type}` : undefined}
+                      >
+                        ↻
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
     </>

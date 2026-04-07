@@ -136,6 +136,12 @@ export default function GameShell() {
     setOpenDrawer(null);
   }, []);
 
+  const handleStartPatrol = useCallback((cellId) => {
+    dispatch({ type: ACTION_TYPES.START_PATROL, cellId });
+    setSelectedCellId(null);
+    setOpenDrawer(null);
+  }, []);
+
   const handleEndTurn = useCallback(() => {
     dispatch({ type: ACTION_TYPES.END_TURN });
   }, []);
@@ -327,7 +333,7 @@ export default function GameShell() {
           </div>
         </div>
 
-        {/* Right: mobile turn + end turn (stops header click) */}
+        {/* Right: turn counter (mobile) + end turn (desktop only — mobile moves to roster bar) */}
         <div className="flex items-center gap-1.5 shrink-0" onClick={e => e.stopPropagation()}>
           {/* Turn — mobile only (desktop shows it on left) */}
           <div className="flex items-center gap-0.5 md:hidden">
@@ -337,9 +343,9 @@ export default function GameShell() {
           {isPlaying && (
             <button
               onClick={handleEndTurn}
-              className="px-3 md:px-5 py-1.5 md:py-2 bg-green-900 hover:bg-green-800 text-green-200 text-sm font-mono font-bold uppercase tracking-wider border border-green-700 rounded transition-colors cta-breathe"
+              className="hidden md:inline-flex px-5 py-2 bg-green-900 hover:bg-green-800 text-green-200 text-sm font-mono font-bold uppercase tracking-wider border border-green-700 rounded transition-colors cta-breathe"
             >
-              <span className="hidden md:inline">End Turn </span>→
+              End Turn →
             </button>
           )}
         </div>
@@ -390,6 +396,7 @@ export default function GameShell() {
                 selectedCellId={selectedCellId}
                 onOpenFull={() => handleOpenDrawer('node')}
                 onDeployDirect={handleDeployDirect}
+                onPatrolDirect={handleStartPatrol}
                 onSelectCell={handleSelectCell}
               />
             )}
@@ -400,13 +407,16 @@ export default function GameShell() {
               tokensInUse={state.tokensInUse}
               runConfig={state.runConfig}
               isOpen={rosterOpen}
+              isPlaying={isPlaying}
               onOpenRoster={() => handleOpenDrawer('roster')}
               onClose={() => setOpenDrawer(null)}
               onTrainCell={handleTrainCell}
               onSelectCellForDeploy={handleSelectCellForDeploy}
               onRecall={handleRecall}
               onDecommission={handleDecommission}
+              onEndTurn={handleEndTurn}
               tooltipNode={tooltipNode}
+              onStartPatrol={handleStartPatrol}
               onDeployDirect={handleDeployDirect}
               nodeBarSlot={tooltipNode ? (
                 <NodeBar
@@ -417,6 +427,7 @@ export default function GameShell() {
                   selectedCellId={selectedCellId}
                   onOpenFull={() => handleOpenDrawer('node')}
                   onDeployDirect={handleDeployDirect}
+                  onPatrolDirect={handleStartPatrol}
                   onSelectCell={handleSelectCell}
                 />
               ) : null}
@@ -436,6 +447,7 @@ export default function GameShell() {
               onRecall={handleRecall}
               onClose={() => handleSelectNode(null)}
               onDeployToNode={handleNodeContextMenu}
+              onStartPatrol={handleStartPatrol}
               visibleNodes={visibleNodes}
             />
           </div>
@@ -473,6 +485,7 @@ export default function GameShell() {
               selectedCellId={selectedCellId}
               onOpenFull={null}
               onDeployDirect={handleDeployDirect}
+              onPatrolDirect={handleStartPatrol}
               onSelectCell={handleSelectCell}
               showCloseButton
               onClose={() => setOpenDrawer(null)}
@@ -487,6 +500,7 @@ export default function GameShell() {
                 onRecall={handleRecall}
                 onClose={() => setOpenDrawer(null)}
                 onDeployToNode={handleDeployToNode}
+                onStartPatrol={handleStartPatrol}
                 visibleNodes={visibleNodes}
               />
             </div>
@@ -559,7 +573,7 @@ export default function GameShell() {
 // of both drawers. Tap to open node drawer (if onOpenFull is set).
 
 function NodeBar({ nodeId, gtNodeStates, visibleNodes, deployedCells, selectedCellId,
-                   onOpenFull, onDeployDirect, onSelectCell, showCloseButton, onClose }) {
+                   onOpenFull, onDeployDirect, onPatrolDirect, onSelectCell, showCloseButton, onClose }) {
   const node = NODES[nodeId];
   if (!node) return null;
 
@@ -576,6 +590,7 @@ function NodeBar({ nodeId, gtNodeStates, visibleNodes, deployedCells, selectedCe
 
   const readyCell = selectedCellId ? deployedCells[selectedCellId] : null;
   const canDeploy = readyCell?.phase === 'ready';
+  const canPatrol = canDeploy && CELL_CONFIG[readyCell?.type]?.isRecon;
 
   return (
     <div
@@ -653,13 +668,21 @@ function NodeBar({ nodeId, gtNodeStates, visibleNodes, deployedCells, selectedCe
             ))}
           </div>
         )}
-        {/* Deploy button */}
+        {/* Deploy / Patrol buttons */}
         {canDeploy && (
           <button
             onClick={e => { e.stopPropagation(); onDeployDirect(readyCell.id, nodeId); }}
             className="text-xs font-mono px-1.5 py-0.5 border border-green-700 bg-green-950 text-green-300 rounded hover:bg-green-900 active:bg-green-800 transition-colors shrink-0"
           >
             Deploy →
+          </button>
+        )}
+        {canPatrol && (
+          <button
+            onClick={e => { e.stopPropagation(); onPatrolDirect?.(readyCell.id); }}
+            className="text-xs font-mono px-1.5 py-0.5 border border-amber-700 bg-amber-950 text-amber-300 rounded hover:bg-amber-900 active:bg-amber-800 transition-colors shrink-0"
+          >
+            Patrol ↻
           </button>
         )}
       </div>
