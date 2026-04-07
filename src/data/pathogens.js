@@ -10,7 +10,7 @@ export const PATHOGEN_TYPES = {
   FUNGI:                  'fungi',
   PARASITE:               'parasite',
   TOXIN_PRODUCER:         'toxin_producer',
-  PRION:                  'prion',
+  // PRION:                  'prion',
   BENIGN:                 'benign',
   // Stubs — behaviour defined but not yet fully tuned:
   INTRACELLULAR_BACTERIA: 'intracellular_bacteria',
@@ -26,7 +26,7 @@ export const PATHOGEN_DISPLAY_NAMES = {
   fungi:                  'Fungi',
   parasite:               'Parasite',
   toxin_producer:         'Toxin Producer',
-  prion:                  'Prion',
+  // prion:                  'Prion',
   cancer:                 'Cancer',
   autoimmune:             'Autoimmune',
   benign:                 'Benign variation',
@@ -51,7 +51,8 @@ export const PATHOGEN_REGISTRY = {
     spreadStrength:    10,            // new site starts at this load
     // Damage per turn (at full load 100; scaled linearly by load/100)
     tissueDamageRate:  8,             // integrity lost/turn at load 100
-    inflammationRate:  15,            // inflammation added/turn at load 100
+    inflammationRate:  5,             // small baseline; dominant inflation comes from responding cells
+    collateralModifier: 0,            // surface pathogen — cell attacks cause no bystander tissue damage
   },
 
   virus: {
@@ -65,7 +66,8 @@ export const PATHOGEN_REGISTRY = {
     // Viruses don't damage tissue directly — clearing does (handled in groundTruth)
     tissueDamageRate:  0,
     clearanceTissueCost: 0.2,         // integrity lost per unit of compromise cleared
-    inflammationRate:  10,
+    inflammationRate:  0,
+    collateralModifier: 0,            // intracellular; cell kills are precise, no bystander damage
   },
 
   fungi: {
@@ -76,8 +78,9 @@ export const PATHOGEN_REGISTRY = {
     detectionModifier: 1.0,           // visible structures
     spreadThreshold:   null,          // does not spread between sites
     granulomaThreshold: 60,           // above this: site becomes Walled Off
-    tissueDamageRate:  5,
-    inflammationRate:  8,
+    tissueDamageRate:  2,
+    inflammationRate:  0,
+    collateralModifier: 0,            // walled-off growth; cell attacks cause no bystander damage
     highStressMultiplier: 2.0,        // replication doubles when systemicStress > 70
   },
 
@@ -89,7 +92,8 @@ export const PATHOGEN_REGISTRY = {
     detectionModifier: 0.9,           // somewhat hidden
     spreadThreshold:   null,
     tissueDamageRate:  4,             // slow direct damage
-    inflammationRate:  5,
+    inflammationRate:  0,
+    collateralModifier: 1.0,          // eosinophil degranulation causes bystander damage
     immuneSuppression: true,          // at burden > 50: inflammation generation halved
     suppressionThreshold: 50,
     movementPenalty:   true,          // transit to/from site +1T per 25 burden
@@ -103,22 +107,23 @@ export const PATHOGEN_REGISTRY = {
     detectionModifier: 0.9,           // detected via indirect toxin evidence
     spreadThreshold:   null,
     tissueDamageRate:  2,
-    inflammationRate:  4,
+    inflammationRate:  0,
+    collateralModifier: 0,            // cells neutralize toxins, no bystander tissue damage
     toxinOutputRate:   0.6,           // toxinOutput = infectionLoad × toxinOutputRate
   },
 
-  prion: {
-    ringColor:         '#e879f9',     // fuchsia/magenta
-    actualLoad:              0,
-    growthModel:       'linear',
-    replicationRate:   8,             // flat +8 corruption per turn
-    detectionModifier: 0.5,           // very hard to detect — protein misfolding
-    spreadThreshold:   null,
-    hiddenUntil:       50,            // invisible to player below this
-    tissueDamageRate:  0,
-    tissueDamageAboveThreshold: 2,    // 2 integrity/turn when corruption > 50
-    inflammationRate:  0,             // no inflammation signal
-  },
+  // prion: {
+  //   ringColor:         '#e879f9',     // fuchsia/magenta
+  //   actualLoad:              0,
+  //   growthModel:       'linear',
+  //   replicationRate:   8,             // flat +8 corruption per turn
+  //   detectionModifier: 0.5,           // very hard to detect — protein misfolding
+  //   spreadThreshold:   null,
+  //   hiddenUntil:       50,            // invisible to player below this
+  //   tissueDamageRate:  0,
+  //   tissueDamageAboveThreshold: 2,    // 2 integrity/turn when corruption > 50
+  //   inflammationRate:  0,             // no inflammation signal
+  // },
 
   // ── Stubs ──────────────────────────────────────────────────────────────────
 
@@ -130,7 +135,8 @@ export const PATHOGEN_REGISTRY = {
     detectionModifier: 0.8,           // hides inside host cells
     spreadThreshold:   null,
     tissueDamageRate:  6,
-    inflammationRate:  6,
+    inflammationRate:  0,
+    collateralModifier: 1.0,          // host cell destruction has bystander cost
   },
 
   cancer: {
@@ -141,7 +147,8 @@ export const PATHOGEN_REGISTRY = {
     detectionModifier: 0.6,           // mimics normal cells
     spreadThreshold:   null,
     tissueDamageRate:  3,
-    inflammationRate:  3,
+    inflammationRate:  0,
+    collateralModifier: 1.0,          // cytotoxic killing in tissue causes bystander damage
   },
 
   // Benign: starts at 100, decays naturally. No tissue damage. Slight inflammation.
@@ -154,7 +161,8 @@ export const PATHOGEN_REGISTRY = {
     detectionModifier: 0.7,           // looks like normal cell activity
     spreadThreshold:   null,
     tissueDamageRate:  0,
-    inflammationRate:  3,             // just enough to look suspicious
+    inflammationRate:  5,             // just enough to look suspicious
+    collateralModifier: 1.0,          // attacking benign cells is pure collateral damage
   },
 
   autoimmune: {
@@ -165,7 +173,8 @@ export const PATHOGEN_REGISTRY = {
     detectionModifier: 0.7,           // appears self-like; hard to distinguish from normal immune response
     spreadThreshold:   null,
     tissueDamageRate:  10,           // high self-damage
-    inflammationRate:  20,
+    inflammationRate:  0,
+    collateralModifier: 1.0,          // self-attack is all collateral damage
     // cannot be cleared — regulatory T-cell ability (future)
   },
 };

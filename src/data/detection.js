@@ -28,7 +28,7 @@ export const WRONG_ID_MAP = {
   fungi:                  ['extracellular_bacteria', 'benign'],
   parasite:               ['extracellular_bacteria', 'fungi'],
   toxin_producer:         ['extracellular_bacteria', 'virus'],
-  prion:                  ['autoimmune',             'benign'],
+  // prion:                  ['autoimmune',             'benign'],
   cancer:                 ['autoimmune',             'benign'],
   autoimmune:             ['extracellular_bacteria', 'benign'],
   benign:                 ['autoimmune',             'extracellular_bacteria'],

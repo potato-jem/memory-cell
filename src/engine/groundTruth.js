@@ -7,23 +7,13 @@
 import { NODE_IDS } from '../data/nodes.js';
 import { advanceInstance, computeSpreads, shouldWallOff, generatePathogenUid } from './pathogen.js';
 import { nodeHasActivePathogen } from '../data/pathogens.js';
-import { CELL_CONFIG } from '../data/cellConfig.js';
 import {
   TISSUE_RECOVERY_RATE,
+  TISSUE_RECOVERY_INFLAMMATION_REDUCTION,
   TISSUE_SCAR_THRESHOLD,
   TISSUE_SCAR_BONUS,
-  INFLAMMATION_DAMAGE_THRESHOLD_1,
-  INFLAMMATION_DAMAGE_THRESHOLD_2,
-  INFLAMMATION_DAMAGE_THRESHOLD_3,
-  INFLAMMATION_DAMAGE_RATE_1,
-  INFLAMMATION_DAMAGE_RATE_2,
-  INFLAMMATION_DAMAGE_RATE_3,
-  INFLAMMATION_RECOVERY_THRESHOLD,
   INFLAMMATION_DECAY_RATE_INFECTED,
   INFLAMMATION_DECAY_RATE_CLEAR,
-  ATTACK_CELL_INFLAMMATION_ON_INFECTED,
-  ATTACK_CELL_INFLAMMATION_ON_CLEAN,
-  KILLER_T_INFLAMMATION_ON_CLEAN,
   PARASITE_TRANSIT_PENALTY_PER_BURDEN,
 } from '../data/gameConfig.js';
 import { getEffectiveIntegrityRecovery, getEffectiveInflammationDecayMultiplier } from '../data/runModifiers.js';
@@ -123,10 +113,6 @@ export function advanceGroundTruth(groundTruth, deployedCells, turn, systemicStr
     ns.immuneSuppressed = immuneSuppressedThisTurn;
     perSiteOutputs[nodeId] = { toxinOutput: totalToxinOutput };
 
-    // ── 2. Immune cell inflammation contribution ───────────────────────────────
-    const immuneInflammation = computeImmuneCellInflammation(nodeId, deployedCells, ns);
-    totalInflammationAdded += immuneInflammation;
-
     // ── 3. Update inflammation ─────────────────────────────────────────────────
     const hasInfection = updatedPathogens.length > 0;
     const suppressionActive = ns.immuneSuppressed;
@@ -138,15 +124,15 @@ export function advanceGroundTruth(groundTruth, deployedCells, turn, systemicStr
       ns.inflammation + effectiveInflammationAdd - decayRate
     ));
 
-    // ── 4. Inflammation tissue damage ──────────────────────────────────────────
-    totalTissueDamage += inflammationDamageTick(newInflammation);
-
-    // ── 5. Update tissue integrity ─────────────────────────────────────────────
+    // ── 4. Update tissue integrity ─────────────────────────────────────────────
     let newIntegrity = ns.tissueIntegrity + totalTissueDamage;
 
-    // Recovery: +2/turn when no infection and inflammation is low
-    if (!hasInfection && newInflammation < INFLAMMATION_RECOVERY_THRESHOLD) {
-      newIntegrity = Math.min(ns.tissueIntegrityCeiling, newIntegrity + getEffectiveIntegrityRecovery(TISSUE_RECOVERY_RATE, modifiers));
+    // Recovery: base +4/turn, reduced by 1 per 25 inflammation (0 at 100)
+    const recoveryRate = Math.max(0,
+      TISSUE_RECOVERY_RATE - Math.floor(newInflammation / TISSUE_RECOVERY_INFLAMMATION_REDUCTION)
+    );
+    if (recoveryRate > 0) {
+      newIntegrity = Math.min(ns.tissueIntegrityCeiling, newIntegrity + getEffectiveIntegrityRecovery(recoveryRate, modifiers));
     }
 
     newIntegrity = Math.max(0, Math.min(100, newIntegrity));
@@ -222,33 +208,6 @@ export function advanceGroundTruth(groundTruth, deployedCells, turn, systemicStr
     events,
     perSiteOutputs,
   };
-}
-
-// ── Immune cell inflammation contribution ─────────────────────────────────────
-
-function computeImmuneCellInflammation(nodeId, deployedCells, ns) {
-  const hasInfection = (ns.pathogens ?? []).length > 0;
-  let added = 0;
-  for (const cell of Object.values(deployedCells)) {
-    if (cell.nodeId !== nodeId || cell.phase !== 'arrived') continue;
-    if (!CELL_CONFIG[cell.type]?.isAttack) continue;
-    // More inflammation if attacking a clean site (collateral / autoimmune)
-    if (!hasInfection) {
-      added += cell.type === 'killer_t' ? KILLER_T_INFLAMMATION_ON_CLEAN : ATTACK_CELL_INFLAMMATION_ON_CLEAN;
-    } else {
-      added += ATTACK_CELL_INFLAMMATION_ON_INFECTED;
-    }
-  }
-  return added;
-}
-
-// ── Inflammation damage tick ──────────────────────────────────────────────────
-
-function inflammationDamageTick(inflammation) {
-  if (inflammation >= INFLAMMATION_DAMAGE_THRESHOLD_3) return -INFLAMMATION_DAMAGE_RATE_3;
-  if (inflammation >= INFLAMMATION_DAMAGE_THRESHOLD_2) return -INFLAMMATION_DAMAGE_RATE_2;
-  if (inflammation >= INFLAMMATION_DAMAGE_THRESHOLD_1) return -INFLAMMATION_DAMAGE_RATE_1;
-  return 0;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

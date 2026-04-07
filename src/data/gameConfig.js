@@ -15,19 +15,9 @@ export const INITIAL_TOKEN_CAPACITY = 12;
 export const TOKEN_CAPACITY_MAX = 30;
 export const TOKEN_CAPACITY_REGEN_INTERVAL = 60; // ticks between +1 capacity (~1 per minute)
 
-// ── Inflammation ───────────────────────────────────────────────────────────────
-// Inflammation damages tissue integrity once it crosses 25.
-// Damage rate increases at each threshold.
-export const INFLAMMATION_DAMAGE_THRESHOLD_1 = 25;  // begins damaging
-export const INFLAMMATION_DAMAGE_THRESHOLD_2 = 50;
-export const INFLAMMATION_DAMAGE_THRESHOLD_3 = 75;
-export const INFLAMMATION_DAMAGE_RATE_1 = 1;        // integrity lost/turn at tier 1
-export const INFLAMMATION_DAMAGE_RATE_2 = 2;        // at tier 2
-export const INFLAMMATION_DAMAGE_RATE_3 = 3;        // at tier 3
-export const INFLAMMATION_RECOVERY_THRESHOLD = 30;  // inflammation below this allows integrity recovery
-
 // ── Tissue integrity ───────────────────────────────────────────────────────────
-export const TISSUE_RECOVERY_RATE = 2;              // integrity restored/turn when clear + low inflammation
+export const TISSUE_RECOVERY_RATE = 4;              // base integrity restored/turn
+export const TISSUE_RECOVERY_INFLAMMATION_REDUCTION = 25; // each 25 inflammation reduces recovery by 1 (0 at 100)
 export const TISSUE_SCAR_THRESHOLD = 40;            // if integrity drops below this, ceiling is set permanently
 export const TISSUE_SCAR_BONUS = 25;                // ceiling = lowestPointReached + 25 
 
@@ -62,12 +52,6 @@ export const SPAWN_OVERWHELM_PENALTY = 0.30;        // subtracted when 3+ active
 // Inflammation decays each turn regardless of other factors.
 export const INFLAMMATION_DECAY_RATE_INFECTED = 3;   // inflammation lost/turn while infection active
 export const INFLAMMATION_DECAY_RATE_CLEAR = 8;      // inflammation lost/turn when no active infection
-
-// ── Immune cell inflammation contribution ──────────────────────────────────────
-// Attack cells at a node add inflammation each turn they are present.
-export const ATTACK_CELL_INFLAMMATION_ON_INFECTED = 5;     // per attack cell at infected node
-export const ATTACK_CELL_INFLAMMATION_ON_CLEAN = 15;       // per attack cell at clean node
-export const KILLER_T_INFLAMMATION_ON_CLEAN = 25;          // killer T specifically (higher cascade risk)
 
 // ── Parasite transit penalty ───────────────────────────────────────────────────
 export const PARASITE_TRANSIT_PENALTY_PER_BURDEN = 25;     // +1 turn penalty per N parasiticBurden

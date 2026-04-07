@@ -30,6 +30,24 @@ import {
   getNodeCellClearanceMultiplier,
 } from '../data/runModifiers.js';
 
+// ── Inflammation scaling ──────────────────────────────────────────────────────
+
+/**
+ * Returns an effectiveness multiplier based on site inflammation and cell config.
+ * Innate cells underperform in cold tissue, peak at moderate inflammation, and
+ * diminish slightly at very high inflammation. Adaptive cells work best at low
+ * inflammation and degrade as it rises.
+ *
+ * Config shape: { lowThreshold, lowMult, highThreshold, highMult, midMult? }
+ * midMult defaults to 1.0 if absent.
+ */
+function getInflammationScalingMultiplier(cfg, inflammation) {
+  if (!cfg) return 1.0;
+  if (inflammation < cfg.lowThreshold) return cfg.lowMult;
+  if (inflammation < cfg.highThreshold) return cfg.midMult ?? 1.0;
+  return cfg.highMult;
+}
+
 // ── Clearance ─────────────────────────────────────────────────────────────────
 
 /**
@@ -73,7 +91,13 @@ export function getClearancePower(instance, nodeId, deployedCells, nodeState, mo
     // Specialization multiplier (e.g. b-cell tuned to a specific pathogen type)
     const specializationMult = cell.specialization?.[pathogenType] ?? 1.0;
 
-    total += effectiveRate * clearMod * levelEffectiveness * stationaryMult * specializationMult;
+    // Inflammation scaling: innate cells bonus in inflamed tissue; adaptive cells penalized
+    const inflammationMult = getInflammationScalingMultiplier(
+      cellCfg?.inflammationScaling,
+      nodeState?.inflammation ?? 0
+    );
+
+    total += effectiveRate * clearMod * levelEffectiveness * stationaryMult * specializationMult * inflammationMult;
   }
 
   // Pathogen-specific clearance multiplier (e.g. upgrade makes a type easier to clear)
@@ -91,6 +115,66 @@ export function getClearancePower(instance, nodeId, deployedCells, nodeState, mo
 // ── Instance advancement ───────────────────────────────────────────────────────
 
 /**
+ * Returns each attacking cell's potential clearance contribution against this
+ * pathogen, sorted ascending by collateral damage then by inflammation (least
+ * harmful first). This order ensures that when a pathogen has little load left,
+ * gentler cells consume it first — minimising wasteful side effects.
+ */
+function computeSortedClearanceContributions(instance, nodeId, deployedCells, nodeState, modifiers, def) {
+  const pathogenType = instance.type;
+  const detectedLevel = instance.detected_level ?? 'none';
+  const collateralModifier = def.collateralModifier ?? 1.0;
+  const inflammation = nodeState?.inflammation ?? 0;
+
+  // Node- and pathogen-level multipliers (same as getClearancePower applies to the total)
+  const pathogenClearanceMult = getEffectivePathogenClearanceMultiplier(pathogenType, modifiers);
+  const nodeClearanceMult = getNodeCellClearanceMultiplier(nodeId, modifiers);
+  const suppressionMult = nodeState?.immuneSuppressed ? 0.5 : 1.0;
+  const globalMult = pathogenClearanceMult * nodeClearanceMult * suppressionMult;
+
+  const contributions = [];
+
+  for (const cell of Object.values(deployedCells)) {
+    if (cell.nodeId !== nodeId || cell.phase !== 'arrived') continue;
+    const cellCfg = CELL_CONFIG[cell.type];
+    const clearMod = cellCfg?.clearablePathogens?.[pathogenType] ?? 0;
+    if (clearMod === 0) continue;
+
+    const effectiveRate = getEffectiveClearanceRate(cell.type, modifiers);
+    const levelEffectiveness = getEffectiveEffectiveness(cell.type, detectedLevel, modifiers);
+
+    let stationaryMult = 1.0;
+    const stationaryBonusCfg = cellCfg?.stationaryBonus;
+    if (stationaryBonusCfg && cell.stationaryTurns > 0) {
+      stationaryMult = Math.min(
+        stationaryBonusCfg.maxMultiplier,
+        1.0 + stationaryBonusCfg.gainPerTurn * cell.stationaryTurns
+      );
+    }
+
+    const specializationMult = cell.specialization?.[pathogenType] ?? 1.0;
+    const inflammationMult = getInflammationScalingMultiplier(cellCfg?.inflammationScaling, inflammation);
+
+    let potential = effectiveRate * clearMod * levelEffectiveness * stationaryMult * specializationMult * inflammationMult * globalMult;
+    if (potential <= 0) continue;
+
+    const cellCollateralRate = (cellCfg.collateralRate ?? 0) * collateralModifier;
+    const cellInflammationRate = cellCfg.inflammationRate ?? 0;
+
+    contributions.push({ potential, cellCollateralRate, cellInflammationRate });
+  }
+
+  // Sort: least harmful first (collateral ASC, then inflammation ASC)
+  contributions.sort((a, b) => {
+    const collateralDiff = a.cellCollateralRate - b.cellCollateralRate;
+    if (collateralDiff !== 0) return collateralDiff;
+    return a.cellInflammationRate - b.cellInflammationRate;
+  });
+
+  return contributions;
+}
+
+/**
  * Advance one pathogen instance for one turn.
  *
  * Returns:
@@ -99,38 +183,79 @@ export function getClearancePower(instance, nodeId, deployedCells, nodeState, mo
  *   inflammationDelta    — how much inflammation to add
  *   toxinOutput          — direct systemic stress contribution this turn
  *   suppressImmune       — whether parasite threshold now suppresses immunity
+ *
+ * Cell-driven inflammation and collateral tissue damage are now folded into
+ * inflammationDelta and tissueIntegrityDelta respectively. Side effects are
+ * proportional to clearance actually applied (capped by available pathogen load),
+ * with gentle cells allocated first to minimise damage on nearly-dead pathogens.
  */
 export function advanceInstance(instance, nodeId, deployedCells, nodeState, systemicStress, modifiers = null) {
   const def = PATHOGEN_REGISTRY[instance.type];
   if (!def) return { newInstance: null, tissueIntegrityDelta: 0, inflammationDelta: 0, toxinOutput: 0 };
 
   const currentLoad = getPrimaryLoad(instance);
-
-  const clearance = getClearancePower(instance, nodeId, deployedCells, nodeState, modifiers);
   const growth = computeGrowth(def, currentLoad, systemicStress, instance.type, modifiers);
 
-  // Walled Off fungi: ticks down very slowly, neither grows nor clears normally
-  let rawNew;
+  // Walled Off fungi: ticks down very slowly, no cell involvement
   if (nodeState?.isWalledOff && instance.type === 'fungi') {
-    rawNew = Math.max(0, currentLoad - 0.5);
-  } else {
-    rawNew = Math.max(0, currentLoad + growth - clearance);
+    const newLoad = Math.min(100, Math.max(0, currentLoad - 0.5));
+    const loadFraction = currentLoad / 100;
+    const effectiveDamageRate = getEffectiveDamageRate(instance.type, def.tissueDamageRate ?? 0, modifiers);
+    const tissueIntegrityDelta = -effectiveDamageRate * loadFraction;
+    const inflammationDelta = getEffectiveInflammationRate(instance.type, def.inflammationRate ?? 0, modifiers) * loadFraction;
+    const toxinOutput = def.toxinOutputRate ? currentLoad * def.toxinOutputRate : 0;
+    const suppressImmune = def.immuneSuppression && currentLoad >= (def.suppressionThreshold ?? 50);
+    if (newLoad <= 0) {
+      return { newInstance: null, tissueIntegrityDelta, inflammationDelta, toxinOutput, suppressImmune: false };
+    }
+    return { newInstance: { ...instance, actualLoad: newLoad }, tissueIntegrityDelta, inflammationDelta, toxinOutput, suppressImmune };
   }
-  const newLoad = Math.min(100, rawNew);
 
-  // Damage & inflammation (scaled by load/100)
+  // ── Cell clearance with side-effect allocation ─────────────────────────────
+  // attackableLoad: max clearance that can connect this turn
+  const attackableLoad = Math.max(0, currentLoad + growth);
+
+  const contributions = computeSortedClearanceContributions(instance, nodeId, deployedCells, nodeState, modifiers, def);
+
+  let remaining = attackableLoad;
+  let totalClearance = 0;
+  let cellInflammation = 0;
+  let cellCollateral = 0;
+
+  for (const contrib of contributions) {
+    const actual = Math.min(contrib.potential, remaining);
+    remaining -= actual;
+    totalClearance += actual;
+    if (actual > 0) {
+      cellInflammation += actual * contrib.cellInflammationRate;
+      cellCollateral += actual * contrib.cellCollateralRate;
+    }
+  }
+
+  // Also apply any excess clearance beyond attackableLoad (side effects already capped)
+  // i.e. total clearance applied matches getClearancePower-based result
+  const excessClearance = contributions.reduce((sum, c) => sum + c.potential, 0) - totalClearance;
+  totalClearance += Math.max(0, excessClearance);
+
+  const newLoad = Math.min(100, Math.max(0, currentLoad + growth - totalClearance));
+
+  // ── Damage & inflammation ─────────────────────────────────────────────────
   const loadFraction = currentLoad / 100;
   const effectiveDamageRate = getEffectiveDamageRate(instance.type, def.tissueDamageRate ?? 0, modifiers);
   let tissueIntegrityDelta = -effectiveDamageRate * loadFraction;
   let inflammationDelta = getEffectiveInflammationRate(instance.type, def.inflammationRate ?? 0, modifiers) * loadFraction;
 
+  // Fold in cell-driven side effects
+  inflammationDelta += cellInflammation;
+  tissueIntegrityDelta -= cellCollateral;
+
   // Prion: no inflammation, but tissue damage above hidden threshold
-  if (instance.type === 'prion') {
-    inflammationDelta = 0;
-    tissueIntegrityDelta = currentLoad >= def.hiddenUntil
-      ? -(def.tissueDamageAboveThreshold ?? 0)
-      : 0;
-  }
+  // if (instance.type === 'prion') {
+  //   inflammationDelta = 0;
+  //   tissueIntegrityDelta = currentLoad >= def.hiddenUntil
+  //     ? -(def.tissueDamageAboveThreshold ?? 0)
+  //     : 0;
+  // }
 
   // Parasite immune suppression flag
   const suppressImmune = def.immuneSuppression && currentLoad >= (def.suppressionThreshold ?? 50);

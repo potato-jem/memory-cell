@@ -77,6 +77,12 @@ export const CELL_CONFIG = {
       gainPerTurn:   0.25,  // +25% clearance rate per stationary turn
       maxMultiplier: 3.0,   // cap at 3× base clearance rate
     },
+    inflammationRate:      0.2,   // inflation per unit of clearance applied (medium-low)
+    collateralRate:        0.1,   // tissue damage per unit of clearance × pathogen collateralModifier (low)
+    inflammationScaling: {        // innate: underperforms in cold tissue, peaks in inflamed
+      lowThreshold: 30, lowMult: 0.6,
+      highThreshold: 60, highMult: 0.85,
+    },
     color:                 '#fbbf24',
     textClass:             'text-amber-400',
     dotClass:              'bg-amber-600',
@@ -96,7 +102,7 @@ export const CELL_CONFIG = {
       fungi:                  1.0,
       toxin_producer:         1.0,
       parasite:               0.5,  // innate phagocytosis — slower than specialist
-      prion:                  0.5,  // autophagy of misfolded proteins — very slow
+      // prion:                  0.5,  // autophagy of misfolded proteins — very slow
       benign:                 1.0,
     },
     effectivenessByLevel:  {         // clears regardless of detection level
@@ -113,6 +119,12 @@ export const CELL_CONFIG = {
     trainingTicks:         5,
     displayOrder:          1,
     cellLifetime:          15,  // 3 turns × 5 ticks/turn — dies after deployment, cannot be recalled
+    inflammationRate:      0.5,   // high — neutrophil activity is a major driver of inflammation
+    collateralRate:        0.4,   // high — granule release damages surrounding tissue
+    inflammationScaling: {        // innate: underperforms in cold tissue, peaks in inflamed
+      lowThreshold: 30, lowMult: 0.6,
+      highThreshold: 60, highMult: 0.85,
+    },
     color:                 '#60a5fa',
     textClass:             'text-blue-400',
     dotClass:              'bg-blue-600',
@@ -146,6 +158,8 @@ export const CELL_CONFIG = {
     clearanceRate:         5,
     trainingTicks:         15,
     displayOrder:          4,
+    inflammationRate:      0.3,   // medium — degranulation generates moderate inflammation
+    collateralRate:        0.25,  // medium — degranulation damages surrounding tissue
     color:                 '#f87171',
     textClass:             'text-red-400',
     dotClass:              'bg-red-700',
@@ -178,6 +192,13 @@ export const CELL_CONFIG = {
     clearanceRate:         20,
     trainingTicks:         25,
     displayOrder:          5,
+    inflammationRate:      0.15,  // low — targeted cytotoxic kills, minimal bystander signaling
+    collateralRate:        0.25,  // medium — cell killing has some tissue cost
+    inflammationScaling: {        // adaptive: degrades in high inflammation
+      lowThreshold: 30, lowMult: 1.0,
+      midMult: 0.6,
+      highThreshold: 60, highMult: 0.3,
+    },
     color:                 '#fb7185',
     textClass:             'text-red-300',
     dotClass:              'bg-red-600',
@@ -213,6 +234,13 @@ export const CELL_CONFIG = {
     clearanceRate:         3,
     trainingTicks:         20,
     displayOrder:          6,
+    inflammationRate:      0.15,  // low — antibody-mediated clearance, low bystander signaling
+    collateralRate:        0.2,   // medium — opsonization/MAC has some tissue cost
+    inflammationScaling: {        // adaptive: degrades in high inflammation
+      lowThreshold: 30, lowMult: 1.0,
+      midMult: 0.6,
+      highThreshold: 60, highMult: 0.3,
+    },
     specializationSlots:        1,    // max pathogen types to maintain top specialization in
     specializationGainPerTurn:  0.15, // specialization score gain per turn actively fighting that type
     specializationDecayPerTurn: 0.15, // decay per turn for non-top-slot types (zero-sum)
@@ -256,6 +284,12 @@ export const CELL_CONFIG = {
     clearanceRate:         15,
     trainingTicks:         20,
     displayOrder:          7,
+    inflammationRate:      0.5,   // high — NK cytokine release is a major inflammation driver
+    collateralRate:        0.4,   // high — perforin/granzyme release damages surrounding cells
+    inflammationScaling: {        // innate: underperforms in cold tissue, peaks in inflamed
+      lowThreshold: 30, lowMult: 0.6,
+      highThreshold: 60, highMult: 0.85,
+    },
     color:                 '#fb923c',
     textClass:             'text-orange-400',
     dotClass:              'bg-orange-600',

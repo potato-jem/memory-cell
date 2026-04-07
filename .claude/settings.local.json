@@ -10,7 +10,11 @@
       "Bash(git -C:*)",
       "Bash(wc:*)",
       "Bash(npx vite:*)",
-      "Bash(node simulation/run.js*)"
+      "Bash(node simulation/run.js*)",
+      "Bash(xargs grep:*)",
+      "Bash(node --input-type=module --eval ':*)",
+      "Bash(ls:*)",
+      "Bash(grep -r \"localStorage\\\\|sessionStorage\\\\|fetch\\\\|http\\\\|API\\\\|axios\" C:UsersJeremyDocumentsCodememory-cellsrc --include=*.jsx --include=*.js)"
     ]
   }
 }

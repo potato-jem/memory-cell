@@ -24,7 +24,7 @@ export const BASE_WEIGHTS = {
   // PERIPHERY dominant (skin cancer most common overall); GUT (colorectal); BLOOD (leukaemia/lymphoma); THROAT
   cancer:                 { PERIPHERY: 3, CHEST: 2, GUT: 2, LIVER: 2, BLOOD: 1,  THROAT: 1, MUSCLE: 0  },
   // GUT (oral/dietary entry, vCJD); THROAT (tonsil lymphoid accumulation)
-  prion:                  { BLOOD: 2, GUT: 1, THROAT: 1, MUSCLE: 0, PERIPHERY: 0,  CHEST: 0,  LIVER: 0   },
+  // prion:                  { BLOOD: 2, GUT: 1, THROAT: 1, MUSCLE: 0, PERIPHERY: 0,  CHEST: 0,  LIVER: 0   },
 };
 
 // ── Relative frequency across pathogen types ──────────────────────────────────
@@ -38,7 +38,7 @@ export const TYPE_BASE_WEIGHT = {
   parasite:               3,  // regionally common, globally moderate
   intracellular_bacteria: 2,  // TB, Legionella, Rickettsia — less frequent
   cancer:                 1,  // rare in any given moment; late-game
-  prion:                  1,  // extremely rare; late-game
+  // prion:                  1,  // extremely rare; late-game
 };
 
 // ── Turn thresholds before each type can spawn ────────────────────────────────
@@ -51,7 +51,7 @@ export const UNLOCK_TURN = {
   parasite:               5,
   intracellular_bacteria: 12,
   cancer:                 20,
-  prion:                  30,
+  // prion:                  30,
 };
 
 // ── Scheduled probability spikes ──────────────────────────────────────────────
