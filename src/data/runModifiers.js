@@ -17,6 +17,7 @@
 //                                   e.g. { classified: 0.1 } gives +10% when classified
 //   autoimmuneSurchargeMultiplier — scales inflammation added when attacking clean sites
 //   detectionRollsBonus          — integer added to detectionRolls (recon cells only)
+//   specializedType              — pathogen type this specialist cell is locked to (isSpecialist only)
 //
 // nodes[nodeId]:
 //   addedConnections           — array of nodeIds this node gains edges to

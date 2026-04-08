@@ -209,6 +209,7 @@ export const CELL_CONFIG = {
     isScout:               false,
     requiresClassified:    true,    // cannot deploy without a classified pathogen at target
     coversAdjacentNodes:   false,
+    isSpecialist:          true,    // locks onto the first pathogen type it successfully clears
     // ── Detection ──
     detectionRolls:        0,
     detectionUpgradeProbs: null,
@@ -399,4 +400,18 @@ export function getEffectiveDetectionRolls(cellType, modifiers) {
   const base = CELL_CONFIG[cellType]?.detectionRolls ?? 0;
   const bonus = modifiers?.cells?.[cellType]?.detectionRollsBonus ?? 0;
   return Math.max(0, base + bonus);
+}
+
+/**
+ * Returns the effective clearablePathogens dict for a given cell type.
+ * For specialist cell types that have locked a specializedType via runModifiers,
+ * all other pathogen types return 0.
+ */
+export function getCellClearablePathogens(cellType, modifiers) {
+  const cfg = CELL_CONFIG[cellType];
+  const base = cfg?.clearablePathogens ?? {};
+  if (!cfg?.isSpecialist) return base;
+  const specializedType = modifiers?.cells?.[cellType]?.specializedType;
+  if (!specializedType) return base;
+  return { [specializedType]: base[specializedType] ?? 1.0 };
 }

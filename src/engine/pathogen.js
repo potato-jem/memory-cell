@@ -20,6 +20,7 @@ import {
   CELL_CONFIG,
   getEffectiveClearanceRate,
   getEffectiveEffectiveness,
+  getCellClearablePathogens,
 } from '../data/cellConfig.js';
 import {
   getEffectiveGrowthRate,
@@ -73,7 +74,7 @@ export function getClearancePower(instance, nodeId, deployedCells, nodeState, mo
   for (const cell of Object.values(deployedCells)) {
     if (cell.nodeId !== nodeId || cell.phase !== 'arrived') continue;
     const cellCfg = CELL_CONFIG[cell.type];
-    const clearMod = cellCfg?.clearablePathogens?.[pathogenType] ?? 0;
+    const clearMod = getCellClearablePathogens(cell.type, modifiers)[pathogenType] ?? 0;
     if (clearMod === 0) continue;
     const effectiveRate = getEffectiveClearanceRate(cell.type, modifiers);
     const levelEffectiveness = getEffectiveEffectiveness(cell.type, detectedLevel, modifiers);
@@ -137,7 +138,7 @@ function computeSortedClearanceContributions(instance, nodeId, deployedCells, no
   for (const cell of Object.values(deployedCells)) {
     if (cell.nodeId !== nodeId || cell.phase !== 'arrived') continue;
     const cellCfg = CELL_CONFIG[cell.type];
-    const clearMod = cellCfg?.clearablePathogens?.[pathogenType] ?? 0;
+    const clearMod = getCellClearablePathogens(cell.type, modifiers)[pathogenType] ?? 0;
     if (clearMod === 0) continue;
 
     const effectiveRate = getEffectiveClearanceRate(cell.type, modifiers);
@@ -174,6 +175,121 @@ function computeSortedClearanceContributions(instance, nodeId, deployedCells, no
   return contributions;
 }
 
+// ── Multi-pathogen clearance equalization ─────────────────────────────────────
+
+/**
+ * Distribute clearance budget C across pathogens using equalisation logic.
+ * Sort by load descending. Spend C to bring the highest tier down to the next,
+ * then recurse. When C is exhausted mid-gap, split it equally across the current
+ * leader group.
+ *
+ * @param {Array}  items  [{uid, load}] sorted descending by load
+ * @param {number} C      total raw clearance budget
+ * @returns {Object}      {[uid]: rawAllocated}
+ */
+function equalizeDistribution(items, C) {
+  const result = {};
+  for (const { uid } of items) result[uid] = 0;
+  if (items.length === 0 || C <= 0) return result;
+
+  function recurse(leaderLoad, leaderUids, rest, remaining) {
+    if (remaining <= 0) return;
+    if (rest.length === 0) {
+      const per = remaining / leaderUids.length;
+      for (const uid of leaderUids) result[uid] += per;
+      return;
+    }
+    const nextLoad = rest[0].load;
+    const gap = leaderLoad - nextLoad;
+    const costToEqualize = gap * leaderUids.length;
+
+    if (remaining <= costToEqualize) {
+      const per = remaining / leaderUids.length;
+      for (const uid of leaderUids) result[uid] += per;
+      return;
+    }
+
+    for (const uid of leaderUids) result[uid] += gap;
+    remaining -= costToEqualize;
+
+    // Absorb any rest entries tied at nextLoad into the leader group
+    const newLeaderUids = [...leaderUids];
+    let i = 0;
+    while (i < rest.length && rest[i].load === nextLoad) {
+      newLeaderUids.push(rest[i].uid);
+      i++;
+    }
+    recurse(nextLoad, newLeaderUids, rest.slice(i), remaining);
+  }
+
+  recurse(items[0].load, [items[0].uid], items.slice(1), C);
+  return result;
+}
+
+/**
+ * Compute how much clearance each cell's budget allocates to each pathogen at a node,
+ * applying the Brief 1 equalisation algorithm so clearance pressure equalises loads
+ * rather than being applied independently per pathogen.
+ *
+ * Per-pathogen multipliers (clearMod, levelEffectiveness, specializationMult, pathogen
+ * clearance multiplier) are applied after distribution.
+ *
+ * @returns {Object} {[pathogenUid]: totalClearance}
+ */
+export function computeNodeClearanceAllocations(pathogens, nodeId, deployedCells, nodeState, modifiers) {
+  const allocations = {};
+  for (const p of pathogens) allocations[p.uid] = 0;
+
+  const nodeClearanceMult = getNodeCellClearanceMultiplier(nodeId, modifiers);
+  const suppressionMult = nodeState?.immuneSuppressed ? 0.5 : 1.0;
+
+  for (const cell of Object.values(deployedCells)) {
+    if (cell.nodeId !== nodeId || cell.phase !== 'arrived') continue;
+    const cellCfg = CELL_CONFIG[cell.type];
+    const effectiveRate = getEffectiveClearanceRate(cell.type, modifiers);
+
+    let stationaryMult = 1.0;
+    if (cellCfg?.stationaryBonus && cell.stationaryTurns > 0) {
+      stationaryMult = Math.min(
+        cellCfg.stationaryBonus.maxMultiplier,
+        1.0 + cellCfg.stationaryBonus.gainPerTurn * cell.stationaryTurns
+      );
+    }
+    const inflammationMult = getInflammationScalingMultiplier(
+      cellCfg?.inflammationScaling, nodeState?.inflammation ?? 0
+    );
+
+    const C = effectiveRate * stationaryMult * inflammationMult * suppressionMult * nodeClearanceMult;
+    if (C <= 0) continue;
+
+    const clearableMap = getCellClearablePathogens(cell.type, modifiers);
+
+    const eligible = pathogens
+      .map(p => {
+        const clearMod = clearableMap[p.type] ?? 0;
+        const levelEff = getEffectiveEffectiveness(cell.type, p.detected_level ?? 'none', modifiers);
+        const specMult = cell.specialization?.[p.type] ?? 1.0;
+        const pathogenMult = getEffectivePathogenClearanceMultiplier(p.type, modifiers);
+        return { uid: p.uid, load: p.actualLoad ?? 0, clearMod, levelEff, specMult, pathogenMult };
+      })
+      .filter(ep => ep.clearMod > 0 && ep.levelEff > 0 && ep.load > 0)
+      .sort((a, b) => b.load - a.load);
+
+    if (eligible.length === 0) continue;
+
+    const rawAllocs = equalizeDistribution(eligible.map(ep => ({ uid: ep.uid, load: ep.load })), C);
+
+    for (const ep of eligible) {
+      const raw = rawAllocs[ep.uid] ?? 0;
+      if (raw > 0) {
+        allocations[ep.uid] += raw * ep.clearMod * ep.levelEff * ep.specMult * ep.pathogenMult;
+      }
+    }
+  }
+
+  return allocations;
+}
+
 /**
  * Advance one pathogen instance for one turn.
  *
@@ -189,7 +305,7 @@ function computeSortedClearanceContributions(instance, nodeId, deployedCells, no
  * proportional to clearance actually applied (capped by available pathogen load),
  * with gentle cells allocated first to minimise damage on nearly-dead pathogens.
  */
-export function advanceInstance(instance, nodeId, deployedCells, nodeState, systemicStress, modifiers = null) {
+export function advanceInstance(instance, nodeId, deployedCells, nodeState, systemicStress, modifiers = null, clearanceOverride = null) {
   const def = PATHOGEN_REGISTRY[instance.type];
   if (!def) return { newInstance: null, tissueIntegrityDelta: 0, inflammationDelta: 0, toxinOutput: 0 };
 
@@ -217,25 +333,38 @@ export function advanceInstance(instance, nodeId, deployedCells, nodeState, syst
 
   const contributions = computeSortedClearanceContributions(instance, nodeId, deployedCells, nodeState, modifiers, def);
 
-  let remaining = attackableLoad;
   let totalClearance = 0;
   let cellInflammation = 0;
   let cellCollateral = 0;
 
-  for (const contrib of contributions) {
-    const actual = Math.min(contrib.potential, remaining);
-    remaining -= actual;
-    totalClearance += actual;
-    if (actual > 0) {
-      cellInflammation += actual * contrib.cellInflammationRate;
-      cellCollateral += actual * contrib.cellCollateralRate;
+  if (clearanceOverride !== null) {
+    // Use equalized clearance from computeNodeClearanceAllocations.
+    // Side effects are attributed proportionally across contributing cells.
+    totalClearance = Math.min(clearanceOverride, attackableLoad);
+    const naturalTotal = contributions.reduce((s, c) => s + c.potential, 0);
+    const scale = naturalTotal > 0 ? totalClearance / naturalTotal : 0;
+    for (const contrib of contributions) {
+      const actual = contrib.potential * scale;
+      if (actual > 0) {
+        cellInflammation += actual * contrib.cellInflammationRate;
+        cellCollateral += actual * contrib.cellCollateralRate;
+      }
     }
+  } else {
+    let remaining = attackableLoad;
+    for (const contrib of contributions) {
+      const actual = Math.min(contrib.potential, remaining);
+      remaining -= actual;
+      totalClearance += actual;
+      if (actual > 0) {
+        cellInflammation += actual * contrib.cellInflammationRate;
+        cellCollateral += actual * contrib.cellCollateralRate;
+      }
+    }
+    // Apply excess clearance beyond attackableLoad (side effects already capped)
+    const excessClearance = contributions.reduce((sum, c) => sum + c.potential, 0) - totalClearance;
+    totalClearance += Math.max(0, excessClearance);
   }
-
-  // Also apply any excess clearance beyond attackableLoad (side effects already capped)
-  // i.e. total clearance applied matches getClearancePower-based result
-  const excessClearance = contributions.reduce((sum, c) => sum + c.potential, 0) - totalClearance;
-  totalClearance += Math.max(0, excessClearance);
 
   const newLoad = Math.min(100, Math.max(0, currentLoad + growth - totalClearance));
 

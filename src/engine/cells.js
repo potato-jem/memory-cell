@@ -52,6 +52,7 @@ function initSpecialization(type) {
   return Object.fromEntries(Object.keys(cfg.clearablePathogens).map(k => [k, 1.0]));
 }
 
+
 // ── Token accounting ──────────────────────────────────────────────────────────
 
 export function computeTokensInUse(deployedCells, modifiers = null) {

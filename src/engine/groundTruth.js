@@ -5,7 +5,7 @@
 // No single-pathogen 'pathogenState' field — all pathogens live inside nodeStates.
 
 import { NODE_IDS } from '../data/nodes.js';
-import { advanceInstance, computeSpreads, shouldWallOff, generatePathogenUid } from './pathogen.js';
+import { advanceInstance, computeSpreads, shouldWallOff, generatePathogenUid, computeNodeClearanceAllocations } from './pathogen.js';
 import { nodeHasActivePathogen } from '../data/pathogens.js';
 import {
   TISSUE_RECOVERY_RATE,
@@ -78,9 +78,15 @@ export function advanceGroundTruth(groundTruth, deployedCells, turn, systemicStr
     let totalToxinOutput = 0;
     let immuneSuppressedThisTurn = false;
 
+    // Pre-compute equalized clearance allocations across all pathogens at this node.
+    const clearanceAllocations = computeNodeClearanceAllocations(
+      ns.pathogens ?? [], nodeId, deployedCells, ns, modifiers
+    );
+
     for (const instance of (ns.pathogens ?? [])) {
+      const clearanceOverride = clearanceAllocations[instance.uid] ?? null;
       const { newInstance, tissueIntegrityDelta, inflammationDelta, toxinOutput, suppressImmune } =
-        advanceInstance(instance, nodeId, deployedCells, ns, systemicStress, modifiers);
+        advanceInstance(instance, nodeId, deployedCells, ns, systemicStress, modifiers, clearanceOverride);
 
       if (newInstance) {
         updatedPathogens.push(newInstance);

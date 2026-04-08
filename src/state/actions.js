@@ -17,7 +17,7 @@ import {
   computeTokensInUse,
   updateCellSpecializations,
 } from '../engine/cells.js';
-import { CELL_CONFIG, RECON_CELL_TYPES, getEffectiveClearanceRate } from '../data/cellConfig.js';
+import { CELL_CONFIG, RECON_CELL_TYPES, getEffectiveClearanceRate, getCellClearablePathogens } from '../data/cellConfig.js';
 import { NODES, computeVisibility } from '../data/nodes.js';
 import { TICKS_PER_TURN, GAME_PHASES, LOSS_REASONS } from './gameState.js';
 import { TOKEN_CAPACITY_MAX, TOKEN_CAPACITY_REGEN_INTERVAL, WIN_PATHOGEN_TARGET } from '../data/gameConfig.js';
@@ -77,7 +77,7 @@ function handleEndTurn(state) {
   const prevTick = state.tick;
   const newTick = state.tick + TICKS_PER_TURN;
   const newTurn = state.turn + 1;
-  const mods = state.runModifiers;
+  let mods = state.runModifiers;
 
   // 1. Token capacity regen
   let tokenCapacity = state.tokenCapacity;
@@ -94,6 +94,23 @@ function handleEndTurn(state) {
   const groundTruthAfterDetection = runDetectionPhase(
     updatedCells, nodesVisited, state.groundTruth, mods
   );
+
+  // 3b. Lock specialist cell types to the first eligible pathogen they encounter
+  for (const cell of Object.values(updatedCells)) {
+    const cfg = CELL_CONFIG[cell.type];
+    if (!cfg?.isSpecialist) continue;
+    if (mods?.cells?.[cell.type]?.specializedType) continue;
+    if (cell.phase !== 'arrived' || !cell.nodeId) continue;
+    const ns = groundTruthAfterDetection.nodeStates[cell.nodeId];
+    for (const p of (ns?.pathogens ?? [])) {
+      const clearMod = cfg.clearablePathogens?.[p.type] ?? 0;
+      const levelEff = cfg.effectivenessByLevel?.[p.detected_level ?? 'none'] ?? 0;
+      if (clearMod > 0 && levelEff > 0 && (p.actualLoad ?? 0) > 0) {
+        mods = applyModifierPatch(mods, { cells: { [cell.type]: { specializedType: p.type } } });
+        break;
+      }
+    }
+  }
 
   // 4. Probabilistic spawning — suppressed once win target is reached
   const pendingSpawns = state.totalPathogensSpawned >= WIN_PATHOGEN_TARGET
@@ -206,6 +223,7 @@ function handleEndTurn(state) {
       ...(state.pendingModifierChoices ?? []),
       ...newPendingChoices,
     ],
+    runModifiers: mods,
   };
 }
 
@@ -411,7 +429,7 @@ function findPrimaryClearingCellType(nodeId, pathogenType, deployedCells, modifi
 
   for (const cell of Object.values(deployedCells)) {
     if (cell.nodeId !== nodeId || cell.phase !== 'arrived') continue;
-    const clearMod = CELL_CONFIG[cell.type]?.clearablePathogens?.[pathogenType] ?? 0;
+    const clearMod = getCellClearablePathogens(cell.type, modifiers)[pathogenType] ?? 0;
     if (clearMod === 0) continue;
     const rate = getEffectiveClearanceRate(cell.type, modifiers) * clearMod;
     if (rate > bestRate) { bestType = cell.type; bestRate = rate; }
