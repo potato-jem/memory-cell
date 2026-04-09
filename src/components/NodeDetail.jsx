@@ -1,6 +1,7 @@
 // NodeDetail — shown when a node is selected.
 // Displays: ground truth site status, perceived threat state, friendly cells, deploy hint.
 
+import { useState } from 'react';
 import { NODES } from '../data/nodes.js';
 import { computePathCost } from '../data/nodes.js';
 import { PATHOGEN_DISPLAY_NAMES, getPrimaryLoad, PATHOGEN_REGISTRY } from '../data/pathogens.js';
@@ -8,6 +9,91 @@ import { CELL_CONFIG as CELL_TYPE_CONFIG } from '../data/cellConfig.js';
 import CellIcon from './CellIcon.jsx';
 
 // ── Sub-components ────────────────────────────────────────────────────────────
+
+function BreakdownTooltip({ breakdown, x, y }) {
+  // Position left of cursor when near right edge of viewport
+  const toLeft = x > window.innerWidth * 0.55;
+  const style = {
+    position: 'fixed',
+    top: Math.min(y - 10, window.innerHeight - 200),
+    zIndex: 60,
+    pointerEvents: 'none',
+    ...(toLeft ? { right: window.innerWidth - x + 8 } : { left: x + 14 }),
+  };
+  return (
+    <div style={style} className="bg-gray-900 border border-gray-600 rounded px-3 py-2 shadow-xl text-xs min-w-44 space-y-0.5">
+      {breakdown.map((item, i) => (
+        <div key={i} className="flex justify-between gap-4">
+          <span className="text-gray-500">{item.label}</span>
+          <span className={`font-mono ${item.amount < 0 ? 'text-green-400' : item.amount > 0 ? 'text-red-400' : 'text-gray-500'}`}>
+            {item.amount > 0 ? '+' : ''}{item.amount.toFixed(1)}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Shows a +N / -N delta badge. No tooltip — tooltip is handled by the parent row.
+ * invert=true: positive delta is good (e.g. tissue integrity recovering).
+ */
+function DeltaBadge({ delta, invert = false }) {
+  const rounded = Math.round(delta);
+  if (!rounded) return null;
+  const isGood = invert ? delta > 0 : delta < 0;
+  return (
+    <span className={`font-mono tabular-nums text-xs ${isGood ? 'text-green-400' : 'text-red-400'}`}>
+      {rounded > 0 ? '+' : ''}{rounded}
+    </span>
+  );
+}
+
+/**
+ * Wraps one pathogen row; hovering anywhere on the row shows the breakdown tooltip.
+ */
+function PathogenRow({ inst, isVisible, projEntry, label, barColor, labelColor, ringColor }) {
+  const [hovered, setHovered] = useState(false);
+  const [pos, setPos] = useState({ x: 0, y: 0 });
+  const isKnown = inst.detected_level === 'classified' || inst.detected_level === 'misclassified';
+  const load = isKnown ? getPrimaryLoad(inst, isVisible) : 0;
+  const hasBreakdown = projEntry?.breakdown?.length > 0;
+
+  return (
+    <div
+      className="space-y-1.5"
+      onMouseEnter={e => { setHovered(true); setPos({ x: e.clientX, y: e.clientY }); }}
+      onMouseLeave={() => setHovered(false)}
+      onMouseMove={e => setPos({ x: e.clientX, y: e.clientY })}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <span
+            className="shrink-0 w-2 h-2 rounded-full"
+            style={{ background: ringColor, opacity: isKnown ? 1 : 0.5 }}
+          />
+          <span className={`text-xs truncate ${labelColor}`}>{label}</span>
+        </div>
+        {isKnown && (
+          <span className="text-xs font-mono text-gray-500 shrink-0 flex items-center gap-1">
+            {Math.round(load)}
+            {projEntry && <DeltaBadge delta={projEntry.delta} />}
+          </span>
+        )}
+      </div>
+      {isKnown ? (
+        <BarFill value={load} color={barColor} />
+      ) : (
+        <div className="h-2 w-full rounded-full bg-gray-800 overflow-hidden">
+          <div className={`h-full w-1/4 rounded-full ${barColor} opacity-25`} />
+        </div>
+      )}
+      {hovered && hasBreakdown && (
+        <BreakdownTooltip breakdown={projEntry.breakdown} x={pos.x} y={pos.y} />
+      )}
+    </div>
+  );
+}
 
 function BarFill({ value, max = 100, color, bg = 'bg-gray-800', ceiling = null }) {
   const pct = Math.max(0, Math.min(100, (value / max) * 100));
@@ -24,7 +110,7 @@ function BarFill({ value, max = 100, color, bg = 'bg-gray-800', ceiling = null }
   );
 }
 
-function SiteStatusPanel({ gt, liveIntegrity = null, isStale = false, turnsSinceLastVisible = 0 }) {
+function SiteStatusPanel({ gt, liveIntegrity = null, isStale = false, turnsSinceLastVisible = 0, nodeProjection = null }) {
   if (!gt && liveIntegrity == null) return null;
 
   const inflammation = gt?.inflammation ?? 0;
@@ -49,8 +135,9 @@ function SiteStatusPanel({ gt, liveIntegrity = null, isStale = false, turnsSince
         <div className="space-y-1.5">
           <div className="flex justify-between text-xs mb-1">
             <span className="text-gray-500">Inflammation</span>
-            <span className={`font-mono font-bold ${inflammation > 40 ? 'text-orange-400' : 'text-gray-500'}`}>
+            <span className={`font-mono font-bold flex items-center gap-1 ${inflammation > 40 ? 'text-orange-400' : 'text-gray-500'}`}>
               {Math.round(inflammation)}
+              {nodeProjection && <DeltaBadge delta={nodeProjection.inflammationDelta} />}
             </span>
           </div>
           <BarFill value={inflammation} color={inflColor} />
@@ -60,11 +147,12 @@ function SiteStatusPanel({ gt, liveIntegrity = null, isStale = false, turnsSince
       <div className="space-y-1.5">
         <div className="flex justify-between text-xs mb-1">
           <span className="text-gray-500">Tissue Integrity</span>
-          <span className={`font-mono font-bold ${integrity < 40 ? 'text-red-400' : 'text-gray-400'}`}>
+          <span className={`font-mono font-bold flex items-center gap-1 ${integrity < 40 ? 'text-red-400' : 'text-gray-400'}`}>
             {Math.round(integrity)}
             {gt && ceiling < 100 && (
               <span className="text-gray-700 font-normal"> / {Math.round(ceiling)}</span>
             )}
+            {nodeProjection && <DeltaBadge delta={nodeProjection.tissueIntegrityDelta} invert />}
           </span>
         </div>
         <BarFill
@@ -100,7 +188,7 @@ function SiteStatusPanel({ gt, liveIntegrity = null, isStale = false, turnsSince
 
 // ── Pathogen threat section ───────────────────────────────────────────────────
 
-function PathogenPanel({ groundTruthNodeState, isVisible }) {
+function PathogenPanel({ groundTruthNodeState, isVisible, nodeProjection = null }) {
   const pathogens = (groundTruthNodeState?.pathogens ?? [])
     .filter(inst => inst.detected_level !== 'none');
 
@@ -114,8 +202,6 @@ function PathogenPanel({ groundTruthNodeState, isVisible }) {
 
       {pathogens.map(inst => {
         const level = inst.detected_level;
-        const isKnown = level === 'classified' || level === 'misclassified';
-
         let label, barColor, labelColor, ringColor;
 
         if (level === 'unknown') {
@@ -136,31 +222,17 @@ function PathogenPanel({ groundTruthNodeState, isVisible }) {
           ringColor  = PATHOGEN_REGISTRY[displayType]?.ringColor ?? '#f43f5e';
         }
 
-        const load = isKnown ? getPrimaryLoad(inst, isVisible) : 0;
-
         return (
-          <div key={inst.uid ?? inst.type} className="space-y-1.5">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-1.5 min-w-0">
-                {/* Detection-level dot */}
-                <span
-                  className="shrink-0 w-2 h-2 rounded-full"
-                  style={{ background: ringColor, opacity: isKnown ? 1 : 0.5 }}
-                />
-                <span className={`text-xs truncate ${labelColor}`}>{label}</span>
-              </div>
-              {isKnown && (
-                <span className="text-xs font-mono text-gray-500 shrink-0">{Math.round(load)}</span>
-              )}
-            </div>
-            {isKnown ? (
-              <BarFill value={load} color={barColor} />
-            ) : (
-              <div className="h-2 w-full rounded-full bg-gray-800 overflow-hidden">
-                <div className={`h-full w-1/4 rounded-full ${barColor} opacity-25`} />
-              </div>
-            )}
-          </div>
+          <PathogenRow
+            key={inst.uid ?? inst.type}
+            inst={inst}
+            isVisible={isVisible}
+            projEntry={nodeProjection?.pathogenDeltas?.[inst.uid] ?? null}
+            label={label}
+            barColor={barColor}
+            labelColor={labelColor}
+            ringColor={ringColor}
+          />
         );
       })}
     </section>
@@ -181,11 +253,13 @@ export default function NodeDetail({
   onDeployToNode,
   onStartPatrol,
   visibleNodes,
+  projections = null,
 }) {
   const node = NODES[nodeId];
   if (!node) return null;
 
   const isVisible = visibleNodes?.has(nodeId) ?? false;
+  const nodeProjection = projections?.nodes?.[nodeId] ?? null;
   const siteGt = groundTruthNodeState
     ? {
         ...groundTruthNodeState,
@@ -236,9 +310,10 @@ export default function NodeDetail({
           liveIntegrity={groundTruthNodeState?.tissueIntegrity ?? null}
           isStale={!isVisible && !!groundTruthNodeState}
           turnsSinceLastVisible={groundTruthNodeState?.turnsSinceLastVisible ?? 0}
+          nodeProjection={isVisible ? nodeProjection : null}
         />
 
-        <PathogenPanel groundTruthNodeState={groundTruthNodeState} isVisible={isVisible} />
+        <PathogenPanel groundTruthNodeState={groundTruthNodeState} isVisible={isVisible} nodeProjection={isVisible ? nodeProjection : null} />
 
         {/* Friendly cells */}
         <section className="border-b border-gray-800">

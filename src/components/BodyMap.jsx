@@ -155,6 +155,9 @@ export default function BodyMap({
   onSelectNode,
   onNodeContextMenu,
   visibleNodes = new Set(),
+  projections = null,
+  onNodeHoverStart = null,
+  onNodeHoverEnd = null,
 }) {
   const [hoveredNode, setHoveredNode] = useState(null); // { nodeId, x, y }
 
@@ -290,8 +293,8 @@ export default function BodyMap({
               key={node.id}
               onClick={() => onSelectNode(node.id === selectedNodeId ? null : node.id)}
               onContextMenu={e => { e.preventDefault(); onNodeContextMenu?.(node.id); }}
-              onMouseEnter={e => setHoveredNode({ nodeId: node.id, x: e.clientX, y: e.clientY })}
-              onMouseLeave={() => setHoveredNode(h => h?.nodeId === node.id ? null : h)}
+              onMouseEnter={e => { setHoveredNode({ nodeId: node.id, x: e.clientX, y: e.clientY }); onNodeHoverStart?.(node.id); }}
+              onMouseLeave={() => { setHoveredNode(h => h?.nodeId === node.id ? null : h); onNodeHoverEnd?.(); }}
               onMouseMove={e => setHoveredNode(h => h?.nodeId === node.id ? { ...h, x: e.clientX, y: e.clientY } : h)}
               className="cursor-pointer"
             >
@@ -326,19 +329,49 @@ export default function BodyMap({
                 {rings.map((ring, i) => {
                   const r = ringBase + i * ringStep;
                   const d = arcPath(cx, cy, r, ring.loadPct);
-                  return d ? (
-                    <path
-                      key={ring.uid ?? i}
-                      d={d}
-                      fill="none"
-                      stroke={ring.color}
-                      strokeWidth={ring.dashed ? 1.5 : 3}
-                      strokeLinecap="round"
-                      strokeDasharray={ring.dashArray}
-                      opacity={ring.dashed ? 0.55 : 0.9}
-                      filter={ring.dashed ? undefined : `url(#glow-${ring.color.slice(1)})`}
-                    />
-                  ) : null;
+                  if (!d) return null;
+
+                  // Projected load delta label at arc endpoint
+                  let deltaLabel = null;
+                  if (!ring.dashed && isVisible) {
+                    const pathProj = projections?.nodes?.[node.id]?.pathogenDeltas?.[ring.uid];
+                    if (pathProj && Math.abs(pathProj.delta) >= 0.5) {
+                      const roundedDelta = Math.round(pathProj.delta);
+                      const angle = -Math.PI / 2 + ring.loadPct * 2 * Math.PI;
+                      const labelR = r + 7;
+                      deltaLabel = (
+                        <text
+                          key={`delta-${ring.uid}`}
+                          x={(cx + labelR * Math.cos(angle)).toFixed(1)}
+                          y={(cy + labelR * Math.sin(angle)).toFixed(1)}
+                          textAnchor="middle"
+                          dominantBaseline="middle"
+                          fontSize="6"
+                          fontFamily="monospace"
+                          fill={roundedDelta < 0 ? '#4ade80' : '#f87171'}
+                          className="pointer-events-none select-none"
+                        >
+                          {roundedDelta > 0 ? '+' : ''}{roundedDelta}
+                        </text>
+                      );
+                    }
+                  }
+
+                  return (
+                    <g key={ring.uid ?? i}>
+                      <path
+                        d={d}
+                        fill="none"
+                        stroke={ring.color}
+                        strokeWidth={ring.dashed ? 1.5 : 3}
+                        strokeLinecap="round"
+                        strokeDasharray={ring.dashArray}
+                        opacity={ring.dashed ? 0.55 : 0.9}
+                        filter={ring.dashed ? undefined : `url(#glow-${ring.color.slice(1)})`}
+                      />
+                      {deltaLabel}
+                    </g>
+                  );
                 })}
 
                 {/* HQ outer ring */}

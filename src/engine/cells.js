@@ -251,10 +251,8 @@ export function advanceCells(deployedCells, tick, modifiers = null) {
 
     // ── Lifetime expiry ───────────────────────────────────────────────────────
     const lifetime = CELL_CONFIG[c.type]?.cellLifetime;
-    if (lifetime != null && c.deployedAtTick != null && tick >= c.deployedAtTick + lifetime) {
-      events.push({ type: 'cell_died', cellId, nodeId: c.nodeId, cellType: c.type });
-      continue; // omit from updated — cell is removed from roster
-    }
+    // Lifetime expiry is now handled by expireLifetimeCells(), called after ground truth
+    // so that cells clear on the turn they expire before being removed.
 
     // ── Training → ready ──────────────────────────────────────────────────────
     if (c.phase === 'training' && tick >= c.trainingCompleteTick) {
@@ -386,6 +384,22 @@ export function advanceCells(deployedCells, tick, modifiers = null) {
   }
 
   return { updatedCells: updated, events, nodesVisited };
+}
+
+// Remove cells whose lifetime has expired. Called AFTER advanceGroundTruth so cells
+// contribute clearance on the turn they die rather than being removed beforehand.
+export function expireLifetimeCells(deployedCells, tick) {
+  const updated = {};
+  const events = [];
+  for (const [cellId, cell] of Object.entries(deployedCells)) {
+    const lifetime = CELL_CONFIG[cell.type]?.cellLifetime;
+    if (lifetime != null && cell.deployedAtTick != null && tick >= cell.deployedAtTick + lifetime) {
+      events.push({ type: 'cell_died', cellId, cellType: cell.type, nodeId: cell.nodeId });
+    } else {
+      updated[cellId] = cell;
+    }
+  }
+  return { updatedCells: updated, events };
 }
 
 // Auto-return attack cells when their node's pathogen is cleared.

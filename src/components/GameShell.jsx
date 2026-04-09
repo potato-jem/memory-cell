@@ -2,7 +2,7 @@
 // Header: turn, systemic stress, systemic integrity, fever, tokens.
 // Left: Cell Roster. Centre: Body Map. Right: Node Detail / Overview.
 
-import { useReducer, useCallback, useState, useEffect } from 'react';
+import { useReducer, useCallback, useState, useEffect, useMemo } from 'react';
 import { initGameState, GAME_PHASES } from '../state/gameState.js';
 import { gameReducer, ACTION_TYPES } from '../state/actions.js';
 import { DEFAULT_RUN_CONFIG } from '../data/runConfig.js';
@@ -19,6 +19,7 @@ import ModifierChoice from './ModifierChoice.jsx';
 import MobileRoster from './MobileRoster.jsx';
 import CellIcon from './CellIcon.jsx';
 import { saveRun, loadRun, clearRun } from '../state/persistence.js';
+import { computeProjectedChanges } from '../engine/projection.js';
 
 
 export default function GameShell() {
@@ -55,6 +56,7 @@ export default function GameShell() {
   }, [startingCounts]);
 
   const [selectedCellId, setSelectedCellId] = useState(null);
+  const [hoveredNodeId, setHoveredNodeId] = useState(null);
   // openDrawer: which mobile drawer is open — 'roster' | 'overview' | 'node' | null
   const [openDrawer, setOpenDrawer] = useState(null);
   const [tooltipNode, setTooltipNode] = useState(null); // node shown in mini-tooltip / node drawer
@@ -149,6 +151,25 @@ export default function GameShell() {
   const handleToggleFever = useCallback(() => {
     dispatch({ type: ACTION_TYPES.TOGGLE_FEVER });
   }, []);
+
+  const handleNodeHoverStart = useCallback((nodeId) => setHoveredNodeId(nodeId), []);
+  const handleNodeHoverEnd = useCallback(() => setHoveredNodeId(null), []);
+
+  const projections = useMemo(() => {
+    if (state.phase !== 'playing') return null;
+    const effectiveHover = (selectedCellId && hoveredNodeId) ? hoveredNodeId : null;
+    return computeProjectedChanges({ ...state, selectedCellId }, effectiveHover);
+  }, [
+    state.groundTruth.nodeStates,
+    state.deployedCells,
+    state.systemicStress,
+    state.systemicIntegrity,
+    state.fever,
+    state.runModifiers,
+    state.phase,
+    selectedCellId,
+    hoveredNodeId,
+  ]);
 
   // ── Start screen ────────────────────────────────────────────────────────────
   if (!started) {
@@ -304,10 +325,20 @@ export default function GameShell() {
           <div className="flex flex-col items-center gap-0.5">
             <span className="text-xs text-gray-700 uppercase tracking-widest leading-none">Stress</span>
             <StressGauge stress={stress} />
+            {projections && projections.systemicStressDelta !== 0 && (
+              <span className={`text-xs font-mono tabular-nums leading-none ${projections.systemicStressDelta > 0 ? 'text-red-400' : 'text-green-400'}`}>
+                {projections.systemicStressDelta > 0 ? '+' : ''}{Math.round(projections.systemicStressDelta)}
+              </span>
+            )}
           </div>
           <div className="flex flex-col items-center gap-0.5">
             <span className="text-xs text-gray-700 uppercase tracking-widest leading-none">Integrity</span>
             <IntegrityBar integrity={integrity} />
+            {projections && projections.systemicIntegrityDelta < 0 && (
+              <span className="text-xs font-mono tabular-nums leading-none text-red-400">
+                {projections.systemicIntegrityDelta}
+              </span>
+            )}
           </div>
           <button
             onClick={handleToggleFever}
@@ -382,6 +413,9 @@ export default function GameShell() {
             onSelectNode={handleSelectNode}
             onNodeContextMenu={handleNodeContextMenu}
             visibleNodes={visibleNodes}
+            projections={projections}
+            onNodeHoverStart={handleNodeHoverStart}
+            onNodeHoverEnd={handleNodeHoverEnd}
           />
 
           {/* ── Mobile: bottom overlay (z-30 so it sits above overview z-20 but below drawers z-40) ── */}
@@ -449,6 +483,7 @@ export default function GameShell() {
               onDeployToNode={handleNodeContextMenu}
               onStartPatrol={handleStartPatrol}
               visibleNodes={visibleNodes}
+              projections={projections}
             />
           </div>
         ) : (
@@ -502,6 +537,7 @@ export default function GameShell() {
                 onDeployToNode={handleDeployToNode}
                 onStartPatrol={handleStartPatrol}
                 visibleNodes={visibleNodes}
+                projections={projections}
               />
             </div>
           </div>

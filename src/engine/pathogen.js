@@ -411,7 +411,7 @@ export function advanceInstance(instance, nodeId, deployedCells, nodeState, syst
   };
 }
 
-function computeGrowth(def, currentLoad, systemicStress, pathogenType, modifiers) {
+export function computeGrowth(def, currentLoad, systemicStress, pathogenType, modifiers) {
   let rate = getEffectiveGrowthRate(pathogenType, def.replicationRate, modifiers);
 
   // Fungi thrive in high systemic stress
@@ -428,6 +428,134 @@ function computeGrowth(def, currentLoad, systemicStress, pathogenType, modifiers
     default:
       return rate;
   }
+}
+
+/**
+ * Build a labeled breakdown of the load delta for one pathogen instance.
+ * Used by the projection system to render tooltips.
+ *
+ * Cell lines show raw cell potential (with cell-specific mods, before node/global mults).
+ * Global modifier lines (node scar, pathogen mult, suppression) show the additional
+ * clearance gained or lost due to that modifier, in a multiplicative decomposition
+ * so all lines sum to the actual clearance applied.
+ *
+ * Returns: BreakdownItem[] — { label: string, amount: number }
+ *   Positive amount = adds to load (bad), negative = removes load (good).
+ */
+export function computePathogenBreakdown(instance, nodeId, deployedCells, nodeState, systemicStress, modifiers, clearanceOverride) {
+  const def = PATHOGEN_REGISTRY[instance.type];
+  if (!def) return [];
+
+  const currentLoad = getPrimaryLoad(instance);
+  const growth = computeGrowth(def, currentLoad, systemicStress, instance.type, modifiers);
+
+  // Walled-off fungi: no cell involvement, simple decay
+  if (nodeState?.isWalledOff && instance.type === 'fungi') {
+    return [{ label: 'Walled off (slow decay)', amount: -0.5 }];
+  }
+
+  const breakdown = [{ label: 'Base growth', amount: growth }];
+
+  // Global multipliers (node scar, pathogen modifier, immune suppression)
+  const nodeMult = getNodeCellClearanceMultiplier(nodeId, modifiers);
+  const pathogenMult = getEffectivePathogenClearanceMultiplier(instance.type, modifiers);
+  const suppMult = nodeState?.immuneSuppressed ? 0.5 : 1.0;
+  const globalMult = nodeMult * pathogenMult * suppMult;
+
+  // Per-cell-type raw potentials, decomposed into base + per-modifier deltas
+  const pathogenType = instance.type;
+  const detectedLevel = instance.detected_level ?? 'none';
+  const baseByType = {};
+  const inflammByType = {};
+  const stationaryByType = {};
+  const specByType = {};
+  const countByCellType = {};
+
+  for (const cell of Object.values(deployedCells)) {
+    if (cell.nodeId !== nodeId || cell.phase !== 'arrived') continue;
+    const cellCfg = CELL_CONFIG[cell.type];
+    const clearMod = getCellClearablePathogens(cell.type, modifiers)[pathogenType] ?? 0;
+    if (clearMod === 0) continue;
+
+    const effectiveRate = getEffectiveClearanceRate(cell.type, modifiers);
+    const levelEffectiveness = getEffectiveEffectiveness(cell.type, detectedLevel, modifiers);
+    const baseRaw = effectiveRate * clearMod * levelEffectiveness;
+    if (baseRaw <= 0) continue;
+
+    let stationaryMult = 1.0;
+    const stationaryBonusCfg = cellCfg?.stationaryBonus;
+    if (stationaryBonusCfg && cell.stationaryTurns > 0) {
+      stationaryMult = Math.min(
+        stationaryBonusCfg.maxMultiplier,
+        1.0 + stationaryBonusCfg.gainPerTurn * cell.stationaryTurns
+      );
+    }
+
+    const specializationMult = cell.specialization?.[pathogenType] ?? 1.0;
+    const inflammationMult = getInflammationScalingMultiplier(
+      cellCfg?.inflammationScaling,
+      nodeState?.inflammation ?? 0
+    );
+
+    // Multiplicative decomposition: base + deltas per modifier (sum = full raw)
+    baseByType[cell.type] = (baseByType[cell.type] ?? 0) + baseRaw;
+    inflammByType[cell.type] = (inflammByType[cell.type] ?? 0) + baseRaw * (inflammationMult - 1);
+    stationaryByType[cell.type] = (stationaryByType[cell.type] ?? 0) + baseRaw * inflammationMult * (stationaryMult - 1);
+    specByType[cell.type] = (specByType[cell.type] ?? 0) + baseRaw * inflammationMult * stationaryMult * (specializationMult - 1);
+    countByCellType[cell.type] = (countByCellType[cell.type] ?? 0) + 1;
+  }
+
+  // rawTotal = sum of full raws = sum of (base + inflam + stationary + spec) per type
+  const rawTotal = Object.keys(baseByType).reduce(
+    (s, t) => s + baseByType[t] + inflammByType[t] + stationaryByType[t] + specByType[t], 0
+  );
+  const attackableLoad = Math.max(0, currentLoad + growth);
+  const actualClearance = Math.min(clearanceOverride ?? 0, attackableLoad);
+  // baseScale converts raw potential to the contribution at the current clearance level
+  const baseScale = (rawTotal > 0 && globalMult > 0) ? actualClearance / (rawTotal * globalMult) : 0;
+
+  const MIN_DISPLAY = 0.05;
+  for (const cellType of Object.keys(baseByType)) {
+    const name = (CELL_CONFIG[cellType]?.displayName ?? cellType);
+    const count = countByCellType[cellType];
+    const prefix = count > 1 ? `${name} ×${count}` : name;
+
+    const baseAmt = -(baseByType[cellType] * baseScale);
+    if (Math.abs(baseAmt) >= MIN_DISPLAY) breakdown.push({ label: `${prefix} (base)`, amount: baseAmt });
+
+    const inflammAmt = -(inflammByType[cellType] * baseScale);
+    if (Math.abs(inflammAmt) >= MIN_DISPLAY) breakdown.push({ label: `${name} (inflammation)`, amount: inflammAmt });
+
+    const stationaryAmt = -(stationaryByType[cellType] * baseScale);
+    if (Math.abs(stationaryAmt) >= MIN_DISPLAY) breakdown.push({ label: `${name} (stationary)`, amount: stationaryAmt });
+
+    const specAmt = -(specByType[cellType] * baseScale);
+    if (Math.abs(specAmt) >= MIN_DISPLAY) breakdown.push({ label: `${name} (specialization)`, amount: specAmt });
+  }
+
+  // Global modifier lines — multiplicative decomposition (sum = actual clearance adjustment)
+  if (rawTotal > 0 && actualClearance > 0) {
+    if (Math.abs(nodeMult - 1.0) > 0.001) {
+      breakdown.push({
+        label: `Node penalty (×${nodeMult.toFixed(1)})`,
+        amount: rawTotal * baseScale * (1.0 - nodeMult),
+      });
+    }
+    if (Math.abs(pathogenMult - 1.0) > 0.001) {
+      breakdown.push({
+        label: `Pathogen modifier (×${pathogenMult.toFixed(1)})`,
+        amount: rawTotal * baseScale * nodeMult * (1.0 - pathogenMult),
+      });
+    }
+    if (suppMult < 1.0) {
+      breakdown.push({
+        label: 'Immune suppression (×0.5)',
+        amount: rawTotal * baseScale * nodeMult * pathogenMult * (1.0 - suppMult),
+      });
+    }
+  }
+
+  return breakdown;
 }
 
 // ── Spread ────────────────────────────────────────────────────────────────────

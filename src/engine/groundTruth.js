@@ -5,7 +5,7 @@
 // No single-pathogen 'pathogenState' field — all pathogens live inside nodeStates.
 
 import { NODE_IDS } from '../data/nodes.js';
-import { advanceInstance, computeSpreads, shouldWallOff, generatePathogenUid, computeNodeClearanceAllocations } from './pathogen.js';
+import { advanceInstance, computeSpreads, shouldWallOff, generatePathogenUid, computeNodeClearanceAllocations, computePathogenBreakdown } from './pathogen.js';
 import { nodeHasActivePathogen } from '../data/pathogens.js';
 import {
   TISSUE_RECOVERY_RATE,
@@ -49,6 +49,94 @@ export function initGroundTruth() {
   };
 }
 
+// ── Per-node deterministic advancement ────────────────────────────────────────
+
+/**
+ * Advance one site's pathogens, inflammation, and tissue integrity for one turn.
+ * Shared by advanceGroundTruth (actual) and projection.js (preview).
+ * Does NOT handle spreads, spawns, scar ceiling updates, or events — those are
+ * managed by advanceGroundTruth only.
+ *
+ * Returns the updated node values plus pathogenBreakdowns (used by projection UI;
+ * ignored by the actual turn engine).
+ */
+export function advanceNodeSite(ns, nodeId, deployedCells, systemicStress, modifiers = null) {
+  const updatedPathogens = [];
+  const newImmuneUids = [...(ns.immune ?? [])];
+  let totalTissueDamage = 0;
+  let totalInflammationAdded = 0;
+  let totalToxinOutput = 0;
+  let immuneSuppressedThisTurn = false;
+  const pathogenBreakdowns = {};
+
+  // Pre-compute equalized clearance allocations across all pathogens at this node.
+  const clearanceAllocations = computeNodeClearanceAllocations(
+    ns.pathogens ?? [], nodeId, deployedCells, ns, modifiers
+  );
+
+  for (const instance of (ns.pathogens ?? [])) {
+    const clearanceOverride = clearanceAllocations[instance.uid] ?? null;
+    const { newInstance, tissueIntegrityDelta, inflammationDelta, toxinOutput, suppressImmune } =
+      advanceInstance(instance, nodeId, deployedCells, ns, systemicStress, modifiers, clearanceOverride);
+
+    pathogenBreakdowns[instance.uid] = computePathogenBreakdown(
+      instance, nodeId, deployedCells, ns, systemicStress, modifiers, clearanceOverride
+    );
+
+    if (newInstance) {
+      updatedPathogens.push(newInstance);
+    }
+
+    totalTissueDamage += tissueIntegrityDelta;
+    totalInflammationAdded += inflammationDelta;
+    totalToxinOutput += toxinOutput;
+    if (suppressImmune) immuneSuppressedThisTurn = true;
+  }
+
+  // Update inflammation
+  const hasInfection = updatedPathogens.length > 0;
+  const effectiveInflammationAdd = immuneSuppressedThisTurn ? totalInflammationAdded * 0.5 : totalInflammationAdded;
+  const baseDecayRate = hasInfection ? INFLAMMATION_DECAY_RATE_INFECTED : INFLAMMATION_DECAY_RATE_CLEAR;
+  const decayRate = baseDecayRate * getEffectiveInflammationDecayMultiplier(nodeId, modifiers);
+  const newInflammation = Math.min(100, Math.max(0,
+    ns.inflammation + effectiveInflammationAdd - decayRate
+  ));
+
+  // Update tissue integrity
+  let newIntegrity = ns.tissueIntegrity + totalTissueDamage;
+  const recoveryRate = Math.max(0,
+    TISSUE_RECOVERY_RATE - Math.floor(newInflammation / TISSUE_RECOVERY_INFLAMMATION_REDUCTION)
+  );
+  if (recoveryRate > 0) {
+    newIntegrity = Math.min(ns.tissueIntegrityCeiling, newIntegrity + getEffectiveIntegrityRecovery(recoveryRate, modifiers));
+  }
+  newIntegrity = Math.max(0, Math.min(100, newIntegrity));
+
+  // Scar ceiling update
+  const newLowest = Math.min(ns.lowestIntegrityReached, newIntegrity);
+  let newCeiling = ns.tissueIntegrityCeiling;
+  if (newIntegrity < TISSUE_SCAR_THRESHOLD && newLowest < ns.lowestIntegrityReached) {
+    newCeiling = Math.min(ns.tissueIntegrityCeiling, newLowest + TISSUE_SCAR_BONUS);
+  }
+
+  // Parasite transit penalty
+  const parasiteBurden = updatedPathogens.find(i => i.type === 'parasite')?.parasiticBurden ?? 0;
+  const transitPenalty = Math.floor(parasiteBurden / PARASITE_TRANSIT_PENALTY_PER_BURDEN);
+
+  return {
+    updatedPathogens,
+    newImmuneUids,
+    immuneSuppressedThisTurn,
+    newInflammation,
+    newIntegrity,
+    newCeiling,
+    newLowest,
+    transitPenalty,
+    toxinOutput: totalToxinOutput,
+    pathogenBreakdowns,
+  };
+}
+
 // ── Turn advancement ───────────────────────────────────────────────────────────
 
 /**
@@ -71,93 +159,49 @@ export function advanceGroundTruth(groundTruth, deployedCells, turn, systemicStr
   // ── 1. Advance all pathogen instances ───────────────────────────────────────
   for (const nodeId of NODE_IDS) {
     const ns = { ...nodeStates[nodeId] };
-    const updatedPathogens = [];
-    const newImmuneUids = [...(ns.immune ?? [])];
-    let totalTissueDamage = 0;
-    let totalInflammationAdded = 0;
-    let totalToxinOutput = 0;
-    let immuneSuppressedThisTurn = false;
 
-    // Pre-compute equalized clearance allocations across all pathogens at this node.
-    const clearanceAllocations = computeNodeClearanceAllocations(
-      ns.pathogens ?? [], nodeId, deployedCells, ns, modifiers
-    );
+    const {
+      updatedPathogens,
+      newImmuneUids,
+      immuneSuppressedThisTurn,
+      newInflammation,
+      newIntegrity,
+      newCeiling,
+      newLowest,
+      transitPenalty,
+      toxinOutput,
+    } = advanceNodeSite(ns, nodeId, deployedCells, systemicStress, modifiers);
 
+    perSiteOutputs[nodeId] = { toxinOutput };
+
+    // Events: granuloma formation and pathogen cleared/walled-off
+    let isWalledOff = ns.isWalledOff;
     for (const instance of (ns.pathogens ?? [])) {
-      const clearanceOverride = clearanceAllocations[instance.uid] ?? null;
-      const { newInstance, tissueIntegrityDelta, inflammationDelta, toxinOutput, suppressImmune } =
-        advanceInstance(instance, nodeId, deployedCells, ns, systemicStress, modifiers, clearanceOverride);
-
-      if (newInstance) {
-        updatedPathogens.push(newInstance);
-        // Check for granuloma
-        if (shouldWallOff(newInstance) && !ns.isWalledOff) {
-          ns.isWalledOff = true;
-          events.push({ type: 'site_walled_off', nodeId, pathogenType: instance.type });
-        }
-      } else {
+      const stillPresent = updatedPathogens.some(p => p.uid === instance.uid);
+      if (!stillPresent) {
         events.push({ type: 'pathogen_cleared', nodeId, pathogenType: instance.type });
-        // Record immunity to this lineage so the same uid cannot re-spread here
         if (instance.uid && !newImmuneUids.includes(instance.uid)) {
           newImmuneUids.push(instance.uid);
         }
+      } else {
+        const updated = updatedPathogens.find(p => p.uid === instance.uid);
+        if (updated && shouldWallOff(updated) && !isWalledOff) {
+          isWalledOff = true;
+          events.push({ type: 'site_walled_off', nodeId, pathogenType: instance.type });
+        }
       }
-
-      totalTissueDamage += tissueIntegrityDelta;
-      totalInflammationAdded += inflammationDelta;
-      totalToxinOutput += toxinOutput;
-      if (suppressImmune) immuneSuppressedThisTurn = true;
     }
-
     // Clear walled off status if fungi cleared
-    if (ns.isWalledOff && !updatedPathogens.some(i => i.type === 'fungi')) {
-      ns.isWalledOff = false;
+    if (isWalledOff && !updatedPathogens.some(i => i.type === 'fungi')) {
+      isWalledOff = false;
     }
-
-    ns.pathogens = updatedPathogens;
-    ns.immune = newImmuneUids;
-    ns.immuneSuppressed = immuneSuppressedThisTurn;
-    perSiteOutputs[nodeId] = { toxinOutput: totalToxinOutput };
-
-    // ── 3. Update inflammation ─────────────────────────────────────────────────
-    const hasInfection = updatedPathogens.length > 0;
-    const suppressionActive = ns.immuneSuppressed;
-    const effectiveInflammationAdd = suppressionActive ? totalInflammationAdded * 0.5 : totalInflammationAdded;
-    const baseDecayRate = hasInfection ? INFLAMMATION_DECAY_RATE_INFECTED : INFLAMMATION_DECAY_RATE_CLEAR;
-    // Node-level decay multiplier (scar: inflammatory_memory slows recovery)
-    const decayRate = baseDecayRate * getEffectiveInflammationDecayMultiplier(nodeId, modifiers);
-    const newInflammation = Math.min(100, Math.max(0,
-      ns.inflammation + effectiveInflammationAdd - decayRate
-    ));
-
-    // ── 4. Update tissue integrity ─────────────────────────────────────────────
-    let newIntegrity = ns.tissueIntegrity + totalTissueDamage;
-
-    // Recovery: base +4/turn, reduced by 1 per 25 inflammation (0 at 100)
-    const recoveryRate = Math.max(0,
-      TISSUE_RECOVERY_RATE - Math.floor(newInflammation / TISSUE_RECOVERY_INFLAMMATION_REDUCTION)
-    );
-    if (recoveryRate > 0) {
-      newIntegrity = Math.min(ns.tissueIntegrityCeiling, newIntegrity + getEffectiveIntegrityRecovery(recoveryRate, modifiers));
-    }
-
-    newIntegrity = Math.max(0, Math.min(100, newIntegrity));
-
-    // ── 6. Scar ceiling update ─────────────────────────────────────────────────
-    const newLowest = Math.min(ns.lowestIntegrityReached, newIntegrity);
-    let newCeiling = ns.tissueIntegrityCeiling;
-    if (newIntegrity < TISSUE_SCAR_THRESHOLD && newLowest < ns.lowestIntegrityReached) {
-      // Integrity just dropped further below scar threshold — lower the ceiling
-      newCeiling = Math.min(ns.tissueIntegrityCeiling, newLowest + TISSUE_SCAR_BONUS);
-    }
-
-    // ── 7. Parasite transit penalty ────────────────────────────────────────────
-    const parasiteBurden = updatedPathogens.find(i => i.type === 'parasite')?.parasiticBurden ?? 0;
-    const transitPenalty = Math.floor(parasiteBurden / PARASITE_TRANSIT_PENALTY_PER_BURDEN);
 
     nodeStates[nodeId] = {
       ...ns,
+      pathogens: updatedPathogens,
       immune: newImmuneUids,
+      immuneSuppressed: immuneSuppressedThisTurn,
+      isWalledOff,
       inflammation: newInflammation,
       tissueIntegrity: newIntegrity,
       tissueIntegrityCeiling: newCeiling,

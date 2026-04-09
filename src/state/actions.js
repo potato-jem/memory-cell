@@ -11,6 +11,7 @@ import {
   decommissionCell,
   recallUnit,
   advanceCells,
+  expireLifetimeCells,
   startReturnForClearedNodes,
   assignPatrolDestinations,
   startPatrol,
@@ -130,6 +131,9 @@ function handleEndTurn(state) {
   
   // 5b. Update per-cell specialization scores based on what pathogens survived this turn's clearance
   updatedCells = updateCellSpecializations(updatedCells, newGroundTruth.nodeStates);
+
+  // 5c. Expire lifetime cells AFTER clearance so they act on their final turn
+  ({ updatedCells } = expireLifetimeCells(updatedCells, newTick));
 
   // 6. Auto-return attack cells from cleared nodes
   updatedCells = startReturnForClearedNodes(updatedCells, newGroundTruth.nodeStates, newTick, mods);

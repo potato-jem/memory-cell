@@ -76,7 +76,8 @@ Hidden simulation. Advances all pathogen instances, inflammation, tissue integri
 |---|---|
 | `makeCleanSiteState()` | Empty node state (no pathogens, inflammation=0, integrity=100) |
 | `initGroundTruth()` | All nodes start clean |
-| `advanceGroundTruth(gt, cells, turn, stress, spawns, modifiers?)` | **Main turn function.** Returns `{newGroundTruth, events, perSiteOutputs}` |
+| `advanceNodeSite(ns, nodeId, cells, stress, modifiers?)` | **Shared per-node logic.** Advances pathogens, inflammation, integrity for one node. Returns updated values + `pathogenBreakdowns`. Called by both `advanceGroundTruth` and `projection.js`. |
+| `advanceGroundTruth(gt, cells, turn, stress, spawns, modifiers?)` | **Main turn function.** Calls `advanceNodeSite` per node, then handles spreads/spawns/events. Returns `{newGroundTruth, events, perSiteOutputs}` |
 
 **`advanceGroundTruth` events:** `pathogen_cleared`, `pathogen_spread`
 
@@ -107,6 +108,8 @@ Per-instance pathogen advancement and spread. Called by `groundTruth.js`.
 |---|---|
 | `generatePathogenUid()` | Returns a unique `'path_N'` string; used when creating new instances |
 | `getClearancePower(instance, nodeId, cells, nodeState, modifiers?)` | Clearance power for a specific pathogen instance. Uses `CELL_CONFIG[type].clearablePathogens[pathogenType]` to check eligibility and `effectivenessByLevel[detected_level]` for the effectiveness factor. |
+| `computeGrowth(def, load, stress, type, modifiers?)` | Computes per-turn growth for one pathogen instance (logistic/exponential/linear) |
+| `computePathogenBreakdown(instance, nodeId, cells, nodeState, stress, modifiers?, clearanceOverride?)` | Returns `BreakdownItem[]` for the projection UI tooltip: growth + per-cell-type clearance + global modifier lines |
 | `advanceInstance(instance, nodeId, cells, nodeState, stress, modifiers?)` | One-turn advancement: growth, clearance, damage output; respects all pathogen modifiers |
 | `computeSpreads(nodeStates, modifiers?)` | Determine spread events; child inherits parent `uid`; checks target `immune[]` to block re-spread |
 | `shouldWallOff(instance)` | True if fungi above granuloma threshold |
@@ -115,6 +118,28 @@ Per-instance pathogen advancement and spread. Called by `groundTruth.js`.
 - `logistic`: `load += load × rate × (1 - load/100)` — bacteria
 - `exponential`: `value += value × rate` — virus
 - `linear`: `value += rate` — prion
+
+---
+
+## `projection.js`
+Read-only next-turn delta preview. Used by the UI for +/- indicators and breakdown tooltips.
+
+**Key exports:**
+| Function | Purpose |
+|---|---|
+| `computeProjectedChanges(state, hoveredNodeId?)` | Returns per-node and systemic deltas for the next turn. If `hoveredNodeId` is set and the selected cell is `ready`, simulates that cell as deployed there. |
+
+Uses `advanceNodeSite` (from `groundTruth.js`) and `computeSystemicStress` — no logic is duplicated.
+
+**Return shape:**
+```js
+{
+  nodes: { [nodeId]: { pathogenDeltas: { [uid]: { delta, breakdown } }, inflammationDelta, tissueIntegrityDelta } },
+  systemicStressDelta: number,
+  projectedSystemicStress: number,
+  systemicIntegrityDelta: number,  // 0, -1, -3, or -5
+}
+```
 
 ---
 
