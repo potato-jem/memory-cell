@@ -178,6 +178,30 @@ function computeSortedClearanceContributions(instance, nodeId, deployedCells, no
 // ── Multi-pathogen clearance equalization ─────────────────────────────────────
 
 /**
+ * Distribute clearance budget C using strict priority order.
+ * Used by cells with specialization (e.g. B-cells): all budget drains into the
+ * first item, then overflow continues down the list.
+ *
+ * @param {Array}  items  [{uid, load, clearMod, levelEff, specMult, pathogenMult}] in priority order
+ * @param {number} C      total raw clearance budget
+ * @returns {Object}      {[uid]: rawAllocated}
+ */
+function priorityDistribution(items, C) {
+  const result = {};
+  for (const { uid } of items) result[uid] = 0;
+  let remaining = C;
+  for (const ep of items) {
+    if (remaining <= 0) break;
+    const effectiveMult = ep.clearMod * ep.levelEff * ep.specMult * ep.pathogenMult;
+    const rawNeeded = effectiveMult > 0 ? ep.load / effectiveMult : 0;
+    const alloc = Math.min(remaining, rawNeeded);
+    result[ep.uid] = alloc;
+    remaining -= alloc;
+  }
+  return result;
+}
+
+/**
  * Distribute clearance budget C across pathogens using equalisation logic.
  * Sort by load descending. Spend C to bring the highest tier down to the next,
  * then recurse. When C is exhausted mid-gap, split it equally across the current
@@ -277,7 +301,12 @@ export function computeNodeClearanceAllocations(pathogens, nodeId, deployedCells
 
     if (eligible.length === 0) continue;
 
-    const rawAllocs = equalizeDistribution(eligible.map(ep => ({ uid: ep.uid, load: ep.load })), C);
+    // Specialized cells (B-cells) drain 100% into their top specialization first,
+    // overflowing excess to lower-priority pathogens. Other cells use equalization.
+    const isSpecialized = cellCfg?.specializationSlots > 0 && eligible.some(ep => ep.specMult > 1.0);
+    const rawAllocs = isSpecialized
+      ? priorityDistribution([...eligible].sort((a, b) => b.specMult - a.specMult), C)
+      : equalizeDistribution(eligible.map(ep => ({ uid: ep.uid, load: ep.load })), C);
 
     for (const ep of eligible) {
       const raw = rawAllocs[ep.uid] ?? 0;

@@ -101,6 +101,26 @@ function TrainingBar({ cell, currentTick, isSelected }) {
   );
 }
 
+// Build stacks of cells that are same type+phase+location.
+// Training and outbound cells are not stacked (different timers/destinations).
+function buildStacks(cells) {
+  const result = [];
+  const seen = new Map();
+  for (const cell of cells) {
+    const stackKey = (cell.phase === 'training' || cell.phase === 'outbound')
+      ? cell.id
+      : `${cell.type}|${cell.phase}|${cell.nodeId ?? ''}`;
+    if (seen.has(stackKey)) {
+      seen.get(stackKey).push(cell);
+    } else {
+      const stack = [cell];
+      seen.set(stackKey, stack);
+      result.push(stack);
+    }
+  }
+  return result;
+}
+
 export default function CellRoster({
   deployedCells,
   tokenCapacity,
@@ -112,6 +132,7 @@ export default function CellRoster({
   onSelectCell,
   onDecommission,
   onRecall,
+  onStartPatrol,
 }) {
   const [groupBy, setGroupBy] = useState('none');
   const [tooltip, setTooltip] = useState(null); // { cellType, x, y }
@@ -271,97 +292,123 @@ export default function CellRoster({
         {allCells.length === 0 ? (
           <div className="px-3 py-4 text-xs text-gray-700 italic">No units. Build some above.</div>
         ) : (
-          groups.map(group => (
-            <div key={group.key ?? '__all'}>
-              {group.label && (
-                <div className="px-3 py-1 text-xs text-gray-700 bg-gray-900 border-b border-gray-800 uppercase tracking-widest">
-                  {group.label}
-                </div>
-              )}
-              {group.cells.map(cell => {
-                const isSelected = cell.id === selectedCellId;
-                const statusLine = getStatusLine(cell);
-                const cfg = CELL_CONFIG[cell.type];
-                const iconColor = cfg?.color ?? '#888';
+          groups.map(group => {
+            const stacks = buildStacks(group.cells);
+            return (
+              <div key={group.key ?? '__all'}>
+                {group.label && (
+                  <div className="px-3 py-1 text-xs text-gray-700 bg-gray-900 border-b border-gray-800 uppercase tracking-widest">
+                    {group.label}
+                  </div>
+                )}
+                {stacks.map(stack => {
+                  const cell = stack[0];
+                  const count = stack.length;
+                  const isSelected = stack.some(c => c.id === selectedCellId);
+                  const statusLine = getStatusLine(cell);
+                  const cfg = CELL_CONFIG[cell.type];
+                  const iconColor = cfg?.color ?? '#888';
 
-                return (
-                  <div
-                    key={cell.id}
-                    onClick={() => onSelectCell(isSelected ? null : cell.id)}
-                    className={`flex items-center gap-2 px-2 py-2 border-b border-gray-900 cursor-pointer transition-colors hover:bg-gray-800 ${
-                      isSelected ? 'bg-blue-950 border-l-2 border-l-blue-500' : ''
-                    }`}
-                    onMouseEnter={e => setTooltip({ cellType: cell.type, x: e.clientX, y: e.clientY })}
-                    onMouseLeave={() => setTooltip(null)}
-                  >
-                    {/* Cell icon */}
-                    <div className="shrink-0">
-                      <CellIcon
-                        type={cell.type}
-                        size={14}
-                        color={isSelected ? '#93c5fd' : iconColor}
-                      />
-                    </div>
-
-                    {/* Name + status */}
-                    <div className="flex-1 min-w-0">
-                      <div className={`text-xs font-mono truncate leading-tight ${isSelected ? 'text-blue-300' : 'text-gray-300'}`}>
-                        {shortName(cell.type)}
-                      </div>
-                      {cell.phase === 'training' ? (
-                        <TrainingBar
-                          cell={cell}
-                          currentTick={currentTick}
-                          isSelected={isSelected}
+                  return (
+                    <div
+                      key={cell.id}
+                      onClick={() => onSelectCell(isSelected ? null : cell.id)}
+                      className={`flex items-center gap-2 px-2 py-2 border-b border-gray-900 cursor-pointer transition-colors hover:bg-gray-800 ${
+                        isSelected ? 'bg-blue-950 border-l-2 border-l-blue-500' : ''
+                      }`}
+                      onMouseEnter={e => setTooltip({ cellType: cell.type, x: e.clientX, y: e.clientY })}
+                      onMouseLeave={() => setTooltip(null)}
+                    >
+                      {/* Cell icon */}
+                      <div className="shrink-0">
+                        <CellIcon
+                          type={cell.type}
+                          size={14}
+                          color={isSelected ? '#93c5fd' : iconColor}
                         />
-                      ) : (
-                        <div className="text-xs text-gray-600 truncate leading-tight mt-0.5">
-                          {statusLine}
+                      </div>
+
+                      {/* Name + status */}
+                      <div className="flex-1 min-w-0">
+                        <div className={`text-xs font-mono truncate leading-tight flex items-center gap-1.5 ${isSelected ? 'text-blue-300' : 'text-gray-300'}`}>
+                          {shortName(cell.type)}
+                          {count > 1 && (
+                            <span className={`text-xs font-mono font-bold px-1 py-0 rounded leading-tight ${isSelected ? 'bg-blue-900 text-blue-200' : 'bg-gray-800 text-gray-400'}`}>
+                              ×{count}
+                            </span>
+                          )}
                         </div>
+                        {cell.phase === 'training' ? (
+                          <TrainingBar
+                            cell={cell}
+                            currentTick={currentTick}
+                            isSelected={isSelected}
+                          />
+                        ) : (
+                          <div className="text-xs text-gray-600 truncate leading-tight mt-0.5">
+                            {statusLine}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Phase pill */}
+                      <div className="shrink-0 flex items-center gap-1">
+                        <span className={`text-xs px-1 py-0.5 rounded leading-none ${PHASE_PILL[cell.phase] ?? 'text-gray-600'}`}
+                          style={{ fontSize: '9px' }}>
+                          {PHASE_LABEL[cell.phase] ?? cell.phase}
+                        </span>
+                      </div>
+
+                      {/* Action buttons */}
+                      {canRecall(cell.phase) && (
+                        <button
+                          onClick={e => { e.stopPropagation(); (e.shiftKey ? stack : [stack[0]]).forEach(c => onRecall(c.id)); }}
+                          className="shrink-0 text-gray-700 hover:text-amber-400 transition-colors text-sm leading-none px-0.5"
+                          title={count > 1 ? 'Recall · shift+click for all' : 'Recall'}
+                        >
+                          ↩
+                        </button>
+                      )}
+                      {cell.phase === 'ready' && (CELL_CONFIG[cell.type]?.isRecon) && onStartPatrol && (
+                        <button
+                          onClick={e => { e.stopPropagation(); onStartPatrol(cell.id, e.shiftKey); }}
+                          className="shrink-0 text-gray-700 hover:text-amber-300 transition-colors text-sm leading-none px-0.5"
+                          title={count > 1 ? 'Patrol · shift+click for all' : 'Patrol'}
+                        >
+                          ↻
+                        </button>
+                      )}
+                      {canDecommission(cell.phase) && (
+                        <button
+                          onClick={e => { e.stopPropagation(); (e.shiftKey ? stack : [stack[0]]).forEach(c => onDecommission(c.id)); }}
+                          className="shrink-0 text-gray-800 hover:text-red-600 transition-colors text-sm leading-none px-0.5"
+                          title={count > 1 ? 'Decommission · shift+click for all' : 'Decommission (free tokens)'}
+                        >
+                          ×
+                        </button>
                       )}
                     </div>
-
-                    {/* Phase pill */}
-                    <div className="shrink-0 flex items-center gap-1">
-                      <span className={`text-xs px-1 py-0.5 rounded leading-none ${PHASE_PILL[cell.phase] ?? 'text-gray-600'}`}
-                        style={{ fontSize: '9px' }}>
-                        {PHASE_LABEL[cell.phase] ?? cell.phase}
-                      </span>
-                    </div>
-
-                    {/* Action buttons */}
-                    {canRecall(cell.phase) && (
-                      <button
-                        onClick={e => { e.stopPropagation(); onRecall(cell.id); }}
-                        className="shrink-0 text-gray-700 hover:text-amber-400 transition-colors text-sm leading-none px-0.5"
-                        title="Recall"
-                      >
-                        ↩
-                      </button>
-                    )}
-                    {canDecommission(cell.phase) && (
-                      <button
-                        onClick={e => { e.stopPropagation(); onDecommission(cell.id); }}
-                        className="shrink-0 text-gray-800 hover:text-red-600 transition-colors text-sm leading-none px-0.5"
-                        title="Decommission (free tokens)"
-                      >
-                        ×
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          ))
+                  );
+                })}
+              </div>
+            );
+          })
         )}
       </div>
 
       {/* Deploy hint */}
-      {selectedCellId && deployedCells[selectedCellId]?.phase === 'ready' && (
-        <div className="px-3 py-2.5 border-t border-blue-800 bg-blue-950 shrink-0">
-          <span className="text-xs text-blue-400">Right-click a node to deploy</span>
-        </div>
-      )}
+      {selectedCellId && deployedCells[selectedCellId]?.phase === 'ready' && (() => {
+        const cell = deployedCells[selectedCellId];
+        const stackCount = Object.values(deployedCells).filter(c => c.type === cell.type && c.phase === 'ready').length;
+        return (
+          <div className="px-3 py-2.5 border-t border-blue-800 bg-blue-950 shrink-0 space-y-1">
+            <span className="text-xs text-blue-400">Right-click a node to deploy</span>
+            {stackCount > 1 && (
+              <div className="text-xs text-blue-700">shift+click to deploy/patrol all {stackCount}</div>
+            )}
+          </div>
+        );
+      })()}
     </div>
     </>
   );

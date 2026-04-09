@@ -116,33 +116,49 @@ export default function GameShell() {
     setOpenDrawer(null); // close any open drawer so user can see the map
   }, []);
 
+  // Returns all ready cells of the same type as cellId (including itself)
+  const getReadyStack = useCallback((cellId) => {
+    const cell = state.deployedCells[cellId];
+    if (!cell) return [];
+    return Object.values(state.deployedCells).filter(c => c.type === cell.type && c.phase === 'ready');
+  }, [state.deployedCells]);
+
   // Deploy to a node — used by desktop right-click, NodeDetail button, MiniNodeTooltip
-  const handleNodeContextMenu = useCallback((nodeId) => {
+  // shiftKey=true deploys all ready cells of the same type
+  const handleNodeContextMenu = useCallback((nodeId, shiftKey) => {
     if (!selectedCellId) return;
-    dispatch({ type: ACTION_TYPES.DEPLOY_FROM_ROSTER, cellId: selectedCellId, nodeId });
+    const targets = shiftKey ? getReadyStack(selectedCellId) : [{ id: selectedCellId }];
+    targets.forEach(c => dispatch({ type: ACTION_TYPES.DEPLOY_FROM_ROSTER, cellId: c.id, nodeId }));
     setSelectedCellId(null);
-  }, [selectedCellId]);
+  }, [selectedCellId, getReadyStack]);
 
   // Mobile deploy from tooltip or node drawer: also close the drawer
-  const handleDeployToNode = useCallback((nodeId) => {
+  const handleDeployToNode = useCallback((nodeId, shiftKey) => {
     if (!selectedCellId) return;
-    dispatch({ type: ACTION_TYPES.DEPLOY_FROM_ROSTER, cellId: selectedCellId, nodeId });
+    const targets = shiftKey ? getReadyStack(selectedCellId) : [{ id: selectedCellId }];
+    targets.forEach(c => dispatch({ type: ACTION_TYPES.DEPLOY_FROM_ROSTER, cellId: c.id, nodeId }));
     setSelectedCellId(null);
     setOpenDrawer(null);
-  }, [selectedCellId]);
+  }, [selectedCellId, getReadyStack]);
 
   // Direct deploy with explicit cellId — used by MobileRoster when a node is already selected
-  const handleDeployDirect = useCallback((cellId, nodeId) => {
-    dispatch({ type: ACTION_TYPES.DEPLOY_FROM_ROSTER, cellId, nodeId });
+  const handleDeployDirect = useCallback((cellId, nodeId, shiftKey) => {
+    const targets = shiftKey ? getReadyStack(cellId) : [{ id: cellId }];
+    targets.forEach(c => dispatch({ type: ACTION_TYPES.DEPLOY_FROM_ROSTER, cellId: c.id, nodeId }));
     setSelectedCellId(null);
     setOpenDrawer(null);
-  }, []);
+  }, [getReadyStack]);
 
-  const handleStartPatrol = useCallback((cellId) => {
-    dispatch({ type: ACTION_TYPES.START_PATROL, cellId });
+  // shiftAll=true patrols all ready recon cells of the same type
+  const handleStartPatrol = useCallback((cellId, shiftAll) => {
+    const cell = state.deployedCells[cellId];
+    const targets = (shiftAll && cell)
+      ? Object.values(state.deployedCells).filter(c => c.type === cell.type && c.phase === 'ready')
+      : [{ id: cellId }];
+    targets.forEach(c => dispatch({ type: ACTION_TYPES.START_PATROL, cellId: c.id }));
     setSelectedCellId(null);
     setOpenDrawer(null);
-  }, []);
+  }, [state.deployedCells]);
 
   const handleEndTurn = useCallback(() => {
     dispatch({ type: ACTION_TYPES.END_TURN });
@@ -398,6 +414,7 @@ export default function GameShell() {
             onSelectCell={handleSelectCell}
             onDecommission={handleDecommission}
             onRecall={handleRecall}
+            onStartPatrol={handleStartPatrol}
           />
         </div>
 
@@ -707,7 +724,7 @@ function NodeBar({ nodeId, gtNodeStates, visibleNodes, deployedCells, selectedCe
         {/* Deploy / Patrol buttons */}
         {canDeploy && (
           <button
-            onClick={e => { e.stopPropagation(); onDeployDirect(readyCell.id, nodeId); }}
+            onClick={e => { e.stopPropagation(); onDeployDirect(readyCell.id, nodeId, e.shiftKey); }}
             className="text-xs font-mono px-1.5 py-0.5 border border-green-700 bg-green-950 text-green-300 rounded hover:bg-green-900 active:bg-green-800 transition-colors shrink-0"
           >
             Deploy →
@@ -715,7 +732,7 @@ function NodeBar({ nodeId, gtNodeStates, visibleNodes, deployedCells, selectedCe
         )}
         {canPatrol && (
           <button
-            onClick={e => { e.stopPropagation(); onPatrolDirect?.(readyCell.id); }}
+            onClick={e => { e.stopPropagation(); onPatrolDirect?.(readyCell.id, e.shiftKey); }}
             className="text-xs font-mono px-1.5 py-0.5 border border-amber-700 bg-amber-950 text-amber-300 rounded hover:bg-amber-900 active:bg-amber-800 transition-colors shrink-0"
           >
             Patrol ↻

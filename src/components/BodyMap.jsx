@@ -292,7 +292,7 @@ export default function BodyMap({
             <g
               key={node.id}
               onClick={() => onSelectNode(node.id === selectedNodeId ? null : node.id)}
-              onContextMenu={e => { e.preventDefault(); onNodeContextMenu?.(node.id); }}
+              onContextMenu={e => { e.preventDefault(); onNodeContextMenu?.(node.id, e.shiftKey); }}
               onMouseEnter={e => { setHoveredNode({ nodeId: node.id, x: e.clientX, y: e.clientY }); onNodeHoverStart?.(node.id); }}
               onMouseLeave={() => { setHoveredNode(h => h?.nodeId === node.id ? null : h); onNodeHoverEnd?.(); }}
               onMouseMove={e => setHoveredNode(h => h?.nodeId === node.id ? { ...h, x: e.clientX, y: e.clientY } : h)}

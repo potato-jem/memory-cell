@@ -269,9 +269,26 @@ export default function NodeDetail({
       }
     : null;
 
-  const cellsHere    = Object.values(deployedCells).filter(c => c.nodeId === nodeId && c.phase === 'arrived' && !c.isPatrolling);
+  const cellsHereRaw = Object.values(deployedCells).filter(c => c.nodeId === nodeId && c.phase === 'arrived' && !c.isPatrolling);
   const cellsTransit = Object.values(deployedCells).filter(c =>
     c.nodeId === nodeId && (c.phase === 'outbound' || c.phase === 'returning' || (c.phase === 'arrived' && c.isPatrolling)));
+
+  // Stack same-type cells at this node
+  const cellsHereStacks = (() => {
+    const seen = new Map();
+    const result = [];
+    for (const cell of cellsHereRaw) {
+      if (seen.has(cell.type)) {
+        seen.get(cell.type).push(cell);
+      } else {
+        const stack = [cell];
+        seen.set(cell.type, stack);
+        result.push(stack);
+      }
+    }
+    return result;
+  })();
+  const cellsHere = cellsHereRaw; // keep for length check
 
   return (
     <div className="flex flex-col h-full bg-gray-950 border-l border-gray-800">
@@ -325,19 +342,27 @@ export default function NodeDetail({
             <div className="px-4 pb-4 text-xs text-gray-700 italic">No cells deployed.</div>
           )}
 
-          {cellsHere.length > 0 && (
+          {cellsHereStacks.length > 0 && (
             <div className="space-y-px pb-2">
-              {cellsHere.map(cell => {
+              {cellsHereStacks.map(stack => {
+                const cell = stack[0];
+                const count = stack.length;
                 const cc = CELL_TYPE_CONFIG[cell.type] ?? { displayName: cell.type, textClass: 'text-gray-500', color: '#6b7280' };
                 return (
                   <div key={cell.id} className="flex items-center gap-2.5 px-4 py-2 hover:bg-gray-900 transition-colors">
                     <CellIcon type={cell.type} size={14} color={cc.color ?? '#6b7280'} />
-                    <span className={`text-xs font-mono ${cc.textClass} flex-1`}>{cc.displayName}</span>
+                    <span className={`text-xs font-mono ${cc.textClass} flex-1 flex items-center gap-1.5`}>
+                      {cc.displayName}
+                      {count > 1 && (
+                        <span className="text-xs font-mono font-bold bg-gray-800 text-gray-400 px-1 rounded leading-tight">×{count}</span>
+                      )}
+                    </span>
                     <button
-                      onClick={() => onRecall(cell.id)}
+                      onClick={e => (e.shiftKey ? stack : [stack[0]]).forEach(c => onRecall(c.id))}
                       className="text-xs text-gray-700 hover:text-red-500 font-mono transition-colors"
+                      title={count > 1 ? 'Recall · shift+click for all' : 'Recall'}
                     >
-                      recall
+                      recall{count > 1 ? ` ×${count}` : ''}
                     </button>
                   </div>
                 );
@@ -383,21 +408,28 @@ export default function NodeDetail({
             const cell = deployedCells[selectedCellId];
             const cc = CELL_TYPE_CONFIG[cell.type];
             const isRecon = cc?.isRecon ?? false;
+            const stackCount = Object.values(deployedCells).filter(c => c.type === cell.type && c.phase === 'ready').length;
+            const hasStack = stackCount > 1;
             return (
               <div className="flex flex-col gap-2">
                 <button
-                  onClick={() => onDeployToNode?.(nodeId)}
+                  onClick={e => onDeployToNode?.(nodeId, e.shiftKey)}
                   className="w-full py-2 px-3 text-xs font-mono font-bold uppercase tracking-widest border border-green-700 bg-green-950 text-green-300 hover:bg-green-900 rounded transition-colors"
+                  title={hasStack ? `Shift+click to deploy all ${stackCount}` : undefined}
                 >
-                  Deploy {cc?.displayName ?? cell.type} here
+                  Deploy {cc?.displayName ?? cell.type} here{hasStack ? ` (${stackCount} ready)` : ''}
                 </button>
                 {isRecon && (
                   <button
-                    onClick={() => onStartPatrol?.(selectedCellId)}
+                    onClick={e => onStartPatrol?.(selectedCellId, e.shiftKey)}
                     className="w-full py-2 px-3 text-xs font-mono font-bold uppercase tracking-widest border border-amber-700 bg-amber-950 text-amber-300 hover:bg-amber-900 rounded transition-colors"
+                    title={hasStack ? `Shift+click to patrol all ${stackCount}` : undefined}
                   >
-                    Patrol ↻
+                    Patrol ↻{hasStack ? ` (${stackCount})` : ''}
                   </button>
+                )}
+                {hasStack && (
+                  <div className="text-xs text-gray-700 text-center">shift+click to deploy/patrol all</div>
                 )}
               </div>
             );
