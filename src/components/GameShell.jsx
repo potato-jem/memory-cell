@@ -9,7 +9,7 @@ import { DEFAULT_RUN_CONFIG } from '../data/runConfig.js';
 import { WIN_PATHOGEN_TARGET } from '../data/gameConfig.js';
 import { CELL_DISPLAY_NAMES, DEPLOY_COSTS } from '../engine/cells.js';
 import { CELL_CONFIG, CELL_TYPE_ORDER } from '../data/cellConfig.js';
-import { NODES, computeVisibility } from '../data/nodes.js';
+import { NODES } from '../data/nodes.js';
 import { PATHOGEN_DISPLAY_NAMES, getPrimaryLoad, PATHOGEN_RING_COLORS } from '../data/pathogens.js';
 import BodyMap from './BodyMap.jsx';
 import CellRoster from './CellRoster.jsx';
@@ -278,7 +278,6 @@ export default function GameShell() {
   const selectedNodeId = state.selectedNodeId;
   const stress = state.systemicStress ?? 0;
   const integrity = state.systemicIntegrity ?? 100;
-  const visibleNodes = computeVisibility(state.deployedCells);
   const rosterOpen = openDrawer === 'roster';
 
   return (
@@ -429,8 +428,7 @@ export default function GameShell() {
             selectedNodeId={tooltipNode}
             onSelectNode={handleSelectNode}
             onNodeContextMenu={handleNodeContextMenu}
-            visibleNodes={visibleNodes}
-            projections={projections}
+                        projections={projections}
             onNodeHoverStart={handleNodeHoverStart}
             onNodeHoverEnd={handleNodeHoverEnd}
           />
@@ -442,8 +440,7 @@ export default function GameShell() {
               <NodeBar
                 nodeId={tooltipNode}
                 gtNodeStates={state.groundTruth.nodeStates}
-                visibleNodes={visibleNodes}
-                deployedCells={state.deployedCells}
+                                deployedCells={state.deployedCells}
                 selectedCellId={selectedCellId}
                 onOpenFull={() => handleOpenDrawer('node')}
                 onDeployDirect={handleDeployDirect}
@@ -473,8 +470,7 @@ export default function GameShell() {
                 <NodeBar
                   nodeId={tooltipNode}
                   gtNodeStates={state.groundTruth.nodeStates}
-                  visibleNodes={visibleNodes}
-                  deployedCells={state.deployedCells}
+                                    deployedCells={state.deployedCells}
                   selectedCellId={selectedCellId}
                   onOpenFull={() => handleOpenDrawer('node')}
                   onDeployDirect={handleDeployDirect}
@@ -499,8 +495,7 @@ export default function GameShell() {
               onClose={() => handleSelectNode(null)}
               onDeployToNode={handleNodeContextMenu}
               onStartPatrol={handleStartPatrol}
-              visibleNodes={visibleNodes}
-              projections={projections}
+                            projections={projections}
             />
           </div>
         ) : (
@@ -532,8 +527,7 @@ export default function GameShell() {
             <NodeBar
               nodeId={tooltipNode}
               gtNodeStates={state.groundTruth.nodeStates}
-              visibleNodes={visibleNodes}
-              deployedCells={state.deployedCells}
+                            deployedCells={state.deployedCells}
               selectedCellId={selectedCellId}
               onOpenFull={null}
               onDeployDirect={handleDeployDirect}
@@ -553,8 +547,7 @@ export default function GameShell() {
                 onClose={() => setOpenDrawer(null)}
                 onDeployToNode={handleDeployToNode}
                 onStartPatrol={handleStartPatrol}
-                visibleNodes={visibleNodes}
-                projections={projections}
+                                projections={projections}
               />
             </div>
           </div>
@@ -625,14 +618,13 @@ export default function GameShell() {
 // 3-line strip showing selected node info. Shown above roster bar, and at top
 // of both drawers. Tap to open node drawer (if onOpenFull is set).
 
-function NodeBar({ nodeId, gtNodeStates, visibleNodes, deployedCells, selectedCellId,
+function NodeBar({ nodeId, gtNodeStates, deployedCells, selectedCellId,
                    onOpenFull, onDeployDirect, onPatrolDirect, onSelectCell, showCloseButton, onClose }) {
   const node = NODES[nodeId];
   if (!node) return null;
 
   const gt = gtNodeStates?.[nodeId];
-  const isVisible = visibleNodes?.has(nodeId) ?? false;
-  const inflammation = isVisible ? (gt?.inflammation ?? 0) : (gt?.lastKnownInflammation ?? 0);
+  const inflammation = gt?.inflammation ?? 0;
   const integrity = gt?.tissueIntegrity ?? 100;
   const pathogens = (gt?.pathogens ?? []).filter(p => p.detected_level !== 'none');
   const cellsHere = Object.values(deployedCells).filter(c => c.nodeId === nodeId && c.phase === 'arrived');
@@ -643,18 +635,17 @@ function NodeBar({ nodeId, gtNodeStates, visibleNodes, deployedCells, selectedCe
 
   const readyCell = selectedCellId ? deployedCells[selectedCellId] : null;
   const canDeploy = readyCell?.phase === 'ready';
-  const canPatrol = canDeploy && CELL_CONFIG[readyCell?.type]?.isRecon;
+  const canPatrol = canDeploy && (CELL_CONFIG[readyCell?.type]?.isDetector || CELL_CONFIG[readyCell?.type]?.isClassifier);
 
   return (
     <div
       className={`bg-gray-900 border-t border-gray-700 ${onOpenFull ? 'cursor-pointer active:bg-gray-800' : ''}`}
       onClick={onOpenFull ?? undefined}
     >
-      {/* Line 1: Node name + visibility + inflammation + integrity + close/expand */}
+      {/* Line 1: Node name + inflammation + integrity + close/expand */}
       <div className="flex items-center gap-1.5 px-3 pt-2 pb-0.5">
         <span className="text-sm font-mono font-bold text-gray-100 flex-1 truncate min-w-0">{node.label}</span>
         {node.isHQ && <span className="text-xs text-purple-400 font-mono shrink-0">HQ</span>}
-        {!isVisible && <span className="text-xs text-gray-500 italic font-mono shrink-0">dark</span>}
         <span className={`text-xs font-mono tabular-nums shrink-0 ${inflColor}`}>{Math.round(inflammation)} infl</span>
         <span className={`text-xs font-mono tabular-nums shrink-0 ${integColor}`}>{Math.round(integrity)}%</span>
         {showCloseButton ? (
@@ -673,15 +664,15 @@ function NodeBar({ nodeId, gtNodeStates, visibleNodes, deployedCells, selectedCe
           <span className="text-xs text-gray-500 font-mono italic">clear</span>
         ) : pathogens.map(p => {
           const lvl = p.detected_level;
-          const isKnown = lvl === 'classified' || lvl === 'misclassified';
+          const isKnown = lvl === 'classified';
           const displayType = p.perceived_type ?? p.type;
           const label = isKnown
             ? (PATHOGEN_DISPLAY_NAMES[displayType] ?? '?')
-            : lvl === 'threat' ? 'threat' : 'anomaly';
-          const load = isKnown ? getPrimaryLoad(p, isVisible) : null;
+            : 'unknown';
+          const load = isKnown ? getPrimaryLoad(p, true) : null;
           const ringColor = isKnown
             ? (PATHOGEN_RING_COLORS[displayType] ?? '#f43f5e')
-            : lvl === 'threat' ? '#f97316' : '#6b7280';
+            : '#6b7280';
           return (
             <span key={p.uid ?? p.type} className="text-xs font-mono flex items-center gap-1" style={{ color: ringColor }}>
               <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: ringColor }} />
@@ -749,15 +740,13 @@ function OverviewPanel({
   deployedCells, systemicStress, systemicIntegrity,
   stressHistory, fever, scars, groundTruthNodeStates, onSelectNode,
 }) {
-  const ALERT_LEVELS = new Set(['threat', 'classified', 'misclassified']);
-
   const alertNodes = Object.entries(groundTruthNodeStates ?? {})
-    .filter(([, ns]) => ns.pathogens?.some(i => ALERT_LEVELS.has(i.detected_level)))
+    .filter(([, ns]) => ns.pathogens?.some(i => i.detected_level === 'classified'))
     .map(([nodeId]) => nodeId);
 
   const warningNodes = Object.entries(groundTruthNodeStates ?? {})
     .filter(([, ns]) => {
-      const hasAlert = ns.pathogens?.some(i => ALERT_LEVELS.has(i.detected_level));
+      const hasAlert = ns.pathogens?.some(i => i.detected_level === 'classified');
       return !hasAlert && ns.pathogens?.some(i => i.detected_level === 'unknown');
     })
     .map(([nodeId]) => nodeId);
@@ -911,14 +900,12 @@ function NodeSummaryRow({ nodeId, pathogens, level, onSelect }) {
   const topPathogen = pathogens
     .filter(i => i.detected_level !== 'none')
     .sort((a, b) => {
-      const order = { classified: 4, misclassified: 3, threat: 2, unknown: 1 };
+      const order = { classified: 2, unknown: 1 };
       return (order[b.detected_level] ?? 0) - (order[a.detected_level] ?? 0);
     })[0];
-  const sublabel =
-    topPathogen?.detected_level === 'classified' || topPathogen?.detected_level === 'misclassified'
-      ? (PATHOGEN_DISPLAY_NAMES[topPathogen.perceived_type] ?? '?')
-      : topPathogen?.detected_level === 'threat' ? 'Unknown threat'
-      : 'Anomaly';
+  const sublabel = topPathogen?.detected_level === 'classified'
+    ? (PATHOGEN_DISPLAY_NAMES[topPathogen.perceived_type] ?? '?')
+    : 'Unknown presence';
 
   return (
     <button

@@ -20,8 +20,7 @@ All cell lifecycle logic. Pure functions only.
   path: ['BLOOD','LIVER','GUT'],  // full path
   pathIndex: 1,               // position in path (nodeId = path[pathIndex])
   deployedAtTick: 5,
-  scoutDwellUntilTick: null,  // isScout cells only: when to stop dwelling (from CELL_CONFIG.isScout)
-  isPatrolling: false,        // recon cells only: true when player has chosen to patrol
+  isPatrolling: false,        // detector/classifier cells only: true when player has chosen to patrol
   patrolDestNodeId: null,     // patrolling cells only: current patrol destination
   patrolNextMoveTick: null,   // patrolling cells only: when to move to next hop
   stationaryTurns: 0,         // cells with CELL_CONFIG.stationaryBonus: turns spent in 'arrived' phase; resets on movement
@@ -49,7 +48,7 @@ Cell config and modifier-aware accessors live in `src/data/cellConfig.js`. `cell
 | `decommissionCell(cellId, ...)` | Remove from roster (only ready/training) |
 | `advanceCells(deployedCells, tick, modifiers?)` | **Main tick function.** Returns `{updatedCells, events, nodesVisited}`; also increments `stationaryTurns` for cells with `stationaryBonus` config |
 | `updateCellSpecializations(cells, nodeStates)` | Updates `specialization` scores on cells with `specializationSlots` config, called after `advanceGroundTruth` |
-| `startReturnForClearedNodes(..., modifiers?)` | Auto-returns attack cells when their node is clear |
+| `startReturnForClearedNodes(..., modifiers?)` | Auto-returns cells with `autoReturn: true` when done: attack cells when node is clear; recon cells when node is fully classified. Skips patrolling cells and lifetime cells. |
 | `computeTokensInUse(deployedCells, modifiers?)` | Sum of effective token costs across all cells |
 | `nodeHasClassifiedPathogen(nodeId, nodeStates)` | True if any pathogen at node has `detected_level === 'classified'` — used to gate deployment of cells with `requiresClassified: true` |
 
@@ -92,6 +91,7 @@ Hidden simulation. Advances all pathogen instances, inflammation, tissue integri
   tissueIntegrity: 100,           // 0-100
   tissueIntegrityCeiling: 100,    // permanent cap after scarring
   lowestIntegrityReached: 100,
+  turnsSinceLastClear: 0,         // turns since a detector was present and found nothing new
   isWalledOff: false,             // fungi granuloma — blocks spread but not clearance
   immuneSuppressed: false,        // parasite — halves clearance
   transitPenalty: 0,              // parasite — extra turn cost to enter this node

@@ -13,9 +13,9 @@
 // All functions accept an optional `modifiers` (runModifiers) parameter.
 // When null/undefined, base config values are used (fully backward compatible).
 
-import { NODES, NODE_IDS, HQ_NODE_ID, computePathWithModifiers, computeVisibility } from '../data/nodes.js';
+import { NODES, NODE_IDS, HQ_NODE_ID, computePathWithModifiers } from '../data/nodes.js';
 import { nodeHasActivePathogen } from '../data/pathogens.js';
-import { PATROL_DWELL_TICKS, SCOUT_DWELL_TICKS } from '../data/gameConfig.js';
+import { PATROL_DWELL_TICKS } from '../data/gameConfig.js';
 import {
   CELL_CONFIG,
   DEPLOY_COSTS,
@@ -151,8 +151,7 @@ export function deployFromRoster(cellId, nodeId, deployedCells, tick, nodeStates
         deployedAtTick: tick,
         arrivalTick: null,
         returnTick: null,
-        scoutDwellUntilTick: null,
-        ...extra,
+          ...extra,
       },
     },
   };
@@ -161,7 +160,8 @@ export function deployFromRoster(cellId, nodeId, deployedCells, tick, nodeStates
 // Extra fields set on the cell state at deploy time (type-specific runtime state only).
 // Effectiveness is now computed dynamically per pathogen instance — not stored on cell.
 function _deployExtra(type) {
-  if (CELL_CONFIG[type]?.isRecon) {
+  const cfg = CELL_CONFIG[type];
+  if (cfg?.isDetector || cfg?.isClassifier) {
     return { isPatrolling: false, patrolDestNodeId: null, patrolNextMoveTick: null };
   }
   return {};
@@ -240,8 +240,9 @@ export function recallUnit(cellId, deployedCells, tick, modifiers = null) {
 
 // ── Tick advance ──────────────────────────────────────────────────────────────
 // Returns { updatedCells, events, nodesVisited }
+// nodeStates (optional): used by patrol to check if a node is clear before pressing on.
 
-export function advanceCells(deployedCells, tick, modifiers = null) {
+export function advanceCells(deployedCells, tick, modifiers = null, nodeStates = null) {
   const updated = {};
   const events = [];
   const nodesVisited = [];
@@ -282,34 +283,25 @@ export function advanceCells(deployedCells, tick, modifiers = null) {
       // also transition to 'arrived' immediately on the same tick.
       if (c.pathIndex >= c.path.length - 1) {
         c.phase = 'arrived';
-        if (CELL_CONFIG[c.type]?.isScout) {
-          c.scoutDwellUntilTick = tick + SCOUT_DWELL_TICKS;
-          events.push({ type: 'scout_arrived', cellId, nodeId: c.nodeId });
-        } else {
-          if (c.isPatrolling) {
-            c.patrolNextMoveTick = tick + PATROL_DWELL_TICKS;
-          }
-          events.push({ type: 'cell_arrived', cellId, nodeId: c.nodeId, cellType: c.type });
+        if (c.isPatrolling) {
+          c.patrolNextMoveTick = tick + PATROL_DWELL_TICKS;
         }
+        events.push({ type: 'cell_arrived', cellId, nodeId: c.nodeId, cellType: c.type });
       }
-    }
-
-    // ── Scout dwell complete → start return journey ───────────────────────────
-    if (CELL_CONFIG[c.type]?.isScout && c.phase === 'arrived' &&
-        c.scoutDwellUntilTick != null && tick >= c.scoutDwellUntilTick) {
-      const returnPath = computePathWithModifiers(c.nodeId, HQ_NODE_ID, modifiers);
-      c.phase = 'returning';
-      c.path = returnPath;
-      c.pathIndex = 0;
-      c.destNodeId = HQ_NODE_ID;
-      c.scoutDwellUntilTick = null;
     }
 
     // ── Patrol movement (destination-based) ──────────────────────────────────
     if (c.isPatrolling && c.phase === 'arrived') {
+      // "Clear" means no undetected (none-level) pathogens remain — the patrol has fired its
+      // detection roll here. Does NOT wait for pathogens to be eliminated — that's attack cells.
+      const hasUndetected = nodeStates
+        ? (nodeStates[c.nodeId]?.pathogens?.some(p => p.detected_level === 'none') ?? false)
+        : false;
+      const currentNodeClear = !hasUndetected;
+
       if (c.patrolDestNodeId && c.nodeId !== c.patrolDestNodeId) {
-        // Traveling toward destination — move one hop per dwell cycle
-        if (c.patrolNextMoveTick != null && tick >= c.patrolNextMoveTick) {
+        // Traveling toward destination — only move when current node is detection-clear
+        if (currentNodeClear && c.patrolNextMoveTick != null && tick >= c.patrolNextMoveTick) {
           const path = computePathWithModifiers(c.nodeId, c.patrolDestNodeId, modifiers);
           if (path.length > 1) {
             c.nodeId = path[1];
@@ -317,9 +309,10 @@ export function advanceCells(deployedCells, tick, modifiers = null) {
             nodesVisited.push({ cellId, cellType: c.type, nodeId: c.nodeId });
           }
         }
+        // If not clear: stay put — patrol waits for the node to be clear before pressing on
       } else if (c.patrolDestNodeId && c.nodeId === c.patrolDestNodeId) {
-        // Arrived at destination — dwell, then clear dest to trigger reassignment
-        if (c.patrolNextMoveTick != null && tick >= c.patrolNextMoveTick) {
+        // Arrived at destination — clear dest once node is clear, triggering reassignment
+        if (currentNodeClear) {
           c.patrolDestNodeId = null;
         }
       }
@@ -402,16 +395,33 @@ export function expireLifetimeCells(deployedCells, tick) {
   return { updatedCells: updated, events };
 }
 
-// Auto-return attack cells when their node's pathogen is cleared.
+// Auto-return cells when their work at the current node is done.
+// Attack cells return when no active pathogens remain.
+// Recon (detector/classifier) cells return when the node is fully classified (no none/unknown).
+// Macrophage has autoReturn: false and is skipped.
 export function startReturnForClearedNodes(deployedCells, nodeStates, tick, modifiers = null) {
   const updated = { ...deployedCells };
   for (const [cellId, cell] of Object.entries(updated)) {
-    if (!ATTACK_CELL_TYPES.has(cell.type)) continue;
+    const cfg = CELL_CONFIG[cell.type];
+    if (!cfg?.autoReturn) continue;
     if (cell.phase !== 'arrived') continue;
-    if (CELL_CONFIG[cell.type]?.cellLifetime != null) continue; // lifetime cells fight to the end
+    if (cell.isPatrolling) continue; // patrolling cells manage their own movement
+    if (cfg.cellLifetime != null) continue; // lifetime cells fight to the end
+
     const ns = nodeStates[cell.nodeId];
-    const hasPathogen = nodeHasActivePathogen(ns);
-    if (!hasPathogen) {
+    let shouldReturn = false;
+
+    if (cfg.isAttack) {
+      shouldReturn = !nodeHasActivePathogen(ns);
+    } else if (cfg.isDetector || cfg.isClassifier) {
+      // Return when no unresolved pathogens remain (all classified or node empty)
+      const hasUnresolved = ns?.pathogens?.some(
+        p => p.detected_level === 'none' || p.detected_level === 'unknown'
+      ) ?? false;
+      shouldReturn = !hasUnresolved;
+    }
+
+    if (shouldReturn) {
       const returnPath = computePathWithModifiers(cell.nodeId, HQ_NODE_ID, modifiers);
       updated[cellId] = {
         ...cell,
@@ -440,11 +450,9 @@ export function nodeHasClassifiedPathogen(nodeId, nodeStates) {
 /**
  * Assign patrol destinations after each turn.
  *
- * Priority:
- *   1. Nodes not currently visible, ordered by turnsSinceLastVisible descending.
- *      Closest available patrol is assigned to each (by hop count).
- *   2. Remaining patrols get a weighted-random node from the unassigned pool,
- *      using NODES[id].patrolDestinationWeight.
+ * Targets the node with the highest turnsSinceLastClear (longest since a clear
+ * detection roll). Closest available patrol is assigned first.
+ * Remaining patrols get a weighted-random node from the unassigned pool.
  *
  * Only patrols with phase === 'arrived' and patrolDestNodeId === null are considered.
  * patrolNextMoveTick is set to tick so movement begins on the next turn.
@@ -455,8 +463,6 @@ export function assignPatrolDestinations(deployedCells, nodeStates, tick, modifi
   );
   if (needsAssignment.length === 0) return deployedCells;
 
-  const visible = computeVisibility(deployedCells);
-
   // Nodes already targeted by patrols that are en-route (don't double-assign)
   const alreadyTargeted = new Set(
     Object.values(deployedCells)
@@ -464,10 +470,10 @@ export function assignPatrolDestinations(deployedCells, nodeStates, tick, modifi
       .map(c => c.patrolDestNodeId)
   );
 
-  // Sort unseen, un-targeted nodes by turnsSinceLastVisible descending
+  // Sort all non-targeted nodes by turnsSinceLastClear descending (stale first)
   const unseen = NODE_IDS
-    .filter(id => !visible.has(id) && !alreadyTargeted.has(id))
-    .sort((a, b) => (nodeStates[b]?.turnsSinceLastVisible ?? 0) - (nodeStates[a]?.turnsSinceLastVisible ?? 0));
+    .filter(id => !alreadyTargeted.has(id))
+    .sort((a, b) => (nodeStates[b]?.turnsSinceLastClear ?? 0) - (nodeStates[a]?.turnsSinceLastClear ?? 0));
 
   const updated = { ...deployedCells };
   const assignedNodes = new Set(alreadyTargeted); // seed with already-targeted nodes
@@ -522,7 +528,8 @@ export function assignPatrolDestinations(deployedCells, nodeStates, tick, modifi
 export function startPatrol(cellId, deployedCells, nodeStates, tick, modifiers = null) {
   const cell = deployedCells[cellId];
   if (!cell) return { success: false, error: 'Cell not found' };
-  if (!CELL_CONFIG[cell.type]?.isRecon) return { success: false, error: 'Not a recon cell' };
+  const cfg = CELL_CONFIG[cell.type];
+  if (!cfg?.isDetector && !cfg?.isClassifier) return { success: false, error: 'Not a recon cell' };
   if (cell.phase !== 'ready') return { success: false, error: 'Cell is not ready' };
 
   // Temporarily mark the cell as arrived at HQ so assignPatrolDestinations can pick a destination
@@ -575,7 +582,6 @@ export function startPatrol(cellId, deployedCells, nodeStates, tick, modifiers =
         deployedAtTick: tick,
         arrivalTick: null,
         returnTick: null,
-        scoutDwellUntilTick: null,
         isPatrolling: true,
         patrolDestNodeId: destNodeId,
         patrolNextMoveTick: null,

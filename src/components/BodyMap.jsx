@@ -4,12 +4,10 @@
 //   Fill colour  = inflammation (dark blue → olive → amber → orange → red)
 //   Fill level   = tissue integrity (full = 100%, empty = 0%)
 //   Arc rings    = detected pathogens (style reflects detected_level; arc = load %)
-//     unknown       → thin dashed grey ring, fixed arc
-//     threat        → dashed orange ring, fixed arc
-//     classified    → solid type-colour ring, arc = load %
-//     misclassified → solid ring in perceived_type colour, arc = load %
+//     unknown    → thin dashed grey ring, fixed arc
+//     classified → solid type-colour ring, arc = load %
+//   Inner pips   = white dots around inside of node, 1 per turnsSinceLastClear (max 8)
 //   Inner dots   = friendly cells present (colour = cell type, sorted)
-//   Yellow badge = count of unknown-level pathogens
 
 import { useState } from 'react';
 import { NODES } from '../data/nodes.js';
@@ -19,6 +17,8 @@ import { CELL_CONFIG, CELL_TYPE_ORDER } from '../data/cellConfig.js';
 const SVG_W = 420;
 const SVG_H = 420;
 const NODE_R = 25;  // slightly larger nodes for readability
+
+const MAX_PIPS = 8;  // max surveillance-staleness pips to show
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -45,15 +45,14 @@ function arcPath(cx, cy, r, pct) {
   return `M ${x0.toFixed(2)} ${y0.toFixed(2)} A ${r} ${r} 0 ${large} 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`;
 }
 
-function getPathogenDisplay(nodeId, gtNodeStates, isVisible) {
+function getPathogenDisplay(nodeId, gtNodeStates) {
   const pathogens = gtNodeStates?.[nodeId]?.pathogens ?? [];
   const rings = [];
   let unknownCount = 0;
 
-  const classified = [], threats = [], unknowns = [];
+  const classified = [], unknowns = [];
   for (const inst of pathogens) {
-    if (inst.detected_level === 'classified' || inst.detected_level === 'misclassified') classified.push(inst);
-    else if (inst.detected_level === 'threat') threats.push(inst);
+    if (inst.detected_level === 'classified') classified.push(inst);
     else if (inst.detected_level === 'unknown') unknowns.push(inst);
   }
   unknownCount = unknowns.length;
@@ -61,14 +60,10 @@ function getPathogenDisplay(nodeId, gtNodeStates, isVisible) {
   for (const inst of classified) {
     const displayType = inst.perceived_type ?? inst.type;
     const color = PATHOGEN_RING_COLORS[displayType] ?? '#aaa';
-    const load = getPrimaryLoad(inst, isVisible);
+    const load = getPrimaryLoad(inst, true);
     if (load <= 0) continue;
     const loadPct = Math.min(0.999, load / 100);
     rings.push({ uid: inst.uid, loadPct, color, dashed: false, dashArray: undefined });
-  }
-
-  for (const inst of threats) {
-    rings.push({ uid: inst.uid, loadPct: 0.15, color: '#f97316', dashed: true, dashArray: '5 3' });
   }
 
   for (const inst of unknowns) {
@@ -87,15 +82,15 @@ function getCellDots(nodeId, deployedCells) {
 
 // ── Hover tooltip ─────────────────────────────────────────────────────────────
 
-function NodeTooltip({ nodeId, gtNodeStates, visibleNodes, x, y }) {
+function NodeTooltip({ nodeId, gtNodeStates, x, y }) {
   const node = NODES[nodeId];
   if (!node) return null;
 
   const ns = gtNodeStates?.[nodeId];
-  const isVisible = visibleNodes?.has(nodeId) ?? false;
-  const inflammation = isVisible ? (ns?.inflammation ?? 0) : (ns?.lastKnownInflammation ?? 0);
+  const inflammation = ns?.inflammation ?? 0;
   const integrity = ns?.tissueIntegrity ?? 100;
   const pathogens = (ns?.pathogens ?? []).filter(p => p.detected_level !== 'none');
+  const turnsSinceLastClear = ns?.turnsSinceLastClear ?? 0;
 
   const inflLabel = inflammation > 70 ? 'HIGH' : inflammation > 40 ? 'MOD' : 'LOW';
   const inflColor = inflammation > 70 ? '#f87171' : inflammation > 40 ? '#fb923c' : '#6b7280';
@@ -124,22 +119,25 @@ function NodeTooltip({ nodeId, gtNodeStates, visibleNodes, x, y }) {
             {Math.round(integrity)}
           </span>
         </div>
+        {turnsSinceLastClear > 0 && (
+          <div className="flex justify-between gap-4">
+            <span className="text-gray-600">Last clear</span>
+            <span className="font-mono text-gray-500">{turnsSinceLastClear}T ago</span>
+          </div>
+        )}
         {pathogens.length > 0 && (
           <div className="mt-1 pt-1 border-t border-gray-800 space-y-0.5">
             {pathogens.map(p => {
               const level = p.detected_level;
-              const isKnown = level === 'classified' || level === 'misclassified';
+              const isKnown = level === 'classified';
               const label = isKnown
                 ? (PATHOGEN_DISPLAY_NAMES[p.perceived_type ?? p.type] ?? p.type)
-                : level === 'threat' ? 'Unclassified threat' : 'Anomaly';
+                : 'Unknown presence';
               return (
                 <div key={p.uid ?? p.type} className="text-orange-500 text-xs">{label}</div>
               );
             })}
           </div>
-        )}
-        {!isVisible && (
-          <div className="text-gray-700 italic mt-1" style={{ fontSize: '10px' }}>No surveillance</div>
         )}
       </div>
     </div>
@@ -154,7 +152,6 @@ export default function BodyMap({
   selectedNodeId,
   onSelectNode,
   onNodeContextMenu,
-  visibleNodes = new Set(),
   projections = null,
   onNodeHoverStart = null,
   onNodeHoverEnd = null,
@@ -274,13 +271,15 @@ export default function BodyMap({
           const cx = node.position.x;
           const cy = node.position.y;
           const gt = groundTruthNodeStates?.[node.id];
-          const isVisible = visibleNodes.has(node.id);
-          const inflammPct = (isVisible ? (gt?.inflammation ?? 0) : (gt?.lastKnownInflammation ?? 0)) / 100;
+          const inflammPct = (gt?.inflammation ?? 0) / 100;
           const { fill, stroke } = inflammationStyle(inflammPct);
           const isSelected = node.id === selectedNodeId;
-          const { rings, unknownCount } = getPathogenDisplay(node.id, groundTruthNodeStates, isVisible);
+          const { rings, unknownCount } = getPathogenDisplay(node.id, groundTruthNodeStates);
           const cellDots = getCellDots(node.id, deployedCells);
           const isHighInflamm = inflammPct >= 0.65;
+
+          // Surveillance-staleness pips
+          const pipCount = Math.min(MAX_PIPS, gt?.turnsSinceLastClear ?? 0);
 
           const ringBase = NODE_R + 5;
           const ringStep = 6;
@@ -311,7 +310,7 @@ export default function BodyMap({
               )}
 
               {/* High-inflammation outer glow ring (pulsing via CSS animation) */}
-              {isHighInflamm && isVisible && (
+              {isHighInflamm && (
                 <circle
                   cx={cx} cy={cy} r={NODE_R + 3}
                   fill="none"
@@ -322,129 +321,141 @@ export default function BodyMap({
                 />
               )}
 
-              {/* Fog layer */}
-              <g opacity={isVisible ? 1 : 0.35}>
+              {/* Pathogen arc rings */}
+              {rings.map((ring, i) => {
+                const r = ringBase + i * ringStep;
+                const d = arcPath(cx, cy, r, ring.loadPct);
+                if (!d) return null;
 
-                {/* Pathogen arc rings */}
-                {rings.map((ring, i) => {
-                  const r = ringBase + i * ringStep;
-                  const d = arcPath(cx, cy, r, ring.loadPct);
-                  if (!d) return null;
-
-                  // Projected load delta label at arc endpoint
-                  let deltaLabel = null;
-                  if (!ring.dashed && isVisible) {
-                    const pathProj = projections?.nodes?.[node.id]?.pathogenDeltas?.[ring.uid];
-                    if (pathProj && Math.abs(pathProj.delta) >= 0.5) {
-                      const roundedDelta = Math.round(pathProj.delta);
-                      const angle = -Math.PI / 2 + ring.loadPct * 2 * Math.PI;
-                      const labelR = r + 7;
-                      deltaLabel = (
-                        <text
-                          key={`delta-${ring.uid}`}
-                          x={(cx + labelR * Math.cos(angle)).toFixed(1)}
-                          y={(cy + labelR * Math.sin(angle)).toFixed(1)}
-                          textAnchor="middle"
-                          dominantBaseline="middle"
-                          fontSize="6"
-                          fontFamily="monospace"
-                          fill={roundedDelta < 0 ? '#4ade80' : '#f87171'}
-                          className="pointer-events-none select-none"
-                        >
-                          {roundedDelta > 0 ? '+' : ''}{roundedDelta}
-                        </text>
-                      );
-                    }
+                // Projected load delta label at arc endpoint
+                let deltaLabel = null;
+                if (!ring.dashed) {
+                  const pathProj = projections?.nodes?.[node.id]?.pathogenDeltas?.[ring.uid];
+                  if (pathProj && Math.abs(pathProj.delta) >= 0.5) {
+                    const roundedDelta = Math.round(pathProj.delta);
+                    const angle = -Math.PI / 2 + ring.loadPct * 2 * Math.PI;
+                    const labelR = r + 7;
+                    deltaLabel = (
+                      <text
+                        key={`delta-${ring.uid}`}
+                        x={(cx + labelR * Math.cos(angle)).toFixed(1)}
+                        y={(cy + labelR * Math.sin(angle)).toFixed(1)}
+                        textAnchor="middle"
+                        dominantBaseline="middle"
+                        fontSize="6"
+                        fontFamily="monospace"
+                        fill={roundedDelta < 0 ? '#4ade80' : '#f87171'}
+                        className="pointer-events-none select-none"
+                      >
+                        {roundedDelta > 0 ? '+' : ''}{roundedDelta}
+                      </text>
+                    );
                   }
+                }
 
-                  return (
-                    <g key={ring.uid ?? i}>
-                      <path
-                        d={d}
-                        fill="none"
-                        stroke={ring.color}
-                        strokeWidth={ring.dashed ? 1.5 : 3}
-                        strokeLinecap="round"
-                        strokeDasharray={ring.dashArray}
-                        opacity={ring.dashed ? 0.55 : 0.9}
-                        filter={ring.dashed ? undefined : `url(#glow-${ring.color.slice(1)})`}
-                      />
-                      {deltaLabel}
-                    </g>
-                  );
-                })}
-
-                {/* HQ outer ring */}
-                {node.isHQ && (
-                  <circle cx={cx} cy={cy} r={NODE_R + 3}
-                    fill="none" stroke="#7c3aed" strokeWidth="1.5" opacity="0.6" />
-                )}
-
-                {/* Dark background circle */}
-                <circle cx={cx} cy={cy} r={NODE_R} fill="#050d18" />
-
-                {/* Inflammation fill, clipped to tissue integrity */}
-                <circle
-                  cx={cx} cy={cy} r={NODE_R - 0.75}
-                  fill={fill}
-                  clipPath={`url(#clip-${node.id})`}
-                />
-
-                {/* Border */}
-                <circle
-                  cx={cx} cy={cy} r={NODE_R}
-                  fill="none"
-                  stroke={stroke}
-                  strokeWidth={node.isBottleneck ? 3 : 2}
-                />
-
-                {/* Node label */}
-                {words.length > 1 ? (
-                  <text
-                    textAnchor="middle"
-                    fontFamily="monospace"
-                    fontWeight={node.isHQ ? '700' : '600'}
-                    fill={node.isHQ ? '#a78bfa' : stroke}
-                    className="pointer-events-none select-none"
-                  >
-                    <tspan x={cx} y={cy - 4} fontSize="8">{words[0]}</tspan>
-                    <tspan x={cx} dy="10"    fontSize="8">{words[1]}</tspan>
-                  </text>
-                ) : (
-                  <text
-                    x={cx} y={cy + 1}
-                    textAnchor="middle"
-                    dominantBaseline="middle"
-                    fontSize="9"
-                    fontFamily="monospace"
-                    fontWeight={node.isHQ ? '700' : '600'}
-                    fill={node.isHQ ? '#a78bfa' : stroke}
-                    className="pointer-events-none select-none"
-                  >
-                    {node.label}
-                  </text>
-                )}
-
-                {/* Unknown-pathogen badge */}
-                {unknownCount > 0 && (
-                  <g>
-                    <circle
-                      cx={cx - NODE_R + 5} cy={cy - NODE_R + 4}
-                      r={7} fill="#78350f" stroke="#d97706" strokeWidth="1"
+                return (
+                  <g key={ring.uid ?? i}>
+                    <path
+                      d={d}
+                      fill="none"
+                      stroke={ring.color}
+                      strokeWidth={ring.dashed ? 1.5 : 3}
+                      strokeLinecap="round"
+                      strokeDasharray={ring.dashArray}
+                      opacity={ring.dashed ? 0.55 : 0.9}
+                      filter={ring.dashed ? undefined : `url(#glow-${ring.color.slice(1)})`}
                     />
-                    <text
-                      x={cx - NODE_R + 5} y={cy - NODE_R + 4}
-                      textAnchor="middle" dominantBaseline="middle"
-                      fontSize="7" fontFamily="monospace" fontWeight="bold"
-                      fill="#fde68a"
-                      className="pointer-events-none select-none"
-                    >
-                      {unknownCount}
-                    </text>
+                    {deltaLabel}
                   </g>
-                )}
+                );
+              })}
 
-              </g>
+              {/* HQ outer ring */}
+              {node.isHQ && (
+                <circle cx={cx} cy={cy} r={NODE_R + 3}
+                  fill="none" stroke="#7c3aed" strokeWidth="1.5" opacity="0.6" />
+              )}
+
+              {/* Dark background circle */}
+              <circle cx={cx} cy={cy} r={NODE_R} fill="#050d18" />
+
+              {/* Inflammation fill, clipped to tissue integrity */}
+              <circle
+                cx={cx} cy={cy} r={NODE_R - 0.75}
+                fill={fill}
+                clipPath={`url(#clip-${node.id})`}
+              />
+
+              {/* Border */}
+              <circle
+                cx={cx} cy={cy} r={NODE_R}
+                fill="none"
+                stroke={stroke}
+                strokeWidth={node.isBottleneck ? 3 : 2}
+              />
+
+              {/* Surveillance-staleness pips — small white dots around inside of circle */}
+              {pipCount > 0 && Array.from({ length: pipCount }).map((_, i) => {
+                const angle = (i / MAX_PIPS) * 2 * Math.PI - Math.PI / 2;
+                const pr = NODE_R - 4;
+                return (
+                  <circle
+                    key={`pip-${i}`}
+                    cx={(cx + pr * Math.cos(angle)).toFixed(2)}
+                    cy={(cy + pr * Math.sin(angle)).toFixed(2)}
+                    r="1.5"
+                    fill="white"
+                    opacity={0.3 + 0.07 * i}
+                    className="pointer-events-none"
+                  />
+                );
+              })}
+
+              {/* Node label */}
+              {words.length > 1 ? (
+                <text
+                  textAnchor="middle"
+                  fontFamily="monospace"
+                  fontWeight={node.isHQ ? '700' : '600'}
+                  fill={node.isHQ ? '#a78bfa' : stroke}
+                  className="pointer-events-none select-none"
+                >
+                  <tspan x={cx} y={cy - 4} fontSize="8">{words[0]}</tspan>
+                  <tspan x={cx} dy="10"    fontSize="8">{words[1]}</tspan>
+                </text>
+              ) : (
+                <text
+                  x={cx} y={cy + 1}
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                  fontSize="9"
+                  fontFamily="monospace"
+                  fontWeight={node.isHQ ? '700' : '600'}
+                  fill={node.isHQ ? '#a78bfa' : stroke}
+                  className="pointer-events-none select-none"
+                >
+                  {node.label}
+                </text>
+              )}
+
+              {/* Unknown-pathogen badge */}
+              {unknownCount > 0 && (
+                <g>
+                  <circle
+                    cx={cx - NODE_R + 5} cy={cy - NODE_R + 4}
+                    r={7} fill="#78350f" stroke="#d97706" strokeWidth="1"
+                  />
+                  <text
+                    x={cx - NODE_R + 5} y={cy - NODE_R + 4}
+                    textAnchor="middle" dominantBaseline="middle"
+                    fontSize="7" fontFamily="monospace" fontWeight="bold"
+                    fill="#fde68a"
+                    className="pointer-events-none select-none"
+                  >
+                    {unknownCount}
+                  </text>
+                </g>
+              )}
 
               {/* Friendly cell icons — always full opacity */}
               {cellDots.map((cell, i) => {
@@ -477,7 +488,6 @@ export default function BodyMap({
           <NodeTooltip
             nodeId={hoveredNode.nodeId}
             gtNodeStates={groundTruthNodeStates}
-            visibleNodes={visibleNodes}
             x={hoveredNode.x}
             y={hoveredNode.y}
           />

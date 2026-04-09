@@ -51,20 +51,21 @@ The `gameReducer` and all action handlers. **This is the only place state mutati
 
 **END_TURN sequence:**
 1. Token capacity regen
-2. `advanceCells` → updatedCells + events + nodesVisited
-3. `runDetectionPhase(deployedCells, nodesVisited, groundTruth, modifiers)` — updates `detected_level` / `perceived_type` on pathogen instances in GT before it advances
+2. `advanceCells(cells, tick, mods, nodeStates)` → updatedCells + events + nodesVisited (nodeStates used by patrol wait-for-clear)
+3. `runDetectionPhase(deployedCells, nodesVisited, groundTruth, modifiers)` → `{ groundTruth, nodesWithClearRoll }` — deterministic detection, updates `detected_level` / `perceived_type`
 4. `rollSpawns`
 5. `advanceGroundTruth`
 6. `startReturnForClearedNodes`
-7. Stamp `lastKnownInflammation` and `lastKnownLoad` onto visible nodes in groundTruth
-8. `computeSystemicStress`, `applySystemicIntegrityHits`, `computeNewScars`
-9. Token accounting
-10. Loss check (`isSystemCollapsed`)
+7. Stamp `turnsSinceLastClear` onto all nodeStates (reset for nodes in `nodesWithClearRoll`, increment otherwise)
+8. `assignPatrolDestinations` — targets nodes by `turnsSinceLastClear` descending
+9. `computeSystemicStress`, `applySystemicIntegrityHits`, `computeNewScars`
+10. Token accounting
+11. Loss check (`isSystemCollapsed`)
 
 **`runDetectionPhase` logic:**
-- Builds a `nodeId → [cellType, ...]` map: arrived recon cells at their node; cells with `CELL_CONFIG[type].coversAdjacentNodes` also cover adjacent nodes; en-route cells via `nodesVisited`
-- Calls `performDetection(cellType, nodePathogens, inflammation, modifiers)` per (node, cellType) pair — reads `detectionRolls` and `detectionUpgradeProbs` from `CELL_CONFIG`
-- Returns updated groundTruth with mutated `detected_level` / `perceived_type` on instances
+- Builds a `nodeId → [cellType, ...]` map: arrived recon cells at their node; cells with `coversAdjacentNodes` also cover adjacent nodes; en-route cells via `nodesVisited`
+- Calls `performDetection(cellType, nodePathogens)` per (node, cellType) pair — deterministic: `isDetector` upgrades `none`→`unknown`, `isClassifier` upgrades `unknown`→`classified`
+- Returns `{ groundTruth, nodesWithClearRoll }` — `nodesWithClearRoll` is Set of nodes where a detector found nothing new
 
 ---
 
@@ -86,20 +87,20 @@ Top-level game shell. Owns the `useReducer` with `gameReducer`. Handles:
 ---
 
 ### `BodyMap.jsx`
-SVG map of all nodes. Shows:
+SVG map of all nodes. All nodes always visible. Shows:
 - Node circles: fill colour = inflammation (navy → olive → amber → orange → red); fill level = tissue integrity (clip-path)
 - Pathogen arc rings per instance, based on `detected_level`:
-  - `classified` / `misclassified`: solid ring in perceived-type colour; arc = load % (or 85% when fogged)
-  - `threat`: dashed orange ring, fixed 55% arc
-  - `unknown`: thin dashed grey ring, fixed 25% arc
+  - `classified`: solid ring in perceived-type colour; arc = load %
+  - `unknown`: thin dashed grey ring, fixed arc
   - Yellow badge = count of `unknown`-level pathogens at node
+- **Surveillance pips**: small white dots around inside of node circle (1 per `turnsSinceLastClear`, max 8)
 - Cell dots at each node:
   - **Arrived** cells: full-opacity colored dots
   - **Outbound/returning** cells at their current intermediate `nodeId`: dimmed (35% opacity, smaller)
 - Right-click on node → deploy selected cell
 - Left-click → `SELECT_NODE` action
 
-**Props:** `groundTruthNodeStates`, `deployedCells`, `selectedNodeId`, `onSelectNode`, `onNodeContextMenu`, `visibleNodes`
+**Props:** `groundTruthNodeStates`, `deployedCells`, `selectedNodeId`, `onSelectNode`, `onNodeContextMenu`
 
 **To change:** visual node layout, ring styling, cell dot appearance.
 
@@ -121,15 +122,14 @@ Left panel. Shows all cells in the roster grouped by phase. Per-cell:
 
 ### `NodeDetail.jsx`
 Right panel slide-in when a node is selected. Three sections:
-1. **Site Status** — inflammation bar, tissue integrity bar, status badges (WALLED OFF, SUPPRESSED, TRANSIT –N); fog-aware (real-time when visible, last-known when not)
+1. **Site Status** — inflammation bar, tissue integrity bar, status badges (WALLED OFF, SUPPRESSED, TRANSIT –N)
 2. **Threats** — one row per pathogen with `detected_level !== 'none'`:
-   - `unknown`: "Unknown anomaly" + ghost bar
-   - `threat`: "Unclassified threat" + ghost bar
-   - `classified` / `misclassified`: `PATHOGEN_DISPLAY_NAMES[perceived_type]` + real load bar
-   - No detected pathogens: "No surveillance data"
+   - `unknown`: "Unknown presence" + ghost bar
+   - `classified`: `PATHOGEN_DISPLAY_NAMES[perceived_type]` + real load bar + delta badge
+   - No detected pathogens: "No threats detected."
 3. **Your Cells Here** — arrived cells with recall buttons; "Passing through" sub-section for outbound/returning cells with destination + ETA
 
-**Props:** `nodeId`, `groundTruthNodeState`, `deployedCells`, `currentTurn`, `onRecall`, `onClose`, `visibleNodes`
+**Props:** `nodeId`, `groundTruthNodeState`, `deployedCells`, `currentTurn`, `onRecall`, `onClose`
 
 **To change:** add more GT data display, change detection level display rules.
 

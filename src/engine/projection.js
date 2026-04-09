@@ -4,14 +4,14 @@
 // The projection calls the same core functions as advanceGroundTruth (via advanceNodeSite)
 // but skips spreads, spawns, and events — those involve randomness or future-state unknowns.
 
-import { computeVisibility } from '../data/nodes.js';
+import { NODE_IDS } from '../data/nodes.js';
 import { TICKS_PER_TURN } from '../data/gameConfig.js';
 import { advanceCells } from './cells.js';
 import { advanceNodeSite } from './groundTruth.js';
 import { computeSystemicStress, applySystemicIntegrityHits } from './systemicValues.js';
 
 /**
- * Compute projected next-turn deltas for all visible nodes and systemic values.
+ * Compute projected next-turn deltas for all nodes and systemic values.
  *
  * @param {Object} state           — full game state + selectedCellId
  * @param {string|null} hoveredNodeId — if set, and a ready cell is selected, simulate
@@ -38,11 +38,10 @@ export function computeProjectedChanges(state, hoveredNodeId = null) {
     }
   }
 
-  const visibleNodes = computeVisibility(effectiveDeployedCells);
   const nodeProjections = {};
   const perSiteOutputs = {};
 
-  for (const nodeId of visibleNodes) {
+  for (const nodeId of NODE_IDS) {
     const ns = groundTruth.nodeStates[nodeId];
     if (!ns) continue;
 
@@ -56,10 +55,10 @@ export function computeProjectedChanges(state, hoveredNodeId = null) {
 
     perSiteOutputs[nodeId] = { toxinOutput };
 
-    // Per-pathogen deltas (only for classified/misclassified — visible to player)
+    // Per-pathogen deltas — only for classified pathogens (type known to player)
     const pathogenDeltas = {};
     for (const inst of (ns.pathogens ?? [])) {
-      if (inst.detected_level !== 'classified' && inst.detected_level !== 'misclassified') continue;
+      if (inst.detected_level !== 'classified') continue;
       const projectedInst = updatedPathogens.find(p => p.uid === inst.uid);
       const projectedLoad = projectedInst ? projectedInst.actualLoad : 0;
       pathogenDeltas[inst.uid] = {
@@ -76,11 +75,10 @@ export function computeProjectedChanges(state, hoveredNodeId = null) {
   }
 
   // Build synthetic post-turn nodeStates for systemic stress calculation.
-  // Only visible nodes get updated values; others use current state as-is.
   const projectedNodeStates = { ...groundTruth.nodeStates };
-  for (const nodeId of visibleNodes) {
+  for (const nodeId of NODE_IDS) {
     const ns = groundTruth.nodeStates[nodeId];
-    if (!ns) continue;
+    if (!ns || !nodeProjections[nodeId]) continue;
     projectedNodeStates[nodeId] = {
       ...ns,
       inflammation: nodeProjections[nodeId].inflammationDelta + ns.inflammation,

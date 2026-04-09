@@ -6,37 +6,6 @@
 //
 // Modifier accessors at the bottom apply runModifiers on top of base values.
 
-// ── Per-cell detection upgrade probability tables ─────────────────────────────
-// [detected_level] → { upgradeChance, misclassifyChance? }
-//
-// upgradeChance:     probability a roll increases detected_level one step
-// misclassifyChance: (threat→classified only) probability of wrong classification
-//
-// Design intent:
-//   Macrophages: decent all-round
-//   Scouts (dendritic): excellent at all levels, especially classification
-
-const MACROPHAGE_DETECTION_PROBS = {
-  none:          { upgradeChance: 0.40 },
-  unknown:       { upgradeChance: 0.45 },
-  threat:        { upgradeChance: 0.30, misclassifyChance: 0.40 },
-  misclassified: { upgradeChance: 0.20 },
-};
-
-const NEUTROPHIL_DETECTION_PROBS = {
-  none:          { upgradeChance: 0.50 },
-  unknown:       { upgradeChance: 0.50 },
-  threat:        { upgradeChance: 0.20, misclassifyChance: 0.50 },
-  misclassified: { upgradeChance: 0.15 },
-};
-
-const DENDRITIC_DETECTION_PROBS = {
-  none:          { upgradeChance: 0.70 },
-  unknown:       { upgradeChance: 0.75 },
-  threat:        { upgradeChance: 0.60, misclassifyChance: 0.15 },
-  misclassified: { upgradeChance: 0.50 },
-};
-
 export const CELL_CONFIG = {
 
   // ── Recon ──────────────────────────────────────────────────────────────────
@@ -52,18 +21,16 @@ export const CELL_CONFIG = {
     dotClass:              'bg-purple-600',    // Tailwind — roster/detail dots
     startingCount:         0,
     // ── Role flags ──
-    isRecon:               true,
+    isDetector:            true,     // detects presence: 'none' → 'unknown'
+    isClassifier:          true,     // classifies type: 'unknown' → 'classified'
     isAttack:              false,
-    isScout:               true,     // dwells then auto-returns; emits scout_arrived event
+    autoReturn:            true,     // returns when done: no unknowns + clear detection roll
     requiresClassified:    false,
     coversAdjacentNodes:   false,
-    // ── Detection ──
-    detectionRolls:        3,
-    detectionUpgradeProbs: DENDRITIC_DETECTION_PROBS,
     // ── Clearance ──
     clearablePathogens:    {},       // recon only — no pathogen clearance
     effectivenessByLevel:  {         // N/A — clearanceRate=0
-      none: 1.0, unknown: 1.0, threat: 1.0, misclassified: 1.0, classified: 1.0,
+      none: 1.0, unknown: 1.0, classified: 1.0,
     },
   },
 
@@ -88,14 +55,12 @@ export const CELL_CONFIG = {
     dotClass:              'bg-amber-600',
     startingCount:         0,
     // ── Role flags ──
-    isRecon:               true,
+    isDetector:            true,     // detects presence: 'none' → 'unknown'
+    isClassifier:          false,    // cannot classify — sends for specialist (dendritic) if needed
     isAttack:              false,
-    isScout:               false,
+    autoReturn:            false,    // macrophage holds position — does not auto-return
     requiresClassified:    false,
-    coversAdjacentNodes:   true,     // grants visibility to adjacent nodes
-    // ── Detection ──
-    detectionRolls:        1,
-    detectionUpgradeProbs: MACROPHAGE_DETECTION_PROBS,
+    coversAdjacentNodes:   false,    // adjacency detection available as upgrade only
     // ── Clearance ──
     clearablePathogens: {
       extracellular_bacteria: 1.0,
@@ -106,7 +71,7 @@ export const CELL_CONFIG = {
       benign:                 1.0,
     },
     effectivenessByLevel:  {         // clears regardless of detection level
-      none: 1.0, unknown: 1.0, threat: 1.0, misclassified: 1.0, classified: 1.0,
+      none: 1.0, unknown: 1.0, classified: 1.0,
     },
   },
 
@@ -130,28 +95,25 @@ export const CELL_CONFIG = {
     dotClass:              'bg-blue-600',
     startingCount:         0,
     // ── Role flags ──
-    isRecon:               false,
+    isDetector:            false,
+    isClassifier:          false,
     isAttack:              true,
-    isScout:               false,
+    autoReturn:            true,
     requiresClassified:    false,
     coversAdjacentNodes:   false,
-    // ── Detection ──
-    detectionRolls:        0,
-    detectionUpgradeProbs: NEUTROPHIL_DETECTION_PROBS,
     // ── Clearance ──
     clearablePathogens:    {
       extracellular_bacteria: 1.0,
       fungi:                  1.0,
       benign:   1.0,
-    } , 
-    effectivenessByLevel:  {        
-      none: 0, 
-      unknown: .8, 
-      threat: .9, 
-      misclassified: .9, 
+    },
+    effectivenessByLevel:  {
+      none:       0,
+      unknown:    0.8,
       classified: 1.0,
     },
   },
+
   eosinophil: {
     displayName:           'Eosinophil',
     deployCost:            3,
@@ -165,24 +127,20 @@ export const CELL_CONFIG = {
     dotClass:              'bg-red-700',
     startingCount:         0,
     // ── Role flags ──
-    isRecon:               false,
+    isDetector:            false,
+    isClassifier:          false,
     isAttack:              true,
-    isScout:               false,
+    autoReturn:            true,
     requiresClassified:    false,
     coversAdjacentNodes:   false,
-    // ── Detection ──
-    detectionRolls:        0,
-    detectionUpgradeProbs: null,
     // ── Clearance ──
     clearablePathogens: {
       parasite: 1.0,
     },
-    effectivenessByLevel: {         // penalty without classified intel
-      none:          0.5,
-      unknown:       0.5,
-      threat:        0.5,
-      misclassified: 0.5,
-      classified:    1.0,
+    effectivenessByLevel: {
+      none:       0.5,
+      unknown:    0.5,
+      classified: 1.0,
     },
   },
 
@@ -204,15 +162,13 @@ export const CELL_CONFIG = {
     dotClass:              'bg-red-600',
     startingCount:         0,
     // ── Role flags ──
-    isRecon:               false,
+    isDetector:            false,
+    isClassifier:          false,
     isAttack:              true,
-    isScout:               false,
+    autoReturn:            true,
     requiresClassified:    true,    // cannot deploy without a classified pathogen at target
     coversAdjacentNodes:   false,
     isSpecialist:          true,    // locks onto the first pathogen type it successfully clears
-    // ── Detection ──
-    detectionRolls:        0,
-    detectionUpgradeProbs: null,
     // ── Clearance ──
     clearablePathogens: {
       virus:                  1.0,
@@ -221,11 +177,9 @@ export const CELL_CONFIG = {
       benign:                 1.0,
     },
     effectivenessByLevel: {         // zero effectiveness without classified intel
-      none:          0,
-      unknown:       0,
-      threat:        0,
-      misclassified: 0,
-      classified:    1.0,
+      none:       0,
+      unknown:    0,
+      classified: 1.0,
     },
   },
 
@@ -252,30 +206,26 @@ export const CELL_CONFIG = {
     dotClass:              'bg-green-600',
     startingCount:         0,
     // ── Role flags ──
-    isRecon:               false,
+    isDetector:            false,
+    isClassifier:          false,
     isAttack:              true,
-    isScout:               false,
+    autoReturn:            true,
     requiresClassified:    false,
     coversAdjacentNodes:   false,
-    // ── Detection ──
-    detectionRolls:        0,
-    detectionUpgradeProbs: null,
     // ── Clearance ──
     clearablePathogens: {
       extracellular_bacteria: 1.0,
       virus: 1.0,
       fungi: 1.0,
-      parasite: .5, 
+      parasite: .5,
       intracellular_bacteria: .5,
       toxin_producer: 1.0,
       benign:                 1.0,
     },
-    effectivenessByLevel: {        
-      none:          0,
-      unknown:       0,
-      threat:        0.25,
-      misclassified: 0.25,
-      classified:    1.0,
+    effectivenessByLevel: {
+      none:       0,
+      unknown:    0.25,
+      classified: 1.0,
     },
   },
 
@@ -296,14 +246,12 @@ export const CELL_CONFIG = {
     dotClass:              'bg-orange-600',
     startingCount:         0,
     // ── Role flags ──
-    isRecon:               false,
+    isDetector:            false,
+    isClassifier:          false,
     isAttack:              true,
-    isScout:               false,
+    autoReturn:            true,
     requiresClassified:    false,
     coversAdjacentNodes:   false,
-    // ── Detection ──
-    detectionRolls:        0,
-    detectionUpgradeProbs: null,
     // ── Clearance ──
     clearablePathogens: {
       virus:    1.0,
@@ -311,12 +259,10 @@ export const CELL_CONFIG = {
       cancer:   1.0,
       benign:   1.0,
     },
-    effectivenessByLevel: {   
-      none:          1.0,
-      unknown:       1.0,
-      threat:        1.0,
-      misclassified: 1.0,
-      classified:    1.0,
+    effectivenessByLevel: {
+      none:       1.0,
+      unknown:    1.0,
+      classified: 1.0,
     },
   },
 };
@@ -334,7 +280,7 @@ export const ATTACK_CELL_TYPES = new Set(
 );
 
 export const RECON_CELL_TYPES = new Set(
-  Object.entries(CELL_CONFIG).filter(([, v]) => v.isRecon).map(([k]) => k)
+  Object.entries(CELL_CONFIG).filter(([, v]) => v.isDetector || v.isClassifier).map(([k]) => k)
 );
 
 export const ALL_CELL_TYPES = new Set(
@@ -390,16 +336,6 @@ export function getEffectiveEffectiveness(cellType, detectedLevel, modifiers) {
   const base = cfg.effectivenessByLevel?.[detectedLevel] ?? 1.0;
   const bonus = modifiers?.cells?.[cellType]?.effectivenessLevelBonus?.[detectedLevel] ?? 0;
   return Math.min(1.0, base + bonus);
-}
-
-/**
- * Returns the effective number of detection rolls for a recon cell this visit.
- * Adds detectionRollsBonus from modifiers (upgrade: heightened_senses).
- */
-export function getEffectiveDetectionRolls(cellType, modifiers) {
-  const base = CELL_CONFIG[cellType]?.detectionRolls ?? 0;
-  const bonus = modifiers?.cells?.[cellType]?.detectionRollsBonus ?? 0;
-  return Math.max(0, base + bonus);
 }
 
 /**

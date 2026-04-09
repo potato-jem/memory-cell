@@ -52,11 +52,11 @@ function DeltaBadge({ delta, invert = false }) {
 /**
  * Wraps one pathogen row; hovering anywhere on the row shows the breakdown tooltip.
  */
-function PathogenRow({ inst, isVisible, projEntry, label, barColor, labelColor, ringColor }) {
+function PathogenRow({ inst, projEntry, label, barColor, labelColor, ringColor }) {
   const [hovered, setHovered] = useState(false);
   const [pos, setPos] = useState({ x: 0, y: 0 });
-  const isKnown = inst.detected_level === 'classified' || inst.detected_level === 'misclassified';
-  const load = isKnown ? getPrimaryLoad(inst, isVisible) : 0;
+  const isKnown = inst.detected_level === 'classified';
+  const load = isKnown ? getPrimaryLoad(inst, true) : 0;
   const hasBreakdown = projEntry?.breakdown?.length > 0;
 
   return (
@@ -110,7 +110,7 @@ function BarFill({ value, max = 100, color, bg = 'bg-gray-800', ceiling = null }
   );
 }
 
-function SiteStatusPanel({ gt, liveIntegrity = null, isStale = false, turnsSinceLastVisible = 0, nodeProjection = null }) {
+function SiteStatusPanel({ gt, liveIntegrity = null, nodeProjection = null }) {
   if (!gt && liveIntegrity == null) return null;
 
   const inflammation = gt?.inflammation ?? 0;
@@ -126,9 +126,6 @@ function SiteStatusPanel({ gt, liveIntegrity = null, isStale = false, turnsSince
     <section className="border-b border-gray-800 px-4 py-4 space-y-3">
       <div className="flex items-center justify-between">
         <div className="text-xs text-gray-500 uppercase tracking-widest">Site Status</div>
-        {isStale && (
-          <span className="text-xs text-gray-700 italic">last known ({turnsSinceLastVisible}T ago)</span>
-        )}
       </div>
 
       {gt && (
@@ -188,7 +185,7 @@ function SiteStatusPanel({ gt, liveIntegrity = null, isStale = false, turnsSince
 
 // ── Pathogen threat section ───────────────────────────────────────────────────
 
-function PathogenPanel({ groundTruthNodeState, isVisible, nodeProjection = null }) {
+function PathogenPanel({ groundTruthNodeState, nodeProjection = null }) {
   const pathogens = (groundTruthNodeState?.pathogens ?? [])
     .filter(inst => inst.detected_level !== 'none');
 
@@ -197,7 +194,7 @@ function PathogenPanel({ groundTruthNodeState, isVisible, nodeProjection = null 
       <div className="text-xs text-gray-500 uppercase tracking-widest">Threats</div>
 
       {pathogens.length === 0 && (
-        <div className="text-xs text-gray-700 italic">No surveillance data.</div>
+        <div className="text-xs text-gray-700 italic">No threats detected.</div>
       )}
 
       {pathogens.map(inst => {
@@ -205,16 +202,12 @@ function PathogenPanel({ groundTruthNodeState, isVisible, nodeProjection = null 
         let label, barColor, labelColor, ringColor;
 
         if (level === 'unknown') {
-          label      = 'Unknown anomaly';
+          label      = 'Unknown presence';
           barColor   = 'bg-gray-600';
           labelColor = 'text-gray-500';
           ringColor  = '#6b7280';
-        } else if (level === 'threat') {
-          label      = 'Unclassified threat';
-          barColor   = 'bg-orange-600';
-          labelColor = 'text-orange-400';
-          ringColor  = '#f97316';
         } else {
+          // classified
           const displayType = inst.perceived_type ?? inst.type;
           label      = PATHOGEN_DISPLAY_NAMES[displayType] ?? displayType;
           barColor   = displayType === 'benign' ? 'bg-gray-500' : 'bg-red-600';
@@ -226,7 +219,6 @@ function PathogenPanel({ groundTruthNodeState, isVisible, nodeProjection = null 
           <PathogenRow
             key={inst.uid ?? inst.type}
             inst={inst}
-            isVisible={isVisible}
             projEntry={nodeProjection?.pathogenDeltas?.[inst.uid] ?? null}
             label={label}
             barColor={barColor}
@@ -252,22 +244,13 @@ export default function NodeDetail({
   onClose,
   onDeployToNode,
   onStartPatrol,
-  visibleNodes,
   projections = null,
 }) {
   const node = NODES[nodeId];
   if (!node) return null;
 
-  const isVisible = visibleNodes?.has(nodeId) ?? false;
   const nodeProjection = projections?.nodes?.[nodeId] ?? null;
-  const siteGt = groundTruthNodeState
-    ? {
-        ...groundTruthNodeState,
-        inflammation: isVisible
-          ? groundTruthNodeState.inflammation
-          : (groundTruthNodeState.lastKnownInflammation ?? 0),
-      }
-    : null;
+  const siteGt = groundTruthNodeState ?? null;
 
   const cellsHereRaw = Object.values(deployedCells).filter(c => c.nodeId === nodeId && c.phase === 'arrived' && !c.isPatrolling);
   const cellsTransit = Object.values(deployedCells).filter(c =>
@@ -308,9 +291,6 @@ export default function NodeDetail({
               <span className="text-xs text-blue-600 border border-blue-900 px-1.5 py-0.5 rounded bg-blue-950">SYS</span>
             )}
           </div>
-          {!isVisible && (
-            <div className="text-xs text-gray-700 mt-0.5 italic">No active surveillance</div>
-          )}
         </div>
         <button
           onClick={onClose}
@@ -325,12 +305,10 @@ export default function NodeDetail({
         <SiteStatusPanel
           gt={siteGt}
           liveIntegrity={groundTruthNodeState?.tissueIntegrity ?? null}
-          isStale={!isVisible && !!groundTruthNodeState}
-          turnsSinceLastVisible={groundTruthNodeState?.turnsSinceLastVisible ?? 0}
-          nodeProjection={isVisible ? nodeProjection : null}
+          nodeProjection={nodeProjection}
         />
 
-        <PathogenPanel groundTruthNodeState={groundTruthNodeState} isVisible={isVisible} nodeProjection={isVisible ? nodeProjection : null} />
+        <PathogenPanel groundTruthNodeState={groundTruthNodeState} nodeProjection={nodeProjection} />
 
         {/* Friendly cells */}
         <section className="border-b border-gray-800">
@@ -407,7 +385,7 @@ export default function NodeDetail({
           {selectedCellId && deployedCells[selectedCellId]?.phase === 'ready' ? (() => {
             const cell = deployedCells[selectedCellId];
             const cc = CELL_TYPE_CONFIG[cell.type];
-            const isRecon = cc?.isRecon ?? false;
+            const isRecon = cc?.isDetector || cc?.isClassifier;
             const stackCount = Object.values(deployedCells).filter(c => c.type === cell.type && c.phase === 'ready').length;
             const hasStack = stackCount > 1;
             return (

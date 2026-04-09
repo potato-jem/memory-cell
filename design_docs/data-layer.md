@@ -42,11 +42,12 @@ Single source of truth for all per-type cell properties. **This is the only plac
 | `textClass` | Tailwind text colour class (UI labels) |
 | `dotClass` | Tailwind background class (roster/detail dots) |
 | `startingCount` | Default units of this type at run start (0 = none) |
-| `isRecon` / `isAttack` / `isScout` | Role flags (`isPatrol` removed — any recon cell can patrol via player action) |
+| `isDetector` | Detects presence: upgrades `none` → `unknown` at visited nodes (Macrophage, Dendritic) |
+| `isClassifier` | Classifies type: upgrades `unknown` → `classified` at visited nodes (Dendritic only) |
+| `isAttack` | Attack role flag |
+| `autoReturn` | If true, cell auto-returns when done (attack: no active pathogens; recon: node fully classified). False for Macrophage only — holds position indefinitely. |
 | `requiresClassified` | Cannot deploy without a classified pathogen at target (Killer T) |
-| `coversAdjacentNodes` | Grants fog-of-war visibility to adjacent nodes (Macrophage) |
-| `detectionRolls` | Detection rolls per node visit (recon cells); 0 for non-recon |
-| `detectionUpgradeProbs` | Per-level upgrade probabilities `{ [detected_level]: { upgradeChance, misclassifyChance? } }` (null for non-recon) |
+| `coversAdjacentNodes` | Extends detection to adjacent nodes (upgrade only; off by default) |
 | `clearablePathogens` | `{ [pathogenType]: effectivenessMultiplier }` — pathogens this cell can clear and how effectively. Not listed = cannot clear (effectively 0). |
 | `effectivenessByLevel` | `{ [detected_level]: 0–1 }` — clearance effectiveness at each detection level. Higher detection = better intel = higher effectiveness. |
 | `cellLifetime` | *(optional)* integer (ticks) — cell dies this many ticks after `deployedAtTick`; cannot be recalled (recalling kills immediately); does not auto-return when node clears |
@@ -57,7 +58,7 @@ Single source of truth for all per-type cell properties. **This is the only plac
 | `specializationMax` | *(optional)* float — ceiling on specialization multiplier (e.g. 2.5) |
 | `specializationMin` | *(optional)* float — floor on specialization multiplier (e.g. 0.2) |
 
-**Effectiveness model:** Clearance effectiveness now scales with the pathogen's `detected_level`. For example, Responder has 0.6× at `none/unknown/threat/misclassified` and 1.0× at `classified`. Killer T has 0 at all non-classified levels (enforced by `requiresClassified` at deploy time as well). NK Cell is 1.0× at all levels.
+**Effectiveness model:** Clearance effectiveness scales with the pathogen's `detected_level`. Three levels: `none`, `unknown`, `classified`. Killer T has 0 at `none`/`unknown` (enforced by `requiresClassified` at deploy time as well). NK Cell is 1.0× at all levels.
 
 **Derived exports:**
 - `CELL_TYPE_ORDER` — cell type strings sorted by `displayOrder`
@@ -198,9 +199,9 @@ Which cells can clear each pathogen is defined **on the cell** (`CELL_CONFIG[typ
 {
   uid: 'path_7',                   // unique ID; inherited by spread children
   type: 'extracellular_bacteria',
-  actualLoad: 45,               // primary actualLoad
-  detected_level: 'none',          // 'none' | 'unknown' | 'threat' | 'classified' | 'misclassified'
-  perceived_type: null,            // string | null — set when classified/misclassified
+  actualLoad: 45,                  // primary actualLoad
+  detected_level: 'none',          // 'none' | 'unknown' | 'classified'
+  perceived_type: null,            // string | null — set when classified
 }
 ```
 
@@ -231,19 +232,15 @@ Minimal constants retained for `memory.js`. No signal objects exist at runtime.
 ---
 
 ## `detection.js`
-Detection probability tables and the `performDetection` pure function. Operates directly on pathogen instances — no perceived state involved.
+Deterministic detection. Pure function. Operates directly on pathogen instances.
 
-**`performDetection(cellType, nodePathogens, nodeInflammation, modifiers?)`** → updated `nodePathogens[]`
+**`performDetection(cellType, nodePathogens)`** → `{ pathogens, isClear }`
 
-Detection rolls and upgrade probabilities are read from `CELL_CONFIG[cellType]`:
-- `detectionRolls` — how many rolls per node visit
-- `detectionUpgradeProbs` — per-level `{ upgradeChance, misclassifyChance? }` table
+Detection is deterministic — no probability rolls:
+- `isDetector` cells: upgrade `none` → `unknown`
+- `isClassifier` cells: upgrade `unknown` → `classified`
 
-Each roll targets the highest-priority unclassified pathogen and attempts to upgrade its `detected_level`. Returns a new array with updated detection state on affected instances.
-
-**Level priority** (rolls target highest-priority first): `misclassified` > `threat` > `unknown` > `none` > `classified` (already done).
-
-**`WRONG_ID_MAP`** — per pathogen type, likely misidentification targets (other type strings).
+`isClear` = true when a detector was present and found no `none`-level pathogens (all already known or node empty). This is a "clear roll" — used to reset `turnsSinceLastClear` on that node.
 
 Used by `actions.js` (`runDetectionPhase`) for all detection — arrived recon cells, macrophage adjacents, and en-route visits.
 

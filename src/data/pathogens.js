@@ -15,7 +15,6 @@ export const PATHOGEN_TYPES = {
   // Stubs — behaviour defined but not yet fully tuned:
   INTRACELLULAR_BACTERIA: 'intracellular_bacteria',
   CANCER:                 'cancer',
-  AUTOIMMUNE:             'autoimmune',
 };
 
 // Human-readable display names
@@ -28,7 +27,6 @@ export const PATHOGEN_DISPLAY_NAMES = {
   toxin_producer:         'Toxin Producer',
   // prion:                  'Prion',
   cancer:                 'Cancer',
-  autoimmune:             'Autoimmune',
   benign:                 'Benign variation',
 };
 
@@ -165,18 +163,6 @@ export const PATHOGEN_REGISTRY = {
     collateralModifier: 1.0,          // attacking benign cells is pure collateral damage
   },
 
-  autoimmune: {
-    ringColor:         null,          // no arc ring colour
-    actualLoad:              0,
-    growthModel:       'logistic',
-    replicationRate:   0.20,
-    detectionModifier: 0.7,           // appears self-like; hard to distinguish from normal immune response
-    spreadThreshold:   null,
-    tissueDamageRate:  10,           // high self-damage
-    inflammationRate:  0,
-    collateralModifier: 1.0,          // self-attack is all collateral damage
-    // cannot be cleared — regulatory T-cell ability (future)
-  },
 };
 
 // Ring colours keyed by pathogen type — derived from PATHOGEN_REGISTRY.ringColor.
@@ -190,9 +176,8 @@ export const PATHOGEN_RING_COLORS = Object.fromEntries(
 // ── Queries ───────────────────────────────────────────────────────────────────
 
 /** Returns the primary load value for display/logic. */
-export function getPrimaryLoad(instance, isVisible = true) {
+export function getPrimaryLoad(instance) {
   if (!instance) return 0;
-  if (!isVisible) return instance.lastKnownLoad ?? 0;
   return instance.actualLoad ?? 0;
 }
 

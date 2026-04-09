@@ -97,11 +97,11 @@ export const UPGRADE_LIBRARY = [
     id: 'heightened_senses',
     category: 'upgrade',
     name: 'Heightened Senses',
-    description: '{clearingCellType} makes extra detection rolls per visit',
-    effectLabel: (_ctx, value) => `+${value} detection roll${value > 1 ? 's' : ''} per visit`,
+    description: '{clearingCellType} classifies pathogens faster — detection range extended',
+    effectLabel: (_ctx, value) => `+${value} classification range`,
     effectColorKey: 'cell',
     baseProbability: 1.0,
-    eligibleFor: (ctx) => !!ctx.clearingCellType && ctx.cellConfig?.isRecon === true,
+    eligibleFor: (ctx) => !!ctx.clearingCellType && (ctx.cellConfig?.isDetector === true || ctx.cellConfig?.isClassifier === true),
     rarityLevels: [
       { rarity: 'common', probability: 0.60, value: 1 },
       { rarity: 'rare',   probability: 0.30, value: 1 },
@@ -121,7 +121,7 @@ export const UPGRADE_LIBRARY = [
     effectLabel: (_ctx, value) => `+${Math.round(value * 100)}% classification accuracy`,
     effectColorKey: 'pathogen',
     baseProbability: 0.8,
-    eligibleFor: (ctx) => !!ctx.clearingCellType && !!ctx.clearedPathogenType && ctx.cellConfig?.isRecon === true,
+    eligibleFor: (ctx) => !!ctx.clearingCellType && !!ctx.clearedPathogenType && (ctx.cellConfig?.isDetector === true || ctx.cellConfig?.isClassifier === true),
     rarityLevels: [
       { rarity: 'common', probability: 0.60, value: 0.10 },
       { rarity: 'rare',   probability: 0.30, value: 0.15 },
@@ -156,7 +156,7 @@ export const UPGRADE_LIBRARY = [
       { rarity: 'epic',   probability: 0.10, value: 0.18 },
     ],
     getPatch: (ctx, value, mods) => {
-      const levels = ['none', 'unknown', 'threat', 'misclassified'];
+      const levels = ['none', 'unknown'];
       const bonus = {};
       for (const level of levels) {
         const current = mods?.cells?.[ctx.clearingCellType]?.effectivenessLevelBonus?.[level] ?? 0;
@@ -426,7 +426,7 @@ export const UPGRADE_LIBRARY = [
     getPatch: (_ctx, value, mods) => {
       const patch = { detection: {} };
       for (const [cellType, cfg] of Object.entries(CELL_CONFIG)) {
-        if (!cfg.isRecon || (cfg.detectionRolls ?? 0) === 0) continue;
+        if (!cfg.isDetector && !cfg.isClassifier) continue;
         patch.detection[cellType] = {};
         for (const pathType of Object.keys(PATHOGEN_REGISTRY)) {
           const current = mods?.detection?.[cellType]?.[pathType]?.accuracyBonus ?? 0;
@@ -692,7 +692,7 @@ export const SCAR_LIBRARY = [
     getPatch: (_ctx, value, mods) => {
       const patch = { detection: {} };
       for (const [cellType, cfg] of Object.entries(CELL_CONFIG)) {
-        if (!cfg.isRecon || (cfg.detectionRolls ?? 0) === 0) continue;
+        if (!cfg.isDetector && !cfg.isClassifier) continue;
         patch.detection[cellType] = {};
         for (const pathType of Object.keys(PATHOGEN_REGISTRY)) {
           const current = mods?.detection?.[cellType]?.[pathType]?.accuracyBonus ?? 0;

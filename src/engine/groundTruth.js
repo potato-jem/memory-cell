@@ -22,14 +22,13 @@ import { getEffectiveIntegrityRecovery, getEffectiveInflammationDecayMultiplier 
 
 export function makeCleanSiteState() {
   return {
-    pathogens: [],             // PathogenInstance[] — each has uid, type, actualLoad, detected_level, perceived_type, lastKnownLoad
+    pathogens: [],             // PathogenInstance[] — each has uid, type, actualLoad, detected_level, perceived_type
     immune: [],                // uid[] — uids of pathogens cleared from this node (prevents re-spread of same lineage)
     inflammation: 0,           // 0–100
-    lastKnownInflammation: 0,  // last observed inflammation (fog-of-war)
-    turnsSinceLastVisible: 0,  // turns elapsed since node was last visible
     tissueIntegrity: 100,      // 0–100
     tissueIntegrityCeiling: 100,
     lowestIntegrityReached: 100,
+    turnsSinceLastClear: 0,    // turns since a detector was present and found nothing new
     isWalledOff: false,        // fungi granuloma
     immuneSuppressed: false,   // active parasite above suppression threshold
     transitPenalty: 0,         // extra turns added to deployment (parasite logistics)
@@ -270,7 +269,6 @@ function makeNewInstance(type, initialLoad, uid = null) {
     actualLoad: initialLoad,
     detected_level: 'none',
     perceived_type: null,
-    lastKnownLoad: null,       // set when node is observed; null = never seen
   };
 }
 

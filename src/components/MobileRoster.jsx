@@ -242,7 +242,7 @@ export default function MobileRoster({
                           {deployLabel}
                         </DeployBtn>
                       )}
-                      {ready.length > 0 && cfg?.isRecon && (
+                      {ready.length > 0 && cfg?.isDetector || cfg?.isClassifier && (
                         <button
                           onClick={() => handlePatrol(type)}
                           className="flex-1 py-2 text-xs font-mono border border-amber-600 bg-amber-950 text-amber-300 rounded hover:bg-amber-900 active:bg-amber-800 transition-colors"
@@ -407,7 +407,7 @@ export default function MobileRoster({
                     >
                       {tooltipNode ? '→' : '▶'}
                     </DeployBtn>
-                    {cfg?.isRecon && (
+                    {cfg?.isDetector || cfg?.isClassifier && (
                       <button
                         onClick={e => { e.stopPropagation(); hasReady && handlePatrol(type); }}
                         disabled={!hasReady}

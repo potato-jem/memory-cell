@@ -19,7 +19,7 @@ import {
   updateCellSpecializations,
 } from '../engine/cells.js';
 import { CELL_CONFIG, RECON_CELL_TYPES, getEffectiveClearanceRate, getCellClearablePathogens } from '../data/cellConfig.js';
-import { NODES, computeVisibility } from '../data/nodes.js';
+import { NODES } from '../data/nodes.js';
 import { TICKS_PER_TURN, GAME_PHASES, LOSS_REASONS } from './gameState.js';
 import { TOKEN_CAPACITY_MAX, TOKEN_CAPACITY_REGEN_INTERVAL, WIN_PATHOGEN_TARGET } from '../data/gameConfig.js';
 import { nodeHasActivePathogen, PATHOGEN_REGISTRY } from '../data/pathogens.js';
@@ -88,11 +88,11 @@ function handleEndTurn(state) {
   }
 
   // 2. Advance cells (training, transit, patrol, returns)
-  let { updatedCells, nodesVisited } = advanceCells(state.deployedCells, newTick, mods);
+  let { updatedCells, nodesVisited } = advanceCells(state.deployedCells, newTick, mods, state.groundTruth.nodeStates);
 
   // 3. Detection phase: run before ground truth advances so cells see current pathogen state.
   //    Updates detected_level on pathogen instances directly.
-  const groundTruthAfterDetection = runDetectionPhase(
+  const { groundTruth: groundTruthAfterDetection, nodesWithClearRoll } = runDetectionPhase(
     updatedCells, nodesVisited, state.groundTruth, mods
   );
 
@@ -138,29 +138,23 @@ function handleEndTurn(state) {
   // 6. Auto-return attack cells from cleared nodes
   updatedCells = startReturnForClearedNodes(updatedCells, newGroundTruth.nodeStates, newTick, mods);
 
-  // 6b. Stamp lastKnownInflammation, lastKnownLoad, and turnsSinceLastVisible onto nodeStates
-  const visibleThisTurn = computeVisibility(updatedCells);
+  // 6b. Stamp turnsSinceLastClear onto nodeStates
   const stampedNodeStates = { ...newGroundTruth.nodeStates };
   for (const nodeId of Object.keys(stampedNodeStates)) {
     const gtNode = stampedNodeStates[nodeId];
     if (!gtNode) continue;
-    if (visibleThisTurn.has(nodeId)) {
-      stampedNodeStates[nodeId] = {
-        ...gtNode,
-        turnsSinceLastVisible: 0,
-        lastKnownInflammation: gtNode.inflammation ?? 0,
-        pathogens: gtNode.pathogens.map(p => ({ ...p, lastKnownLoad: p.actualLoad ?? 0 })),
-      };
+    if (nodesWithClearRoll.has(nodeId)) {
+      stampedNodeStates[nodeId] = { ...gtNode, turnsSinceLastClear: 0 };
     } else {
       stampedNodeStates[nodeId] = {
         ...gtNode,
-        turnsSinceLastVisible: (gtNode.turnsSinceLastVisible ?? 0) + 1,
+        turnsSinceLastClear: (gtNode.turnsSinceLastClear ?? 0) + 1,
       };
     }
   }
   const finalGroundTruth = { ...newGroundTruth, nodeStates: stampedNodeStates };
 
-  // 6c. Assign patrol destinations based on visibility staleness
+  // 6c. Assign patrol destinations based on detection staleness (turnsSinceLastClear)
   updatedCells = assignPatrolDestinations(updatedCells, stampedNodeStates, newTick, mods);
 
   // 7. Systemic values
@@ -459,10 +453,13 @@ function buildPostMortem(state, groundTruth, stressHistory, scars, outcome) {
 // ── Detection phase ────────────────────────────────────────────────────────────
 
 /**
- * Run all detection rolls for this turn.
- * Each recon cell detects at every node it has visibility over.
- * Updates detected_level / perceived_type on pathogen instances in-place (immutably).
+ * Run all detection for this turn.
+ * isDetector cells: 'none' → 'unknown'. isClassifier cells: 'unknown' → 'classified'.
+ * Detection is deterministic — no probability rolls.
  * Runs BEFORE advanceGroundTruth so cells see the current pathogen state.
+ *
+ * Returns { groundTruth, nodesWithClearRoll }
+ * nodesWithClearRoll: Set of nodeIds where a detector was present and found nothing new.
  */
 function runDetectionPhase(deployedCells, nodesVisited, groundTruth, modifiers) {
   // Build nodeId → [cellType, ...] mapping for all detecting cells this turn
@@ -490,23 +487,29 @@ function runDetectionPhase(deployedCells, nodesVisited, groundTruth, modifiers) 
     if (RECON_CELL_TYPES.has(cellType)) addDetector(nodeId, cellType);
   }
 
-  if (Object.keys(detectorsByNode).length === 0) return groundTruth;
+  const nodesWithClearRoll = new Set();
+
+  if (Object.keys(detectorsByNode).length === 0) return { groundTruth, nodesWithClearRoll };
 
   let nodeStates = { ...groundTruth.nodeStates };
 
   for (const [nodeId, cellTypes] of Object.entries(detectorsByNode)) {
     const ns = nodeStates[nodeId];
-    if (!ns?.pathogens?.length) continue;
-
-    let pathogens = ns.pathogens;
-    const inflammation = ns.inflammation ?? 0;
+    let pathogens = ns?.pathogens ?? [];
+    let nodeClear = false;
 
     for (const cellType of cellTypes) {
-      pathogens = performDetection(cellType, pathogens, inflammation, modifiers);
+      const result = performDetection(cellType, pathogens);
+      pathogens = result.pathogens;
+      if (result.isClear) nodeClear = true;
     }
 
-    nodeStates = { ...nodeStates, [nodeId]: { ...ns, pathogens } };
+    if (nodeClear) nodesWithClearRoll.add(nodeId);
+
+    if (ns) {
+      nodeStates = { ...nodeStates, [nodeId]: { ...ns, pathogens } };
+    }
   }
 
-  return { ...groundTruth, nodeStates };
+  return { groundTruth: { ...groundTruth, nodeStates }, nodesWithClearRoll };
 }

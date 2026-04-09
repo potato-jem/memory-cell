@@ -369,7 +369,7 @@ export default function CellRoster({
                           ↩
                         </button>
                       )}
-                      {cell.phase === 'ready' && (CELL_CONFIG[cell.type]?.isRecon) && onStartPatrol && (
+                      {cell.phase === 'ready' && (CELL_CONFIG[cell.type]?.isDetector || CELL_CONFIG[cell.type]?.isClassifier) && onStartPatrol && (
                         <button
                           onClick={e => { e.stopPropagation(); onStartPatrol(cell.id, e.shiftKey); }}
                           className="shrink-0 text-gray-700 hover:text-amber-300 transition-colors text-sm leading-none px-0.5"

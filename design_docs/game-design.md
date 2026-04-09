@@ -33,17 +33,29 @@ Perpetual pressure — The game continuously introduces or escalates problems, p
 
 ---
 
+
 ## The Cellular Cast
 
 ### Dendritic Cell
-Slow, expensive, high-value. Travels to a specific node, dwells for 2 turns sampling it, returns with definitive intelligence — a single high-accuracy detection roll that upgrades the entity to **classified** (full type identification). Does not fight. Scouts provide en-route visibility at intermediate nodes on the way to their destination.
+Scout cell that can detect and classify pathogens but can't fight. Auto-returns once the node is fully classified (no unresolved pathogens). Can be set to patrol instead.
 
 ### Macrophage
-Cheap recon cell that can either patrol or move around. While staying still it grows in strength each turn and provides adjascent node visibility. When patroling can detect potential pathogens.
+Recon cell that can detect (but not classify). Does not auto-return — holds position indefinitely. Can be set to patrol. While stationary it grows in strength each turn.
 
+### Neutrophil 
+Attack cell with limited lifetime (will die after a number of turns) and focus on extracellular threats. High inflammation generation.
 
-### Neutrophil / Killer T / B-Cell / NK Cell / Eosinophil
-Attack cells. Follow the path system to their destination but only fight at the final node — en-route they contribute no combat. Killer T and B-Cells benefit from prior scout confirmation. NK Cells and Neutrophil operate without prior intelligence but do more collatoral damage.
+### NK Cell
+Attack cell which doesn't need classification. Targets intracellular threat. High inflammation generation and collatoral.
+
+### Killer T
+Attack cell which locks in its specialisation (for all cells of this type) to the first pathogen it attacks. Targets intracellular threats. Requires classification. Lower inflammation and collatoral.
+
+### B-Cell
+Attack cell which gets stronger against a certain pathogen the more it attacks (and weaker against other pathogens). Targets wide range of threats. Lower inflammation and collatoral.
+
+### Eosinophil
+Attack cell which targets parasites.
 
 ---
 
@@ -60,20 +72,19 @@ CHEST  LIVER  MUSCLE
 THROAT  GUT  PERIPHERY
 ```
 
-Blood is the immune headquarters — cells are built and deployed from here (thematically: bone marrow produces cells, spleen releases them into circulation). The Deploy section represents the spleen's role as the launch point.
+Blood is the immune headquarters — cells are built and deployed from here (thematically: bone marrow produces cells, spleen releases them into circulation). 
 
 ---
 
 ## Turn Structure
 
-1. **Player phase** — review perceived state, deploy/recall cells, toggle fever
-2. **End turn** — player clicks End Turn; the following sequence runs automatically:
-   - Cells advance along paths; recon cells passing through nodes fire en-route detection rolls
-   - Scout cells (dendritic) arrivals fire a definitive detection roll against current ground truth
+1. **Player phase** — choose any scars or upgrades, train and deploy cells, toggle fever
+2. **End turn** — player clicks End Turn; the following events run:
+   - Cells advance along paths
    - Pathogens spawn (probabilistic)
+   - Detection and classification rolls 
    - Ground truth advances: pathogen growth/clearance, inflammation, tissue integrity
    - Cleared-node attack cells begin returning
-   - Arrived patrol/macrophage cells fire detection rolls; outcomes update perceived state directly
    - Systemic stress and integrity update
    - Loss check
 
@@ -85,9 +96,9 @@ Each node tracks these values independently:
 
 | Value | Range | Description |
 |---|---|---|
-| **Inflammation** | 0–100 | Rises from pathogen presence and immune activity |
-| **Tissue Integrity** | 0–100 | Structural health. Damaged by pathogens and cell response. Recovers slowly when clear and calm. |
-| **Tissue Integrity Ceiling** | 0–100 | Permanent cap. new ceiling = lowestPoint + 25. |
+| **Inflammation** | 0–100 | Rises from immune activity |
+| **Tissue Integrity** | 0–100 | Structural health. Damaged by pathogens and cell response. Can recover |
+| **Tissue Integrity Ceiling** | 0–100 | Permanent cap. new ceiling = lowestPoint + X. |
 | **Pathogens** | dict | One entry per active pathogen type |
 | **isWalledOff** | bool | Fungi granuloma: infection contained but blocked; normal clearance fails |
 | **immuneSuppressed** | bool | Parasite effect: all clearance at this node halved |
@@ -113,7 +124,6 @@ Moderate growth. **Immune suppression** above burden 50 (halves clearance at thi
 
 ### Toxin Producer
 Slow growth. Minimal local symptoms. Each turn, toxin output contributes **directly to systemic stress**, bypassing local inflammation. The site may look healthy while systemic stress climbs.
-
 
 ### Cancer
 Slow exponential. Mimics self-signals (low detection quality).
@@ -157,20 +167,23 @@ Binary player-controlled toggle.
 
 ---
 
-## Surveillance and Visibility
+## Detection and Surveillance
 
-The player never sees ground truth directly. Visibility at a node is determined by surveillance:
+All nodes are always fully visible — there is no fog of war. However, pathogens have a `detected_level` that determines how much the player knows about them:
 
-| Level | Condition | Display |
+| Level | Meaning | Display |
 |---|---|---|
-| **A — No data** | No cell has ever visited | "No surveillance data" |
-| **B — Possible threat** | Detection outcome: ANOMALY or FALSE_ALARM | Ghost bar + turns-at-level counter |
-| **C — Confirmed threat** | Detection outcome: THREAT_UNCLASSIFIED | Ghost bar + turns-at-level counter |
-| **D — Identified** | Scout returned (CORRECT_ID/WRONG_ID) | Type name + actual GT load bar |
+| **none** | Not yet detected | Hidden (no ring) |
+| **unknown** | Presence detected, type unknown | Dashed grey ring; badge count |
+| **classified** | Fully identified | Solid type-colour ring, load bar |
 
-Entity classes upgrade — UNKNOWN → PATHOGEN → CLASSIFIED — and never downgrade. A scout returning CLEAR resolves existing entities to BENIGN.
+Detection is **deterministic** — no probability rolls:
+- `isDetector` cells (Macrophage, Dendritic): upgrade `none` → `unknown` at nodes they visit
+- `isClassifier` cells (Dendritic only): upgrade `unknown` → `classified` at nodes they visit
 
-**En-route detection:** Recon cells (patrol, macrophage, scout) make detection rolls at every intermediate node they pass through in transit, not just at their final destination. Outcomes update perceived state directly. This creates genuine strategic value in routing cells through high-risk areas.
+**En-route detection:** Recon cells make detection rolls at every intermediate node they pass through in transit, not just at their final destination.
+
+**Clear detection roll:** When a detector visits a node and finds no `none`-level pathogens (node is already known or empty), this counts as a "clear" roll. Each node tracks `turnsSinceLastClear` — shown as white pips inside the node circle on the map (1 pip per turn, max 8). Patrol cells target the node with the highest `turnsSinceLastClear` and wait at each node until it clears before pressing on.
 
 ---
 
