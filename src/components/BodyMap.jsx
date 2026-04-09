@@ -6,7 +6,7 @@
 //   Arc rings    = detected pathogens (style reflects detected_level; arc = load %)
 //     unknown    → thin dashed grey ring, fixed arc
 //     classified → solid type-colour ring, arc = load %
-//   Inner pips   = white dots around inside of node, 1 per turnsSinceLastClear (max 8)
+//   Inner pips   = white dots around inside of node, 1 per turnsSinceLastClear (max 36)
 //   Inner dots   = friendly cells present (colour = cell type, sorted)
 
 import { useState } from 'react';
@@ -18,7 +18,7 @@ const SVG_W = 420;
 const SVG_H = 420;
 const NODE_R = 25;  // slightly larger nodes for readability
 
-const MAX_PIPS = 8;  // max surveillance-staleness pips to show
+const MAX_PIPS = 24;  // max surveillance-staleness pips to show
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -403,9 +403,9 @@ export default function BodyMap({
                     key={`pip-${i}`}
                     cx={(cx + pr * Math.cos(angle)).toFixed(2)}
                     cy={(cy + pr * Math.sin(angle)).toFixed(2)}
-                    r="1.5"
+                    r="0.7"
                     fill="white"
-                    opacity={0.3 + 0.07 * i}
+                    opacity={0.25 + 0.85 * (i / (MAX_PIPS - 1))}
                     className="pointer-events-none"
                   />
                 );

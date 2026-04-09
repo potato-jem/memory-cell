@@ -3,8 +3,7 @@
 export const TICKS_PER_TURN = 5;             // ticks per simulation turn
 
 // Cell timing (in ticks)
-export const PATROL_DWELL_TICKS = 10;       // how long a patrol cell stays at a node before moving to an adjacent one
-export const SCOUT_DWELL_TICKS = 10;        // how long a scout dwells at destination before auto-returning (2 turns)
+export const PATROL_DWELL_TICKS = 5;       // how long a patrol cell stays at a node before moving to an adjacent one
 
 // ── Cell manufacturing ────────────────────────────────────────────────────────
 // tokenCapacity starts at INITIAL_TOKEN_CAPACITY and grows by 1 every

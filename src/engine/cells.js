@@ -315,8 +315,19 @@ export function advanceCells(deployedCells, tick, modifiers = null, nodeStates =
         if (currentNodeClear) {
           c.patrolDestNodeId = null;
         }
+      } else if (!c.patrolDestNodeId && c.nodeId !== HQ_NODE_ID) {
+        // No destination assigned and not at HQ — drift one hop toward HQ.
+        // patrolDestNodeId stays null so assignPatrolDestinations can reassign any turn.
+        if (currentNodeClear && c.patrolNextMoveTick != null && tick >= c.patrolNextMoveTick) {
+          const pathToHQ = computePathWithModifiers(c.nodeId, HQ_NODE_ID, modifiers);
+          if (pathToHQ.length > 1) {
+            c.nodeId = pathToHQ[1];
+            c.patrolNextMoveTick = tick + PATROL_DWELL_TICKS;
+            nodesVisited.push({ cellId, cellType: c.type, nodeId: c.nodeId });
+          }
+        }
       }
-      // patrolDestNodeId === null: waiting for assignPatrolDestinations
+      // no destination + at HQ: sit and wait for assignPatrolDestinations
     }
 
     // ── Returning movement (path-based) ───────────────────────────────────────
@@ -450,12 +461,14 @@ export function nodeHasClassifiedPathogen(nodeId, nodeStates) {
 /**
  * Assign patrol destinations after each turn.
  *
- * Targets the node with the highest turnsSinceLastClear (longest since a clear
- * detection roll). Closest available patrol is assigned first.
- * Remaining patrols get a weighted-random node from the unassigned pool.
+ * Algorithm (node-first):
+ * 1. Get the node with the longest time since last clear detection roll.
+ * 2. Find the nearest available patrol.
+ * 3. Assign it; mark every node on the path as covered (they'll be visited en route).
+ * 4. Repeat for the next stalest uncovered node until patrols or nodes are exhausted.
+ * 5. Leftover patrols (nothing left to visit) return to HQ and stop patrolling.
  *
- * Only patrols with phase === 'arrived' and patrolDestNodeId === null are considered.
- * patrolNextMoveTick is set to tick so movement begins on the next turn.
+ * Only patrols with phase === 'arrived' and patrolDestNodeId === null need assignment.
  */
 export function assignPatrolDestinations(deployedCells, nodeStates, tick, modifiers = null) {
   const needsAssignment = Object.values(deployedCells).filter(
@@ -463,58 +476,54 @@ export function assignPatrolDestinations(deployedCells, nodeStates, tick, modifi
   );
   if (needsAssignment.length === 0) return deployedCells;
 
-  // Nodes already targeted by patrols that are en-route (don't double-assign)
-  const alreadyTargeted = new Set(
-    Object.values(deployedCells)
-      .filter(c => c.isPatrolling && c.patrolDestNodeId)
-      .map(c => c.patrolDestNodeId)
-  );
-
-  // Sort all non-targeted nodes by turnsSinceLastClear descending (stale first)
-  const unseen = NODE_IDS
-    .filter(id => !alreadyTargeted.has(id))
-    .sort((a, b) => (nodeStates[b]?.turnsSinceLastClear ?? 0) - (nodeStates[a]?.turnsSinceLastClear ?? 0));
-
-  const updated = { ...deployedCells };
-  const assignedNodes = new Set(alreadyTargeted); // seed with already-targeted nodes
-  let remaining = [...needsAssignment];
-
-  // Phase 1: assign closest patrol to each unseen node in priority order
-  for (const targetId of unseen) {
-    if (remaining.length === 0) break;
-
-    let closestIdx = 0;
-    let closestHops = Infinity;
-    for (let i = 0; i < remaining.length; i++) {
-      const path = computePathWithModifiers(remaining[i].nodeId, targetId, modifiers);
-      if (path.length - 1 < closestHops) {
-        closestHops = path.length - 1;
-        closestIdx = i;
-      }
-    }
-
-    const patrol = remaining[closestIdx];
-    updated[patrol.id] = { ...patrol, patrolDestNodeId: targetId, patrolNextMoveTick: tick };
-    assignedNodes.add(targetId);
-    remaining.splice(closestIdx, 1);
+  // Seed covered set with every node already on an active patrol's path
+  const coveredNodes = new Set();
+  for (const c of Object.values(deployedCells)) {
+    if (!c.isPatrolling || !c.patrolDestNodeId) continue;
+    const path = computePathWithModifiers(c.nodeId ?? HQ_NODE_ID, c.patrolDestNodeId, modifiers);
+    for (const id of path) coveredNodes.add(id);
   }
 
-  // Phase 2: weighted-random destination for any unassigned patrols
-  if (remaining.length > 0) {
-    const eligibleIds = NODE_IDS.filter(id => !assignedNodes.has(id));
-    const weights = eligibleIds.map(id => NODES[id].patrolDestinationWeight ?? 0);
-    const totalWeight = weights.reduce((s, w) => s + w, 0);
+  // Sort uncovered nodes: stalest first; ties broken by patrolDestinationWeight (end-of-line nodes first)
+  const priorityNodes = NODE_IDS
+    .filter(id => !coveredNodes.has(id))
+    .sort((a, b) => {
+      const staleDiff = (nodeStates[b]?.turnsSinceLastClear ?? 0) - (nodeStates[a]?.turnsSinceLastClear ?? 0);
+      if (staleDiff !== 0) return staleDiff;
+      return (NODES[b].patrolDestinationWeight ?? 0) - (NODES[a].patrolDestinationWeight ?? 0);
+    });
 
-    for (const patrol of remaining) {
-      if (totalWeight <= 0) break;
-      let rand = Math.random() * totalWeight;
-      let chosen = eligibleIds[eligibleIds.length - 1];
-      for (let i = 0; i < eligibleIds.length; i++) {
-        rand -= weights[i];
-        if (rand <= 0) { chosen = eligibleIds[i]; break; }
+  const updated = { ...deployedCells };
+  let remaining = [...needsAssignment];
+
+  for (const targetId of priorityNodes) {
+    if (remaining.length === 0) break;
+
+    // Nearest available patrol to this target
+    let nearestIdx = 0;
+    let nearestHops = Infinity;
+    for (let i = 0; i < remaining.length; i++) {
+      const path = computePathWithModifiers(remaining[i].nodeId ?? HQ_NODE_ID, targetId, modifiers);
+      if (path.length - 1 < nearestHops) {
+        nearestHops = path.length - 1;
+        nearestIdx = i;
       }
-      updated[patrol.id] = { ...patrol, patrolDestNodeId: chosen, patrolNextMoveTick: tick };
     }
+
+    const patrol = remaining[nearestIdx];
+    const path = computePathWithModifiers(patrol.nodeId ?? HQ_NODE_ID, targetId, modifiers);
+
+    // Cover all nodes on this path so they aren't double-assigned
+    for (const id of path) coveredNodes.add(id);
+
+    updated[patrol.id] = { ...patrol, patrolDestNodeId: targetId, patrolNextMoveTick: tick };
+    remaining.splice(nearestIdx, 1);
+  }
+
+  // Leftover patrols: no destination committed — drift toward HQ one hop at a time.
+  // patrolDestNodeId stays null so next turn's assignment can claim them for a real target.
+  for (const patrol of remaining) {
+    updated[patrol.id] = { ...patrol, patrolNextMoveTick: tick };
   }
 
   return updated;

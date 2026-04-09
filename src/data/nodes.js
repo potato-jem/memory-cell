@@ -49,7 +49,7 @@ export const NODES = {
     label: 'Blood',
     position: { x: 85, y: 210 },
     connections: ['CHEST', 'LIVER', 'MUSCLE'],
-    signalTravelCost: 0,  // HQ — free to leave
+    signalTravelCost: 1,  
     damageWeight: 2.0,
     patrolDestinationWeight: 0,
     isBottleneck: false,
