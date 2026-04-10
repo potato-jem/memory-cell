@@ -45,13 +45,6 @@ export const CELL_TYPES = {
 let _cellIdCounter = 1;
 function nextCellId() { return `cell_${_cellIdCounter++}`; }
 
-// Returns initial specialization scores for cells that support it, null otherwise.
-function initSpecialization(type) {
-  const cfg = CELL_CONFIG[type];
-  if (!cfg?.specializationSlots) return null;
-  return Object.fromEntries(Object.keys(cfg.clearablePathogens).map(k => [k, 1.0]));
-}
-
 
 // ── Token accounting ──────────────────────────────────────────────────────────
 
@@ -84,7 +77,6 @@ export function makeReadyCell(type) {
     pathIndex: 0,
     destNodeId: null,
     stationaryTurns: 0,
-    specialization: initSpecialization(type),
   };
 }
 
@@ -111,7 +103,6 @@ export function trainCell(type, deployedCells, tokenCapacity, tick, modifiers = 
     pathIndex: 0,
     destNodeId: null,
     stationaryTurns: 0,
-    specialization: initSpecialization(type),
   };
   return { success: true, newDeployedCells: { ...deployedCells, [cell.id]: cell }, cost };
 }
@@ -283,6 +274,7 @@ export function advanceCells(deployedCells, tick, modifiers = null, nodeStates =
       // also transition to 'arrived' immediately on the same tick.
       if (c.pathIndex >= c.path.length - 1) {
         c.phase = 'arrived';
+        c.stationaryTurns = 0;  // always reset on arrival — stationary bonus counts from this node
         if (c.isPatrolling) {
           c.patrolNextMoveTick = tick + PATROL_DWELL_TICKS;
         }
@@ -375,19 +367,25 @@ export function advanceCells(deployedCells, tick, modifiers = null, nodeStates =
       c.stationaryTurns = 0;
     }
 
-    // Stationary bonus tracker: increment while stationed, reset when moving.
-    if (CELL_CONFIG[c.type]?.stationaryBonus) {
-      if (c.phase === 'arrived') {
-        c.stationaryTurns = (c.stationaryTurns ?? 0) + 1;
-      } else {
-        c.stationaryTurns = 0;
-      }
-    }
-
     updated[cellId] = c;
   }
 
   return { updatedCells: updated, events, nodesVisited };
+}
+
+// Increment stationaryTurns AFTER clearance so the bonus applies starting the NEXT turn.
+// Resets to 0 when not arrived (in transit, returning, etc.).
+export function incrementStationaryTurns(deployedCells) {
+  const updated = {};
+  for (const [id, cell] of Object.entries(deployedCells)) {
+    if (!CELL_CONFIG[cell.type]?.stationaryBonus) { updated[id] = cell; continue; }
+    if (cell.phase === 'arrived') {
+      updated[id] = { ...cell, stationaryTurns: (cell.stationaryTurns ?? 0) + 1 };
+    } else {
+      updated[id] = cell.stationaryTurns !== 0 ? { ...cell, stationaryTurns: 0 } : cell;
+    }
+  }
+  return updated;
 }
 
 // Remove cells whose lifetime has expired. Called AFTER advanceGroundTruth so cells
@@ -600,50 +598,70 @@ export function startPatrol(cellId, deployedCells, nodeStates, tick, modifiers =
 }
 
 /**
- * Update per-cell specialization scores based on what pathogens were present after this turn's clearance.
+ * Update global per-type specialization scores based on what pathogens were present after clearance.
  * Called after advanceGroundTruth so the bonus takes effect on subsequent turns.
  * Config-driven: any cell type with `specializationSlots` in CELL_CONFIG participates.
+ *
+ * Specialization is now global per cell type (stored in cellTypeState), not per individual cell.
+ * All cells of a given type share the same specialization scores — they develop memory together.
+ *
+ * @param {Object} cells        — deployed cells (used to find which nodes each type is stationed at)
+ * @param {Object} nodeStates   — ground truth node states after clearance
+ * @param {Object} cellTypeState — current cellTypeState (from game state)
+ * @returns {Object} updated cellTypeState
  */
-export function updateCellSpecializations(cells, nodeStates) {
-  let changed = false;
-  const updated = {};
-  for (const [id, cell] of Object.entries(cells)) {
-    const cfg = CELL_CONFIG[cell.type];
-    if (!cfg?.specializationSlots || !cell.specialization || cell.phase !== 'arrived' || !cell.nodeId) {
-      updated[id] = cell;
-      continue;
+export function updateCellSpecializations(cells, nodeStates, cellTypeState) {
+  let newCellTypeState = cellTypeState;
+
+  for (const [cellType, cfg] of Object.entries(CELL_CONFIG)) {
+    if (!cfg.specializationSlots) continue;
+    const typeState = cellTypeState?.[cellType];
+    if (!typeState?.specialization) continue;
+
+    // Collect all pathogen types present at nodes where this cell type is stationed
+    const presentTypes = new Set();
+    for (const cell of Object.values(cells)) {
+      if (cell.type !== cellType || cell.phase !== 'arrived' || !cell.nodeId) continue;
+      for (const p of (nodeStates[cell.nodeId]?.pathogens ?? [])) {
+        if (p.actualLoad > 0) presentTypes.add(p.type);
+      }
     }
 
-    const presentTypes = new Set(
-      (nodeStates[cell.nodeId]?.pathogens ?? [])
-        .filter(p => p.actualLoad > 0)
-        .map(p => p.type)
+    // No stationed cells of this type — nothing to update
+    const hasStationedCells = Object.values(cells).some(
+      c => c.type === cellType && c.phase === 'arrived' && c.nodeId
     );
+    if (!hasStationedCells) continue;
 
     const { specializationSlots, specializationGainPerTurn, specializationDecayPerTurn,
             specializationMax, specializationMin } = cfg;
 
-    const spec = { ...cell.specialization };
+    const spec = { ...typeState.specialization };
 
     // Top-N types by current score (before this turn's update, for stability)
     const sorted = Object.entries(spec).sort(([, a], [, b]) => b - a);
     const topTypes = new Set(sorted.slice(0, specializationSlots).map(([t]) => t));
 
+    let changed = false;
     for (const pathogenType of Object.keys(spec)) {
+      const prev = spec[pathogenType];
       if (presentTypes.has(pathogenType) && topTypes.has(pathogenType)) {
-        // Actively fighting a top-slot type — gain specialization
-        spec[pathogenType] = Math.min(specializationMax, spec[pathogenType] + specializationGainPerTurn);
+        spec[pathogenType] = Math.min(specializationMax, prev + specializationGainPerTurn);
       } else if (!topTypes.has(pathogenType)) {
-        // Not a top-slot type — decay (whether present or absent)
-        spec[pathogenType] = Math.max(specializationMin, spec[pathogenType] - specializationDecayPerTurn);
+        spec[pathogenType] = Math.max(specializationMin, prev - specializationDecayPerTurn);
       }
-      // Present but not in top slots: no change (avoids penalising multi-infection encounters)
+      if (spec[pathogenType] !== prev) changed = true;
     }
 
-    updated[id] = { ...cell, specialization: spec };
-    changed = true;
+    if (changed) {
+      newCellTypeState = {
+        ...newCellTypeState,
+        [cellType]: { ...typeState, specialization: spec },
+      };
+    }
   }
-  return changed ? updated : cells;
+
+  return newCellTypeState;
 }
 
 /**

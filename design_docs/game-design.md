@@ -6,6 +6,8 @@
 
 You play as a human progressing through various lifestages. The primary game loop involves coordinating the immune system response to pathogens. The meta game loop progresses through life-stages (through narrative flavour and key choices) which influence the primary loop, and vice versa.
 
+For the full metagame design (meta-run structure, life events, bonus objectives, new files), see `design_docs/metagame.md`.
+
 ---
 
 ## Design Pillars
@@ -40,7 +42,7 @@ Perpetual pressure — The game continuously introduces or escalates problems, p
 Scout cell that can detect and classify pathogens but can't fight. Auto-returns once the node is fully classified (no unresolved pathogens). Can be set to patrol instead.
 
 ### Macrophage
-Recon cell that can detect (but not classify). Does not auto-return — holds position indefinitely. Can be set to patrol. While stationary it grows in strength each turn.
+Recon cell that can detect (but not classify). Does not auto-return — holds position indefinitely. Can be set to patrol. Clearance starts at base on arrival; stationary bonus begins accruing from the second turn and ramps up to the max shown in the tooltip.
 
 ### Neutrophil 
 Attack cell with limited lifetime (will die after a number of turns) and focus on extracellular threats. High inflammation generation.
@@ -201,7 +203,6 @@ Each cell holds tokens for its lifetime; tokens are freed only on decommission.
 | NK Cell | 3 | 4T |
 | Killer T | 4 | 5T |
 
-Token capacity starts at 12, grows +1 every 60 ticks (capped at 20). Starting roster (configurable): 2 patrols + 1 macrophage.
 
 ---
 
@@ -211,5 +212,5 @@ Pathogens spawn probabilistically each turn via a two-layer system:
 
 **Layer A:** Global spawn chance starts at ~55% and decays each turn. Boosted if no active infections (+35%), reduced if 3+ active infections (–30%). A minimum floor of 15% is always maintained.
 
-**Layer B:** Given a spawn, weighted selection of (pathogen type × node). Weights reflect biological plausibility — bacteria favour gut/liver, viruses favour throat/chest, parasites favour blood/gut. Conditional modifiers: no double-spawning the same node, fungi double-weight when stress > 70, hard threats (prion, cancer) locked until mid-game.
+**Layer B:** Given a spawn, weighted selection of (pathogen type × node). Weights reflect biological plausibility — bacteria favour gut/liver, viruses favour throat/chest, parasites favour blood/gut. Conditional modifiers: no double-spawning the same node, fungi double-weight when stress > 70, hard threats (prion, cancer) locked until mid-game. Types with no eligible spawn nodes (e.g. virus when all its nodes are already infected) are excluded from type selection, so spawn slots are never wasted.
 

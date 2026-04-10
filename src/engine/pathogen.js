@@ -66,7 +66,7 @@ function getInflammationScalingMultiplier(cfg, inflammation) {
  * @param {Object} nodeState
  * @param {Object} modifiers
  */
-export function getClearancePower(instance, nodeId, deployedCells, nodeState, modifiers = null) {
+export function getClearancePower(instance, nodeId, deployedCells, nodeState, modifiers = null, cellTypeState = null) {
   const pathogenType = instance.type;
   const detectedLevel = instance.detected_level ?? 'none';
 
@@ -74,23 +74,19 @@ export function getClearancePower(instance, nodeId, deployedCells, nodeState, mo
   for (const cell of Object.values(deployedCells)) {
     if (cell.nodeId !== nodeId || cell.phase !== 'arrived') continue;
     const cellCfg = CELL_CONFIG[cell.type];
-    const clearMod = getCellClearablePathogens(cell.type, modifiers)[pathogenType] ?? 0;
+    const clearMod = getCellClearablePathogens(cell.type, modifiers, cellTypeState)[pathogenType] ?? 0;
     if (clearMod === 0) continue;
     const effectiveRate = getEffectiveClearanceRate(cell.type, modifiers);
     const levelEffectiveness = getEffectiveEffectiveness(cell.type, detectedLevel, modifiers);
 
     // Stationary bonus (e.g. macrophage grows stronger the longer it holds a position)
-    let stationaryMult = 1.0;
     const stationaryBonusCfg = cellCfg?.stationaryBonus;
-    if (stationaryBonusCfg && cell.stationaryTurns > 0) {
-      stationaryMult = Math.min(
-        stationaryBonusCfg.maxMultiplier,
-        1.0 + stationaryBonusCfg.gainPerTurn * cell.stationaryTurns
-      );
-    }
+    const actualRate = stationaryBonusCfg
+      ? Math.min(stationaryBonusCfg.maxClearanceRate, effectiveRate + stationaryBonusCfg.gainPerTurn * (cell.stationaryTurns ?? 0))
+      : effectiveRate;
 
-    // Specialization multiplier (e.g. b-cell tuned to a specific pathogen type)
-    const specializationMult = cell.specialization?.[pathogenType] ?? 1.0;
+    // Specialization multiplier — read from global cellTypeState (per type, not per cell)
+    const specializationMult = cellTypeState?.[cell.type]?.specialization?.[pathogenType] ?? 1.0;
 
     // Inflammation scaling: innate cells bonus in inflamed tissue; adaptive cells penalized
     const inflammationMult = getInflammationScalingMultiplier(
@@ -98,7 +94,7 @@ export function getClearancePower(instance, nodeId, deployedCells, nodeState, mo
       nodeState?.inflammation ?? 0
     );
 
-    total += effectiveRate * clearMod * levelEffectiveness * stationaryMult * specializationMult * inflammationMult;
+    total += actualRate * clearMod * levelEffectiveness * specializationMult * inflammationMult;
   }
 
   // Pathogen-specific clearance multiplier (e.g. upgrade makes a type easier to clear)
@@ -121,7 +117,7 @@ export function getClearancePower(instance, nodeId, deployedCells, nodeState, mo
  * harmful first). This order ensures that when a pathogen has little load left,
  * gentler cells consume it first — minimising wasteful side effects.
  */
-function computeSortedClearanceContributions(instance, nodeId, deployedCells, nodeState, modifiers, def) {
+function computeSortedClearanceContributions(instance, nodeId, deployedCells, nodeState, modifiers, def, cellTypeState) {
   const pathogenType = instance.type;
   const detectedLevel = instance.detected_level ?? 'none';
   const collateralModifier = def.collateralModifier ?? 1.0;
@@ -138,25 +134,21 @@ function computeSortedClearanceContributions(instance, nodeId, deployedCells, no
   for (const cell of Object.values(deployedCells)) {
     if (cell.nodeId !== nodeId || cell.phase !== 'arrived') continue;
     const cellCfg = CELL_CONFIG[cell.type];
-    const clearMod = getCellClearablePathogens(cell.type, modifiers)[pathogenType] ?? 0;
+    const clearMod = getCellClearablePathogens(cell.type, modifiers, cellTypeState)[pathogenType] ?? 0;
     if (clearMod === 0) continue;
 
     const effectiveRate = getEffectiveClearanceRate(cell.type, modifiers);
     const levelEffectiveness = getEffectiveEffectiveness(cell.type, detectedLevel, modifiers);
 
-    let stationaryMult = 1.0;
     const stationaryBonusCfg = cellCfg?.stationaryBonus;
-    if (stationaryBonusCfg && cell.stationaryTurns > 0) {
-      stationaryMult = Math.min(
-        stationaryBonusCfg.maxMultiplier,
-        1.0 + stationaryBonusCfg.gainPerTurn * cell.stationaryTurns
-      );
-    }
+    const actualRate = stationaryBonusCfg
+      ? Math.min(stationaryBonusCfg.maxClearanceRate, effectiveRate + stationaryBonusCfg.gainPerTurn * (cell.stationaryTurns ?? 0))
+      : effectiveRate;
 
-    const specializationMult = cell.specialization?.[pathogenType] ?? 1.0;
+    const specializationMult = cellTypeState?.[cell.type]?.specialization?.[pathogenType] ?? 1.0;
     const inflammationMult = getInflammationScalingMultiplier(cellCfg?.inflammationScaling, inflammation);
 
-    let potential = effectiveRate * clearMod * levelEffectiveness * stationaryMult * specializationMult * inflammationMult * globalMult;
+    let potential = actualRate * clearMod * levelEffectiveness * specializationMult * inflammationMult * globalMult;
     if (potential <= 0) continue;
 
     const cellCollateralRate = (cellCfg.collateralRate ?? 0) * collateralModifier;
@@ -260,7 +252,7 @@ function equalizeDistribution(items, C) {
  *
  * @returns {Object} {[pathogenUid]: totalClearance}
  */
-export function computeNodeClearanceAllocations(pathogens, nodeId, deployedCells, nodeState, modifiers) {
+export function computeNodeClearanceAllocations(pathogens, nodeId, deployedCells, nodeState, modifiers, cellTypeState) {
   const allocations = {};
   for (const p of pathogens) allocations[p.uid] = 0;
 
@@ -272,27 +264,24 @@ export function computeNodeClearanceAllocations(pathogens, nodeId, deployedCells
     const cellCfg = CELL_CONFIG[cell.type];
     const effectiveRate = getEffectiveClearanceRate(cell.type, modifiers);
 
-    let stationaryMult = 1.0;
-    if (cellCfg?.stationaryBonus && cell.stationaryTurns > 0) {
-      stationaryMult = Math.min(
-        cellCfg.stationaryBonus.maxMultiplier,
-        1.0 + cellCfg.stationaryBonus.gainPerTurn * cell.stationaryTurns
-      );
-    }
+    const stationaryBonus = cellCfg?.stationaryBonus;
+    const actualRate = stationaryBonus
+      ? Math.min(stationaryBonus.maxClearanceRate, effectiveRate + stationaryBonus.gainPerTurn * (cell.stationaryTurns ?? 0))
+      : effectiveRate;
     const inflammationMult = getInflammationScalingMultiplier(
       cellCfg?.inflammationScaling, nodeState?.inflammation ?? 0
     );
 
-    const C = effectiveRate * stationaryMult * inflammationMult * suppressionMult * nodeClearanceMult;
+    const C = actualRate * inflammationMult * suppressionMult * nodeClearanceMult;
     if (C <= 0) continue;
 
-    const clearableMap = getCellClearablePathogens(cell.type, modifiers);
+    const clearableMap = getCellClearablePathogens(cell.type, modifiers, cellTypeState);
 
     const eligible = pathogens
       .map(p => {
         const clearMod = clearableMap[p.type] ?? 0;
         const levelEff = getEffectiveEffectiveness(cell.type, p.detected_level ?? 'none', modifiers);
-        const specMult = cell.specialization?.[p.type] ?? 1.0;
+        const specMult = cellTypeState?.[cell.type]?.specialization?.[p.type] ?? 1.0;
         const pathogenMult = getEffectivePathogenClearanceMultiplier(p.type, modifiers);
         return { uid: p.uid, load: p.actualLoad ?? 0, clearMod, levelEff, specMult, pathogenMult };
       })
@@ -334,7 +323,7 @@ export function computeNodeClearanceAllocations(pathogens, nodeId, deployedCells
  * proportional to clearance actually applied (capped by available pathogen load),
  * with gentle cells allocated first to minimise damage on nearly-dead pathogens.
  */
-export function advanceInstance(instance, nodeId, deployedCells, nodeState, systemicStress, modifiers = null, clearanceOverride = null) {
+export function advanceInstance(instance, nodeId, deployedCells, nodeState, systemicStress, modifiers = null, clearanceOverride = null, cellTypeState = null) {
   const def = PATHOGEN_REGISTRY[instance.type];
   if (!def) return { newInstance: null, tissueIntegrityDelta: 0, inflammationDelta: 0, toxinOutput: 0 };
 
@@ -360,7 +349,7 @@ export function advanceInstance(instance, nodeId, deployedCells, nodeState, syst
   // attackableLoad: max clearance that can connect this turn
   const attackableLoad = Math.max(0, currentLoad + growth);
 
-  const contributions = computeSortedClearanceContributions(instance, nodeId, deployedCells, nodeState, modifiers, def);
+  const contributions = computeSortedClearanceContributions(instance, nodeId, deployedCells, nodeState, modifiers, def, cellTypeState);
 
   let totalClearance = 0;
   let cellInflammation = 0;
@@ -471,7 +460,7 @@ export function computeGrowth(def, currentLoad, systemicStress, pathogenType, mo
  * Returns: BreakdownItem[] — { label: string, amount: number }
  *   Positive amount = adds to load (bad), negative = removes load (good).
  */
-export function computePathogenBreakdown(instance, nodeId, deployedCells, nodeState, systemicStress, modifiers, clearanceOverride) {
+export function computePathogenBreakdown(instance, nodeId, deployedCells, nodeState, systemicStress, modifiers, clearanceOverride, cellTypeState) {
   const def = PATHOGEN_REGISTRY[instance.type];
   if (!def) return [];
 
@@ -503,34 +492,32 @@ export function computePathogenBreakdown(instance, nodeId, deployedCells, nodeSt
   for (const cell of Object.values(deployedCells)) {
     if (cell.nodeId !== nodeId || cell.phase !== 'arrived') continue;
     const cellCfg = CELL_CONFIG[cell.type];
-    const clearMod = getCellClearablePathogens(cell.type, modifiers)[pathogenType] ?? 0;
+    const clearMod = getCellClearablePathogens(cell.type, modifiers, cellTypeState)[pathogenType] ?? 0;
     if (clearMod === 0) continue;
 
     const effectiveRate = getEffectiveClearanceRate(cell.type, modifiers);
     const levelEffectiveness = getEffectiveEffectiveness(cell.type, detectedLevel, modifiers);
-    const baseRaw = effectiveRate * clearMod * levelEffectiveness;
-    if (baseRaw <= 0) continue;
 
-    let stationaryMult = 1.0;
     const stationaryBonusCfg = cellCfg?.stationaryBonus;
-    if (stationaryBonusCfg && cell.stationaryTurns > 0) {
-      stationaryMult = Math.min(
-        stationaryBonusCfg.maxMultiplier,
-        1.0 + stationaryBonusCfg.gainPerTurn * cell.stationaryTurns
-      );
-    }
+    const actualRate = stationaryBonusCfg
+      ? Math.min(stationaryBonusCfg.maxClearanceRate, effectiveRate + stationaryBonusCfg.gainPerTurn * (cell.stationaryTurns ?? 0))
+      : effectiveRate;
 
-    const specializationMult = cell.specialization?.[pathogenType] ?? 1.0;
+    const actualRaw = actualRate * clearMod * levelEffectiveness;
+    if (actualRaw <= 0) continue;
+
+    const baseRaw = effectiveRate * clearMod * levelEffectiveness;
+    const specializationMult = cellTypeState?.[cell.type]?.specialization?.[pathogenType] ?? 1.0;
     const inflammationMult = getInflammationScalingMultiplier(
       cellCfg?.inflammationScaling,
       nodeState?.inflammation ?? 0
     );
 
-    // Multiplicative decomposition: base + deltas per modifier (sum = full raw)
+    // Additive decomposition: base + per-modifier deltas (sum = full raw)
     baseByType[cell.type] = (baseByType[cell.type] ?? 0) + baseRaw;
     inflammByType[cell.type] = (inflammByType[cell.type] ?? 0) + baseRaw * (inflammationMult - 1);
-    stationaryByType[cell.type] = (stationaryByType[cell.type] ?? 0) + baseRaw * inflammationMult * (stationaryMult - 1);
-    specByType[cell.type] = (specByType[cell.type] ?? 0) + baseRaw * inflammationMult * stationaryMult * (specializationMult - 1);
+    stationaryByType[cell.type] = (stationaryByType[cell.type] ?? 0) + (actualRate - effectiveRate) * clearMod * levelEffectiveness * inflammationMult;
+    specByType[cell.type] = (specByType[cell.type] ?? 0) + actualRate * clearMod * levelEffectiveness * inflammationMult * (specializationMult - 1);
     countByCellType[cell.type] = (countByCellType[cell.type] ?? 0) + 1;
   }
 

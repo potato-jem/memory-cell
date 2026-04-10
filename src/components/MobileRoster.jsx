@@ -4,7 +4,7 @@
 // Deploy button: tap = deploy to selected node (if any), long-press = choose node.
 
 import { useRef } from 'react';
-import { CELL_CONFIG, ALL_CELL_TYPES } from '../data/cellConfig.js';
+import { CELL_CONFIG, ALL_CELL_TYPES, getCellClearablePathogens } from '../data/cellConfig.js';
 import { DEPLOY_COSTS, CELL_DISPLAY_NAMES } from '../engine/cells.js';
 import { PATHOGEN_DISPLAY_NAMES, PATHOGEN_RING_COLORS } from '../data/pathogens.js';
 import { TICKS_PER_TURN } from '../data/gameConfig.js';
@@ -46,17 +46,33 @@ function DeployBtn({ onTap, onLongPress, disabled, className, children }) {
   );
 }
 
-function getClearanceEntries(cellType) {
+function getClearanceEntries(cellType, modifiers, cellTypeState) {
   const cfg = CELL_CONFIG[cellType];
-  if (!cfg || cfg.clearanceRate === 0) return [];
+  if (!cfg) return [];
+  if (cfg.clearanceRate === 0 && !cfg.stationaryBonus) return [];
+  const effectiveClearable = getCellClearablePathogens(cellType, modifiers, cellTypeState);
   return Object.entries(cfg.clearablePathogens ?? {})
     .filter(([pathType, mult]) => mult > 0 && PATHOGEN_RING_COLORS[pathType])
-    .map(([pathType, mult]) => ({
-      pathType,
-      strength: Math.round(cfg.clearanceRate * mult),
-      color: PATHOGEN_RING_COLORS[pathType],
-      label: PATHOGEN_DISPLAY_NAMES[pathType] ?? pathType,
-    }));
+    .map(([pathType]) => {
+      const effectiveMult = effectiveClearable[pathType] ?? 0;
+      const strength = cfg.clearanceRate * effectiveMult;
+      let strengthLabel;
+      if (cfg.stationaryBonus && effectiveMult > 0) {
+        const max = +(cfg.stationaryBonus.maxClearanceRate * effectiveMult).toFixed(1);
+        strengthLabel = `↑${max}`;
+      } else {
+        strengthLabel = String(strength % 1 === 0 ? strength : +strength.toFixed(1));
+      }
+      const isActive = effectiveMult > 0 && (cfg.stationaryBonus || strength > 0);
+      return {
+        pathType,
+        strength,
+        strengthLabel,
+        color: PATHOGEN_RING_COLORS[pathType],
+        label: PATHOGEN_DISPLAY_NAMES[pathType] ?? pathType,
+        isActive,
+      };
+    });
 }
 
 export default function MobileRoster({
@@ -64,6 +80,8 @@ export default function MobileRoster({
   tokenCapacity,
   tokensInUse,
   runConfig,
+  runModifiers,
+  cellTypeState,
   isOpen,
   isPlaying,            // whether the game is in playing phase (show end turn button)
   onOpenRoster,         // toggle-open the drawer
@@ -169,7 +187,7 @@ export default function MobileRoster({
                 const trainingTurns = Math.ceil((cfg?.trainingTicks ?? 15) / TICKS_PER_TURN);
                 const canAfford = tokensAvailable >= cost;
                 const { ready, training, out } = getTypeSummary(type);
-                const clearanceEntries = getClearanceEntries(type);
+                const clearanceEntries = getClearanceEntries(type, runModifiers, cellTypeState);
 
                 return (
                   <div key={type} className="border-b border-gray-700 px-4 py-3.5">
@@ -208,10 +226,10 @@ export default function MobileRoster({
                     {/* Abilities */}
                     {clearanceEntries.length > 0 ? (
                       <div className="flex flex-wrap gap-x-3 gap-y-0.5 mb-2.5">
-                        {clearanceEntries.map(({ pathType, strength, color, label }) => (
-                          <span key={pathType} className="text-xs font-mono flex items-center gap-1" style={{ color }}>
+                        {clearanceEntries.map(({ pathType, strengthLabel, color, label, isActive }) => (
+                          <span key={pathType} className={`text-xs font-mono flex items-center gap-1 ${!isActive ? 'opacity-30' : ''}`} style={{ color }}>
                             <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: color }} />
-                            {label} ×{strength}
+                            {label} ×{strengthLabel}
                           </span>
                         ))}
                       </div>

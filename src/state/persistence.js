@@ -1,4 +1,4 @@
-const SAVE_KEY = 'memorycell_run_v1';
+const SAVE_KEY = 'memorycell_run_v2';
 
 export function saveRun(state) {
   try {

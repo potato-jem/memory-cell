@@ -52,7 +52,7 @@ function DeltaBadge({ delta, invert = false }) {
 /**
  * Wraps one pathogen row; hovering anywhere on the row shows the breakdown tooltip.
  */
-function PathogenRow({ inst, projEntry, label, barColor, labelColor, ringColor }) {
+function PathogenRow({ inst, projEntry, label, labelColor, ringColor }) {
   const [hovered, setHovered] = useState(false);
   const [pos, setPos] = useState({ x: 0, y: 0 });
   const isKnown = inst.detected_level === 'classified';
@@ -82,10 +82,10 @@ function PathogenRow({ inst, projEntry, label, barColor, labelColor, ringColor }
         )}
       </div>
       {isKnown ? (
-        <BarFill value={load} color={barColor} />
+        <BarFill value={load} hexColor={ringColor} />
       ) : (
         <div className="h-2 w-full rounded-full bg-gray-800 overflow-hidden">
-          <div className={`h-full w-1/4 rounded-full ${barColor} opacity-25`} />
+          <div className="h-full w-1/4 rounded-full opacity-25" style={{ background: ringColor }} />
         </div>
       )}
       {hovered && hasBreakdown && (
@@ -95,7 +95,7 @@ function PathogenRow({ inst, projEntry, label, barColor, labelColor, ringColor }
   );
 }
 
-function BarFill({ value, max = 100, color, bg = 'bg-gray-800', ceiling = null }) {
+function BarFill({ value, max = 100, color, hexColor, bg = 'bg-gray-800', ceiling = null }) {
   const pct = Math.max(0, Math.min(100, (value / max) * 100));
   return (
     <div className={`relative h-2 w-full rounded-full ${bg} overflow-hidden`}>
@@ -105,7 +105,10 @@ function BarFill({ value, max = 100, color, bg = 'bg-gray-800', ceiling = null }
           style={{ left: `${ceiling}%`, right: 0 }}
         />
       )}
-      <div className={`h-full rounded-full transition-all ${color}`} style={{ width: `${pct}%` }} />
+      <div
+        className={`h-full rounded-full transition-all ${hexColor ? '' : color}`}
+        style={{ width: `${pct}%`, ...(hexColor ? { background: hexColor } : {}) }}
+      />
     </div>
   );
 }
@@ -199,18 +202,16 @@ function PathogenPanel({ groundTruthNodeState, nodeProjection = null }) {
 
       {pathogens.map(inst => {
         const level = inst.detected_level;
-        let label, barColor, labelColor, ringColor;
+        let label, labelColor, ringColor;
 
         if (level === 'unknown') {
           label      = 'Unknown presence';
-          barColor   = 'bg-gray-600';
           labelColor = 'text-gray-500';
           ringColor  = '#6b7280';
         } else {
           // classified
           const displayType = inst.perceived_type ?? inst.type;
           label      = PATHOGEN_DISPLAY_NAMES[displayType] ?? displayType;
-          barColor   = displayType === 'benign' ? 'bg-gray-500' : 'bg-red-600';
           labelColor = displayType === 'benign' ? 'text-gray-400' : 'text-red-400';
           ringColor  = PATHOGEN_REGISTRY[displayType]?.ringColor ?? '#f43f5e';
         }
@@ -221,7 +222,6 @@ function PathogenPanel({ groundTruthNodeState, nodeProjection = null }) {
             inst={inst}
             projEntry={nodeProjection?.pathogenDeltas?.[inst.uid] ?? null}
             label={label}
-            barColor={barColor}
             labelColor={labelColor}
             ringColor={ringColor}
           />

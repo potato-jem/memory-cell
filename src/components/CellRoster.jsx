@@ -5,7 +5,7 @@
 
 import { useState } from 'react';
 import { CELL_DISPLAY_NAMES, DEPLOY_COSTS } from '../engine/cells.js';
-import { CELL_CONFIG, ALL_CELL_TYPES } from '../data/cellConfig.js';
+import { CELL_CONFIG, ALL_CELL_TYPES, getCellClearablePathogens } from '../data/cellConfig.js';
 import { PATHOGEN_RING_COLORS, PATHOGEN_DISPLAY_NAMES } from '../data/pathogens.js';
 import { TOKEN_CAPACITY_MAX, TOKEN_CAPACITY_REGEN_INTERVAL, TICKS_PER_TURN } from '../data/gameConfig.js';
 import { NODES, computePathCost } from '../data/nodes.js';
@@ -34,17 +34,41 @@ function shortName(type) {
   return CELL_DISPLAY_NAMES[type] ?? type;
 }
 
-function getClearanceEntries(cellType) {
+function getClearanceEntries(cellType, modifiers, cellTypeState) {
   const cfg = CELL_CONFIG[cellType];
-  if (!cfg || cfg.clearanceRate === 0) return [];
+  if (!cfg) return [];
+  // Skip cells with no clearance and no stationaryBonus ramp (pure recon)
+  if (cfg.clearanceRate === 0 && !cfg.stationaryBonus) return [];
+  // effectiveClearable respects specialist lock-in — locked types return {lockedType: mult}, others absent
+  const effectiveClearable = getCellClearablePathogens(cellType, modifiers, cellTypeState);
   return Object.entries(cfg.clearablePathogens)
     .filter(([pathType, mult]) => mult > 0 && PATHOGEN_RING_COLORS[pathType])
-    .map(([pathType, mult]) => ({
-      pathType,
-      strength: cfg.clearanceRate * mult,
-      color: PATHOGEN_RING_COLORS[pathType],
-      label: PATHOGEN_DISPLAY_NAMES[pathType] ?? pathType,
-    }));
+    .map(([pathType]) => {
+      const effectiveMult = effectiveClearable[pathType] ?? 0;
+      // For specialization cells, show current actual strength from global cellTypeState
+      const specMult = cfg.specializationSlots
+        ? (cellTypeState?.[cellType]?.specialization?.[pathType] ?? 1.0)
+        : 1.0;
+      const strength = cfg.clearanceRate * effectiveMult * specMult;
+      let strengthLabel;
+      if (cfg.stationaryBonus && effectiveMult > 0) {
+        // Stationary-bonus cells: show max achievable clearance rate
+        const max = +(cfg.stationaryBonus.maxClearanceRate * effectiveMult).toFixed(1);
+        strengthLabel = `${strength} ↑${(cfg.stationaryBonus.gainPerTurn * effectiveMult).toFixed(1)}/t if ⚓ (max ${max})`;
+      } else {
+        strengthLabel = String(strength % 1 === 0 ? strength : +strength.toFixed(1));
+      }
+      // isActive: false means locked out (specialist lock, or zero effectiveMult)
+      const isActive = effectiveMult > 0 && (cfg.stationaryBonus || strength > 0);
+      return {
+        pathType,
+        strength,
+        strengthLabel,
+        color: PATHOGEN_RING_COLORS[pathType],
+        label: PATHOGEN_DISPLAY_NAMES[pathType] ?? pathType,
+        isActive,
+      };
+    });
 }
 
 function buildGroups(cells, groupBy) {
@@ -128,6 +152,8 @@ export default function CellRoster({
   currentTick,
   selectedCellId,
   runConfig,
+  runModifiers,
+  cellTypeState,
   onTrainCell,
   onSelectCell,
   onDecommission,
@@ -191,7 +217,7 @@ export default function CellRoster({
   const canRecall = phase => phase === 'outbound' || phase === 'arrived';
   const canDecommission = phase => phase === 'training' || phase === 'ready';
 
-  const tooltipEntries = tooltip ? getClearanceEntries(tooltip.cellType) : [];
+  const tooltipEntries = tooltip ? getClearanceEntries(tooltip.cellType, runModifiers, cellTypeState) : [];
 
   return (
     <>
@@ -209,10 +235,10 @@ export default function CellRoster({
           {CELL_CONFIG[tooltip.cellType]?.displayName ?? tooltip.cellType}
         </div>
         {tooltipEntries.length > 0 ? (
-          tooltipEntries.map(({ pathType, strength, color, label }) => (
-            <div key={pathType} className="font-mono flex justify-between gap-3" style={{ color }}>
+          tooltipEntries.map(({ pathType, strengthLabel, color, label, isActive }) => (
+            <div key={pathType} className={`font-mono flex justify-between gap-3 ${!isActive ? 'opacity-30' : ''}`} style={{ color }}>
               <span>{label}</span>
-              <span className="opacity-70">{strength}</span>
+              <span className="opacity-70">{strengthLabel}</span>
             </div>
           ))
         ) : (
@@ -316,7 +342,7 @@ export default function CellRoster({
                       className={`flex items-center gap-2 px-2 py-2 border-b border-gray-900 cursor-pointer transition-colors hover:bg-gray-800 ${
                         isSelected ? 'bg-blue-950 border-l-2 border-l-blue-500' : ''
                       }`}
-                      onMouseEnter={e => setTooltip({ cellType: cell.type, x: e.clientX, y: e.clientY })}
+                      onMouseEnter={e => setTooltip({ cellType: cell.type, cellId: cell.id, x: e.clientX, y: e.clientY })}
                       onMouseLeave={() => setTooltip(null)}
                     >
                       {/* Cell icon */}

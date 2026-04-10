@@ -21,7 +21,7 @@ import { computeSystemicStress, applySystemicIntegrityHits } from './systemicVal
 export function computeProjectedChanges(state, hoveredNodeId = null) {
   if (state.phase !== 'playing') return null;
 
-  const { deployedCells, groundTruth, systemicStress, systemicIntegrity, fever, runModifiers, selectedCellId } = state;
+  const { deployedCells, groundTruth, systemicStress, systemicIntegrity, fever, runModifiers, cellTypeState, selectedCellId } = state;
 
   // Advance cells first (same order as the real turn) so expired cells are removed
   const { updatedCells } = advanceCells(deployedCells, state.tick + TICKS_PER_TURN, runModifiers);
@@ -51,7 +51,7 @@ export function computeProjectedChanges(state, hoveredNodeId = null) {
       newIntegrity,
       toxinOutput,
       pathogenBreakdowns,
-    } = advanceNodeSite(ns, nodeId, effectiveDeployedCells, systemicStress, runModifiers);
+    } = advanceNodeSite(ns, nodeId, effectiveDeployedCells, systemicStress, runModifiers, cellTypeState);
 
     perSiteOutputs[nodeId] = { toxinOutput };
 

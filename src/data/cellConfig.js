@@ -37,12 +37,12 @@ export const CELL_CONFIG = {
   macrophage: {
     displayName:           'Macrophage',
     deployCost:            1,
-    clearanceRate:         2,
+    clearanceRate:         0,        // starts at 0 — grows via stationaryBonus each turn
     trainingTicks:         10,
     displayOrder:          2,
     stationaryBonus: {
-      gainPerTurn:   0.25,  // +25% clearance rate per stationary turn
-      maxMultiplier: 3.0,   // cap at 3× base clearance rate
+      gainPerTurn:      1,   // clearance gained per stationary turn (after clearance)
+      maxClearanceRate: 4,   // absolute cap on clearance rate
     },
     inflammationRate:      0.2,   // inflation per unit of clearance applied (medium-low)
     collateralRate:        0.1,   // tissue damage per unit of clearance × pathogen collateralModifier (low)
@@ -340,14 +340,14 @@ export function getEffectiveEffectiveness(cellType, detectedLevel, modifiers) {
 
 /**
  * Returns the effective clearablePathogens dict for a given cell type.
- * For specialist cell types that have locked a specializedType via runModifiers,
- * all other pathogen types return 0.
+ * For specialist cell types that have locked a specializedType, all other pathogen types return 0.
+ * specializedType is read from cellTypeState (runtime state).
  */
-export function getCellClearablePathogens(cellType, modifiers) {
+export function getCellClearablePathogens(cellType, modifiers, cellTypeState) {
   const cfg = CELL_CONFIG[cellType];
   const base = cfg?.clearablePathogens ?? {};
   if (!cfg?.isSpecialist) return base;
-  const specializedType = modifiers?.cells?.[cellType]?.specializedType;
+  const specializedType = cellTypeState?.[cellType]?.specializedType;
   if (!specializedType) return base;
   return { [specializedType]: base[specializedType] ?? 1.0 };
 }

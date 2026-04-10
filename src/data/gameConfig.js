@@ -59,4 +59,6 @@ export const PARASITE_TRANSIT_PENALTY_PER_BURDEN = 25;     // +1 turn penalty pe
 // Spawning stops once this many unique pathogens have spawned.
 // Win triggers when that target is reached and all nodes are clear.
 export const WIN_PATHOGEN_TARGET = 10;
+//How many extra pathogens behind number needed to clear can be spawned
+export const WIN_PATHOGEN_TARGET_EXTRA = 0;
 

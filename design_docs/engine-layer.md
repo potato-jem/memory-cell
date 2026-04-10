@@ -24,7 +24,7 @@ All cell lifecycle logic. Pure functions only.
   patrolDestNodeId: null,     // patrolling cells only: current patrol destination
   patrolNextMoveTick: null,   // patrolling cells only: when to move to next hop
   stationaryTurns: 0,         // cells with CELL_CONFIG.stationaryBonus: turns spent in 'arrived' phase; resets on movement
-  specialization: null,       // cells with CELL_CONFIG.specializationSlots: { [pathogenType]: multiplier }; persists across deployments
+  // Specialization scores are no longer per-cell — they live in state.cellTypeState[type].specialization
   // cellLifetime is read from CELL_CONFIG[type].cellLifetime — no per-instance field needed.
   // Timer = deployedAtTick + cellLifetime. Death is checked in advanceCells each tick.
 }
@@ -47,7 +47,7 @@ Cell config and modifier-aware accessors live in `src/data/cellConfig.js`. `cell
 | `recallUnit(cellId, ..., modifiers?)` | Outbound → cancel; arrived → compute return path with modifiers |
 | `decommissionCell(cellId, ...)` | Remove from roster (only ready/training) |
 | `advanceCells(deployedCells, tick, modifiers?)` | **Main tick function.** Returns `{updatedCells, events, nodesVisited}`; also increments `stationaryTurns` for cells with `stationaryBonus` config |
-| `updateCellSpecializations(cells, nodeStates)` | Updates `specialization` scores on cells with `specializationSlots` config, called after `advanceGroundTruth` |
+| `updateCellSpecializations(cells, nodeStates, cellTypeState)` | Updates global per-type `specialization` scores in `cellTypeState` (not per-cell) for types with `specializationSlots` config. Returns updated `cellTypeState`. Called after `advanceGroundTruth`. |
 | `startReturnForClearedNodes(..., modifiers?)` | Auto-returns cells with `autoReturn: true` when done: attack cells when node is clear; recon cells when node is fully classified. Skips patrolling cells and lifetime cells. |
 | `computeTokensInUse(deployedCells, modifiers?)` | Sum of effective token costs across all cells |
 | `nodeHasClassifiedPathogen(nodeId, nodeStates)` | True if any pathogen at node has `detected_level === 'classified'` — used to gate deployment of cells with `requiresClassified: true` |

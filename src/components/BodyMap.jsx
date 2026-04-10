@@ -67,7 +67,7 @@ function getPathogenDisplay(nodeId, gtNodeStates) {
   }
 
   for (const inst of unknowns) {
-    rings.push({ uid: inst.uid, loadPct: 0.15, color: '#6b7280', dashed: true, dashArray: '3 4' });
+    rings.push({ uid: inst.uid, loadPct: 1, color: '#d97706', dashed: true, dashArray: '2 4' });
   }
 
   return { rings, unknownCount };

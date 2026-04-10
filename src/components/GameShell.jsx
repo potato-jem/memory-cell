@@ -45,6 +45,9 @@ export default function GameShell() {
       clearRun();
     }
   }, [state]);
+  useEffect(() => {
+    console.log({ state });
+  }, [state.turn]); // fires once per real turn
 
   const handleStartRun = useCallback(() => {
     const startingUnits = Object.entries(startingCounts)
@@ -367,9 +370,9 @@ export default function GameShell() {
             {state.fever?.active ? '🌡 FEVER' : '🌡 fever'}
           </button>
           <div className="flex flex-col items-center gap-0.5">
-            <span className="text-xs text-gray-700 uppercase tracking-widest leading-none">Encountered</span>
-            <span className={`text-base font-mono font-bold tabular-nums leading-none ${state.totalPathogensSpawned >= WIN_PATHOGEN_TARGET ? 'text-green-400' : 'text-gray-400'}`}>
-              {Math.min(state.totalPathogensSpawned, WIN_PATHOGEN_TARGET)}
+            <span className="text-xs text-gray-700 uppercase tracking-widest leading-none">Cleared</span>
+            <span className={`text-base font-mono font-bold tabular-nums leading-none ${state.totalPathogensCleared >= WIN_PATHOGEN_TARGET ? 'text-green-400' : 'text-gray-400'}`}>
+              {Math.min(state.totalPathogensCleared, WIN_PATHOGEN_TARGET)}
               <span className="text-gray-700 text-xs font-normal">/{WIN_PATHOGEN_TARGET}</span>
             </span>
           </div>
@@ -409,6 +412,8 @@ export default function GameShell() {
             currentTick={state.tick}
             selectedCellId={selectedCellId}
             runConfig={state.runConfig}
+            runModifiers={state.runModifiers}
+            cellTypeState={state.cellTypeState}
             onTrainCell={handleTrainCell}
             onSelectCell={handleSelectCell}
             onDecommission={handleDecommission}
@@ -454,6 +459,8 @@ export default function GameShell() {
               tokenCapacity={state.tokenCapacity}
               tokensInUse={state.tokensInUse}
               runConfig={state.runConfig}
+              runModifiers={state.runModifiers}
+              cellTypeState={state.cellTypeState}
               isOpen={rosterOpen}
               isPlaying={isPlaying}
               onOpenRoster={() => handleOpenDrawer('roster')}

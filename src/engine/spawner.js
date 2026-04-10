@@ -48,11 +48,23 @@ export function rollSpawns(nodeStates, turn, systemicStress, rng = Math.random, 
   if (rng() > spawnChance) return [];
 
   // ── Layer B: select (type × node) ───────────────────────────────────────
+  // Pre-compute node weights per type so we can filter out types with no eligible nodes.
+  // This prevents wasted spawn attempts when a type (e.g. virus) has spread to all its nodes.
   const typeWeights = buildTypeWeights(turn, systemicStress, scheduled, modifiers);
+  const nodeWeightsByType = {};
+  for (const type of Object.keys(typeWeights)) {
+    const nw = buildNodeWeights(type, nodeStates, systemicStress, modifiers);
+    if (Object.keys(nw).length === 0) {
+      delete typeWeights[type];
+    } else {
+      nodeWeightsByType[type] = nw;
+    }
+  }
+
   const pathogenType = weightedPick(typeWeights, rng);
   if (!pathogenType) return [];
 
-  const nodeWeights = buildNodeWeights(pathogenType, nodeStates, systemicStress, modifiers);
+  const nodeWeights = nodeWeightsByType[pathogenType];
   const nodeId = weightedPick(nodeWeights, rng);
   if (!nodeId) return [];
 

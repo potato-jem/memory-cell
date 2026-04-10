@@ -59,7 +59,7 @@ export function initGroundTruth() {
  * Returns the updated node values plus pathogenBreakdowns (used by projection UI;
  * ignored by the actual turn engine).
  */
-export function advanceNodeSite(ns, nodeId, deployedCells, systemicStress, modifiers = null) {
+export function advanceNodeSite(ns, nodeId, deployedCells, systemicStress, modifiers = null, cellTypeState = null) {
   const updatedPathogens = [];
   const newImmuneUids = [...(ns.immune ?? [])];
   let totalTissueDamage = 0;
@@ -70,16 +70,16 @@ export function advanceNodeSite(ns, nodeId, deployedCells, systemicStress, modif
 
   // Pre-compute equalized clearance allocations across all pathogens at this node.
   const clearanceAllocations = computeNodeClearanceAllocations(
-    ns.pathogens ?? [], nodeId, deployedCells, ns, modifiers
+    ns.pathogens ?? [], nodeId, deployedCells, ns, modifiers, cellTypeState
   );
 
   for (const instance of (ns.pathogens ?? [])) {
     const clearanceOverride = clearanceAllocations[instance.uid] ?? null;
     const { newInstance, tissueIntegrityDelta, inflammationDelta, toxinOutput, suppressImmune } =
-      advanceInstance(instance, nodeId, deployedCells, ns, systemicStress, modifiers, clearanceOverride);
+      advanceInstance(instance, nodeId, deployedCells, ns, systemicStress, modifiers, clearanceOverride, cellTypeState);
 
     pathogenBreakdowns[instance.uid] = computePathogenBreakdown(
-      instance, nodeId, deployedCells, ns, systemicStress, modifiers, clearanceOverride
+      instance, nodeId, deployedCells, ns, systemicStress, modifiers, clearanceOverride, cellTypeState
     );
 
     if (newInstance) {
@@ -150,7 +150,7 @@ export function advanceNodeSite(ns, nodeId, deployedCells, systemicStress, modif
  *   events: [{ type, nodeId, pathogenType? }]
  *   perSiteOutputs: { [nodeId]: { toxinOutput } } — for systemic stress calculation
  */
-export function advanceGroundTruth(groundTruth, deployedCells, turn, systemicStress, pendingSpawns = [], modifiers = null) {
+export function advanceGroundTruth(groundTruth, deployedCells, turn, systemicStress, pendingSpawns = [], modifiers = null, cellTypeState = null) {
   const events = [];
   let nodeStates = { ...groundTruth.nodeStates };
   const perSiteOutputs = {};
@@ -169,7 +169,7 @@ export function advanceGroundTruth(groundTruth, deployedCells, turn, systemicStr
       newLowest,
       transitPenalty,
       toxinOutput,
-    } = advanceNodeSite(ns, nodeId, deployedCells, systemicStress, modifiers);
+    } = advanceNodeSite(ns, nodeId, deployedCells, systemicStress, modifiers, cellTypeState);
 
     perSiteOutputs[nodeId] = { toxinOutput };
 
@@ -246,7 +246,6 @@ export function advanceGroundTruth(groundTruth, deployedCells, turn, systemicStr
     };
     events.push({ type: 'pathogen_spawned', nodeId: spawn.nodeId, pathogenType: spawn.type });
   }
-
   return {
     newGroundTruth: {
       ...groundTruth,

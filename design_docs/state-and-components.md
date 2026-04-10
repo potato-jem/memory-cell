@@ -19,12 +19,37 @@ Game state shape and `initGameState(runConfig)`.
   fever: { active: bool },
   scars,                       // [{nodeId, integrityFloor, turn}]
   runModifiers,                // accumulated upgrades/scars/decisions — see data-layer.md
+  cellTypeState,               // per-type runtime cell state — see below
   phase,                       // 'playing' | 'lost'
   lossReason,
   postMortem,
   selectedNodeId,              // which node is shown in NodeDetail
 }
 ```
+
+#### `cellTypeState`
+Global per-type runtime state for behavioural properties that emerge from gameplay. Lives at `state.cellTypeState` and is updated each turn. Distinct from `runModifiers` (not upgrade/scar driven).
+
+```js
+cellTypeState = {
+  b_cell: {
+    specialization: { virus: 1.0, extracellular_bacteria: 1.0, ... }
+    // clearance multipliers per pathogen type; all cells of this type share one score
+    // ranges: 0.2 (specializationMin) → 2.5 (specializationMax)
+  },
+  killer_t: {
+    specializedType: null | 'virus' | ...
+    // locked pathogen type after first successful encounter; null = not yet specialised
+  },
+}
+```
+
+**Why global, not per-cell:** B-cell specialization was previously stored on each individual cell, but new cells inherited from existing ones (fungibility). The global design makes this explicit — all B-cells of the current run share one memory, which develops based on what any stationed B-cell encounters.
+
+**Engine integration:**
+- `updateCellSpecializations(cells, nodeStates, cellTypeState)` in `cells.js` returns updated `cellTypeState` — called in `handleEndTurn` after `advanceGroundTruth`
+- `getCellClearablePathogens(cellType, modifiers, cellTypeState)` reads `specializedType` from `cellTypeState` first (killer_t lock), falling back to `runModifiers` for legacy saves
+- All pathogen clearance functions (`computeNodeClearanceAllocations`, `advanceInstance`, `computePathogenBreakdown`) accept `cellTypeState` as a final optional parameter and use `cellTypeState[cell.type].specialization[pathogenType]` for the specialization multiplier
 
 ---
 

@@ -12,6 +12,7 @@ import {
   recallUnit,
   advanceCells,
   expireLifetimeCells,
+  incrementStationaryTurns,
   startReturnForClearedNodes,
   assignPatrolDestinations,
   startPatrol,
@@ -21,7 +22,7 @@ import {
 import { CELL_CONFIG, RECON_CELL_TYPES, getEffectiveClearanceRate, getCellClearablePathogens } from '../data/cellConfig.js';
 import { NODES } from '../data/nodes.js';
 import { TICKS_PER_TURN, GAME_PHASES, LOSS_REASONS } from './gameState.js';
-import { TOKEN_CAPACITY_MAX, TOKEN_CAPACITY_REGEN_INTERVAL, WIN_PATHOGEN_TARGET } from '../data/gameConfig.js';
+import { TOKEN_CAPACITY_MAX, TOKEN_CAPACITY_REGEN_INTERVAL, WIN_PATHOGEN_TARGET,WIN_PATHOGEN_TARGET_EXTRA } from '../data/gameConfig.js';
 import { nodeHasActivePathogen, PATHOGEN_REGISTRY } from '../data/pathogens.js';
 import { applyModifierPatch } from '../data/runModifiers.js';
 import {
@@ -79,6 +80,7 @@ function handleEndTurn(state) {
   const newTick = state.tick + TICKS_PER_TURN;
   const newTurn = state.turn + 1;
   let mods = state.runModifiers;
+  let cellTypeState = state.cellTypeState;
 
   // 1. Token capacity regen
   let tokenCapacity = state.tokenCapacity;
@@ -96,25 +98,29 @@ function handleEndTurn(state) {
     updatedCells, nodesVisited, state.groundTruth, mods
   );
 
-  // 3b. Lock specialist cell types to the first eligible pathogen they encounter
+  // 3b. Lock specialist cell types to the first eligible pathogen they encounter.
+  // specializedType is stored in cellTypeState (not runModifiers).
   for (const cell of Object.values(updatedCells)) {
     const cfg = CELL_CONFIG[cell.type];
     if (!cfg?.isSpecialist) continue;
-    if (mods?.cells?.[cell.type]?.specializedType) continue;
+    if (cellTypeState?.[cell.type]?.specializedType) continue;
     if (cell.phase !== 'arrived' || !cell.nodeId) continue;
     const ns = groundTruthAfterDetection.nodeStates[cell.nodeId];
     for (const p of (ns?.pathogens ?? [])) {
       const clearMod = cfg.clearablePathogens?.[p.type] ?? 0;
       const levelEff = cfg.effectivenessByLevel?.[p.detected_level ?? 'none'] ?? 0;
       if (clearMod > 0 && levelEff > 0 && (p.actualLoad ?? 0) > 0) {
-        mods = applyModifierPatch(mods, { cells: { [cell.type]: { specializedType: p.type } } });
+        cellTypeState = {
+          ...cellTypeState,
+          [cell.type]: { ...(cellTypeState?.[cell.type] ?? {}), specializedType: p.type },
+        };
         break;
       }
     }
   }
 
   // 4. Probabilistic spawning — suppressed once win target is reached
-  const pendingSpawns = state.totalPathogensSpawned >= WIN_PATHOGEN_TARGET
+  const pendingSpawns = state.totalPathogensSpawned >= WIN_PATHOGEN_TARGET + WIN_PATHOGEN_TARGET_EXTRA
     ? []
     : rollSpawns(groundTruthAfterDetection.nodeStates, newTurn, state.systemicStress, Math.random, mods);
   const totalPathogensSpawned = state.totalPathogensSpawned + pendingSpawns.length;
@@ -126,13 +132,17 @@ function handleEndTurn(state) {
     newTurn,
     state.systemicStress,
     pendingSpawns,
-    mods
+    mods,
+    cellTypeState
   );
   
-  // 5b. Update per-cell specialization scores based on what pathogens survived this turn's clearance
-  updatedCells = updateCellSpecializations(updatedCells, newGroundTruth.nodeStates);
+  // 5b. Update global per-type specialization scores based on what pathogens survived this turn's clearance
+  cellTypeState = updateCellSpecializations(updatedCells, newGroundTruth.nodeStates, cellTypeState);
 
-  // 5c. Expire lifetime cells AFTER clearance so they act on their final turn
+  // 5c. Increment stationaryTurns AFTER clearance so bonus applies next turn
+  updatedCells = incrementStationaryTurns(updatedCells);
+
+  // 5d. Expire lifetime cells AFTER clearance so they act on their final turn
   ({ updatedCells } = expireLifetimeCells(updatedCells, newTick));
 
   // 6. Auto-return attack cells from cleared nodes
@@ -170,7 +180,7 @@ function handleEndTurn(state) {
   const clearedCount = groundTruthEvents.filter(e => e.type === 'pathogen_cleared').length;
   const newTotalCleared = state.totalPathogensCleared + clearedCount;
   const newPendingChoices = generateModifierChoices(
-    groundTruthEvents, newScars, updatedCells, state.runModifiers, state.totalPathogensCleared
+    groundTruthEvents, newScars, updatedCells, state.runModifiers, state.totalPathogensCleared, cellTypeState
   );
 
   const systemicStressHistory = [
@@ -192,8 +202,8 @@ function handleEndTurn(state) {
     lossReason = LOSS_REASONS.SYSTEMIC_COLLAPSE;
     postMortem = buildPostMortem(state, finalGroundTruth, systemicStressHistory, scars, 'systemic_collapse');
   } else if (
-    totalPathogensSpawned >= WIN_PATHOGEN_TARGET &&
-    Object.values(finalGroundTruth.nodeStates).every(ns => !nodeHasActivePathogen(ns))
+    newTotalCleared >= WIN_PATHOGEN_TARGET //&&
+    // Object.values(finalGroundTruth.nodeStates).every(ns => !nodeHasActivePathogen(ns))
   ) {
     phase = GAME_PHASES.WON;
     postMortem = buildPostMortem(state, finalGroundTruth, systemicStressHistory, scars, 'pathogens_cleared');
@@ -222,6 +232,7 @@ function handleEndTurn(state) {
       ...newPendingChoices,
     ],
     runModifiers: mods,
+    cellTypeState,
   };
 }
 
@@ -360,7 +371,7 @@ let _choiceIdCounter = 0;
  * @param {Object} _mods              — alias of runModifiers (unused here, kept for clarity)
  * @returns {Array} pending choice entries
  */
-function generateModifierChoices(groundTruthEvents, newScars, deployedCells, runModifiers, prevPathogensCleared = 0) {
+function generateModifierChoices(groundTruthEvents, newScars, deployedCells, runModifiers, prevPathogensCleared = 0, cellTypeState = null) {
   const choices = [];
 
   // ── Upgrade choices: one per every 3rd pathogen cleared ──────────────────
@@ -376,7 +387,7 @@ function generateModifierChoices(groundTruthEvents, newScars, deployedCells, run
     );
     const event = clearedEvents[Math.min(triggerIndex, clearedEvents.length - 1)];
     const clearingCellType = findPrimaryClearingCellType(
-      event.nodeId, event.pathogenType, deployedCells, runModifiers
+      event.nodeId, event.pathogenType, deployedCells, runModifiers, cellTypeState
     );
     const ctx = makeUpgradeContext(
       clearingCellType, event.pathogenType, event.nodeId, runModifiers
@@ -421,13 +432,13 @@ function generateModifierChoices(groundTruthEvents, newScars, deployedCells, run
  * Returns the attack/recon cell type with highest effective clearance for that pathogen,
  * or null if no cells with clearance were present.
  */
-function findPrimaryClearingCellType(nodeId, pathogenType, deployedCells, modifiers) {
+function findPrimaryClearingCellType(nodeId, pathogenType, deployedCells, modifiers, cellTypeState) {
   let bestType = null;
   let bestRate = 0;
 
   for (const cell of Object.values(deployedCells)) {
     if (cell.nodeId !== nodeId || cell.phase !== 'arrived') continue;
-    const clearMod = getCellClearablePathogens(cell.type, modifiers)[pathogenType] ?? 0;
+    const clearMod = getCellClearablePathogens(cell.type, modifiers, cellTypeState)[pathogenType] ?? 0;
     if (clearMod === 0) continue;
     const rate = getEffectiveClearanceRate(cell.type, modifiers) * clearMod;
     if (rate > bestRate) { bestType = cell.type; bestRate = rate; }

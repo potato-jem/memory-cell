@@ -8,6 +8,26 @@ import { DEFAULT_RUN_CONFIG } from '../data/runConfig.js';
 import { CELL_CONFIG } from '../data/cellConfig.js';
 import { makeRunModifiers } from '../data/runModifiers.js';
 
+/**
+ * Per-type runtime cell state — behavioural state that emerges from gameplay
+ * (specialization scores, specialist lock-in), distinct from run modifier upgrades/scars.
+ * Lives at state.cellTypeState and is updated each turn by the engine.
+ */
+export function makeCellTypeState() {
+  return {
+    b_cell: {
+      // Clearance multiplier per pathogen type. Starts at 1.0 (neutral).
+      specialization: Object.fromEntries(
+        Object.keys(CELL_CONFIG.b_cell.clearablePathogens).map(k => [k, 1.0])
+      ),
+    },
+    killer_t: {
+      // Locked pathogen type after first successful clear. null = not yet specialised.
+      specializedType: null,
+    },
+  };
+}
+
 export { TICKS_PER_TURN };
 
 export const GAME_PHASES = {
@@ -73,6 +93,10 @@ export function initGameState(runConfig = DEFAULT_RUN_CONFIG) {
     // Runtime modifiers — accumulate upgrades, scars, decisions
     // Dispatch APPLY_MODIFIER with a patch to modify cell/node/pathogen/detection/systemic/spawn behavior
     runModifiers: makeRunModifiers(),
+
+    // Per-type runtime cell state — specialization scores and specialist lock-in.
+    // Updated each turn by the engine. Distinct from runModifiers (not upgrade/scar driven).
+    cellTypeState: makeCellTypeState(),
 
     // Win tracking — counts unique pathogen spawns (not spreads)
     totalPathogensSpawned: 0,
