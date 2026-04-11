@@ -2,7 +2,7 @@
 // Header: turn, systemic stress, systemic integrity, fever, tokens.
 // Left: Cell Roster. Centre: Body Map. Right: Node Detail / Overview.
 
-import { useReducer, useCallback, useState, useEffect, useMemo } from 'react';
+import { useReducer, useCallback, useState, useEffect, useMemo, useRef } from 'react';
 import { initGameState, GAME_PHASES } from '../state/gameState.js';
 import { gameReducer, ACTION_TYPES } from '../state/actions.js';
 import { DEFAULT_RUN_CONFIG } from '../data/runConfig.js';
@@ -18,12 +18,33 @@ import PostMortem from './PostMortem.jsx';
 import ModifierChoice from './ModifierChoice.jsx';
 import MobileRoster from './MobileRoster.jsx';
 import CellIcon from './CellIcon.jsx';
+import BetweenRunScreen from './BetweenRunScreen.jsx';
+import MetaHUD from './MetaHUD.jsx';
 import { saveRun, loadRun, clearRun } from '../state/persistence.js';
+import { saveMeta, loadMeta, clearMeta } from '../state/metaPersistence.js';
+import { initMetaState } from '../state/metaState.js';
+import { metaReducer, META_ACTION_TYPES } from '../state/metaActions.js';
+import { BONUS_OBJECTIVE_LIBRARY } from '../data/bonusObjectiveLibrary.js';
+import { isMetaComplete, isLastRunInStage, isLastLifeStage } from '../data/lifeStageConfig.js';
 import { computeProjectedChanges } from '../engine/projection.js';
 
 
+// ── Bonus objective selection ──────────────────────────────────────────────────
+
+function selectBonusObjectives(metaState, count = 2) {
+  const eligible = BONUS_OBJECTIVE_LIBRARY.filter(o => o.eligibleFor(metaState));
+  return [...eligible].sort(() => Math.random() - 0.5).slice(0, count).map(o => o.id);
+}
+
+// ── Main component ─────────────────────────────────────────────────────────────
+
 export default function GameShell() {
-  const [started, setStarted] = useState(() => loadRun()?.phase === GAME_PHASES.PLAYING);
+  // ── App-level phase (drives which screen to render) ──────────────────────────
+  // 'start' | 'playing' | 'between_run' | 'game_over'
+  const [appPhase, setAppPhase] = useState(() =>
+    loadRun()?.phase === GAME_PHASES.PLAYING ? 'playing' : 'start'
+  );
+
   const [startingCounts, setStartingCounts] = useState(() =>
     Object.fromEntries(
       Object.entries(CELL_CONFIG)
@@ -32,12 +53,23 @@ export default function GameShell() {
     )
   );
 
+  // ── Meta state ───────────────────────────────────────────────────────────────
+  const [metaState, metaDispatch] = useReducer(
+    metaReducer,
+    null,
+    () => loadMeta() ?? initMetaState()
+  );
+  const [lastRunState, setLastRunState] = useState(null);
+  const [metaRunComplete, setMetaRunComplete] = useState(false);
+
+  // ── Game state ───────────────────────────────────────────────────────────────
   const [state, dispatch] = useReducer(
     gameReducer,
     null,
     () => loadRun() ?? initGameState(DEFAULT_RUN_CONFIG, null)
   );
 
+  // Persist run state each turn; clear on terminal phase
   useEffect(() => {
     if (state.phase === GAME_PHASES.PLAYING) {
       saveRun(state);
@@ -45,18 +77,73 @@ export default function GameShell() {
       clearRun();
     }
   }, [state]);
+
+  //please dont delete this, it is used in debugging
   useEffect(() => {
     console.log({ state });
   }, [state.turn]); // fires once per real turn
 
+  // Persist meta state whenever it changes
+  useEffect(() => {
+    saveMeta(metaState);
+  }, [metaState]);
+
+  // ── Phase transition effect ───────────────────────────────────────────────────
+  const endRunDispatchedRef = useRef(false);
+
+  useEffect(() => {
+    if (state.phase === GAME_PHASES.WON && appPhase === 'playing' && !endRunDispatchedRef.current) {
+      endRunDispatchedRef.current = true;
+      const complete = isMetaComplete(metaState.lifeStageIndex, metaState.runIndexInStage);
+      setLastRunState(state);
+      setMetaRunComplete(complete);
+      metaDispatch({ type: META_ACTION_TYPES.END_RUN, finalGameState: state });
+      setAppPhase('between_run');
+    } else if (state.phase === GAME_PHASES.LOST && appPhase === 'playing') {
+      setAppPhase('game_over');
+    }
+  }, [state.phase]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Handlers ──────────────────────────────────────────────────────────────────
+
   const handleStartRun = useCallback(() => {
+    const objectiveIds = selectBonusObjectives(metaState);
+    const metaContext = {
+      persistentModifiers:     metaState.persistentModifiers,
+      pendingNextRunModifiers: metaState.pendingNextRunModifiers,
+      persistentTokenCapBonus: metaState.persistentTokenCapBonus ?? 0,
+      activeBonusObjectives:   objectiveIds,
+    };
+    metaDispatch({ type: META_ACTION_TYPES.SELECT_BONUS_OBJECTIVES, objectiveIds });
     const startingUnits = Object.entries(startingCounts)
       .filter(([, count]) => count > 0)
       .map(([type, count]) => ({ type, count }));
     const cfg = { ...DEFAULT_RUN_CONFIG, startingUnits };
-    dispatch({ type: ACTION_TYPES.RESTART, initialState: initGameState(cfg,) });
-    setStarted(true);
-  }, [startingCounts]);
+    dispatch({ type: ACTION_TYPES.RESTART, initialState: initGameState(cfg, metaContext) });
+    setAppPhase('playing');
+  }, [startingCounts, metaState]);
+
+  const handleStartNextRun = useCallback(() => {
+    endRunDispatchedRef.current = false;
+    const objectiveIds = selectBonusObjectives(metaState);
+    const metaContext = {
+      persistentModifiers:     metaState.persistentModifiers,
+      pendingNextRunModifiers: metaState.pendingNextRunModifiers,
+      persistentTokenCapBonus: metaState.persistentTokenCapBonus ?? 0,
+      activeBonusObjectives:   objectiveIds,
+    };
+    metaDispatch({ type: META_ACTION_TYPES.SELECT_BONUS_OBJECTIVES, objectiveIds });
+    dispatch({ type: ACTION_TYPES.RESTART, initialState: initGameState(DEFAULT_RUN_CONFIG, metaContext) });
+    setAppPhase('playing');
+  }, [metaState]);
+
+  const handleNewLifetime = useCallback(() => {
+    clearRun();
+    clearMeta();
+    metaDispatch({ type: META_ACTION_TYPES.NEW_LIFETIME });
+    endRunDispatchedRef.current = false;
+    setAppPhase('start');
+  }, []);
 
   const [selectedCellId, setSelectedCellId] = useState(null);
   const [hoveredNodeId, setHoveredNodeId] = useState(null);
@@ -67,8 +154,8 @@ export default function GameShell() {
 
   const handleRestart = useCallback(() => {
     clearRun();
-    setStarted(false);
-  }, [state.postMortem]);
+    setAppPhase('start');
+  }, []);
 
   // Only one drawer at a time; toggle if same name
   const handleOpenDrawer = useCallback((name) => {
@@ -171,6 +258,14 @@ export default function GameShell() {
     dispatch({ type: ACTION_TYPES.TOGGLE_FEVER });
   }, []);
 
+  const handleToggleGodMode = useCallback(() => {
+    dispatch({ type: ACTION_TYPES.TOGGLE_GOD_MODE });
+  }, []);
+
+  const handleSetAutoReturn = useCallback(({ cellIds, value, global: isGlobal }) => {
+    dispatch({ type: ACTION_TYPES.SET_AUTO_RETURN, cellIds, value, global: isGlobal });
+  }, []);
+
   const handleNodeHoverStart = useCallback((nodeId) => setHoveredNodeId(nodeId), []);
   const handleNodeHoverEnd = useCallback(() => setHoveredNodeId(null), []);
 
@@ -190,8 +285,21 @@ export default function GameShell() {
     hoveredNodeId,
   ]);
 
+  // ── Between-run screen ──────────────────────────────────────────────────────
+  if (appPhase === 'between_run') {
+    return (
+      <BetweenRunScreen
+        metaState={metaState}
+        lastRunState={lastRunState}
+        metaDispatch={metaDispatch}
+        onStartNextRun={metaRunComplete ? handleNewLifetime : handleStartNextRun}
+        isMetaComplete={metaRunComplete}
+      />
+    );
+  }
+
   // ── Start screen ────────────────────────────────────────────────────────────
-  if (!started) {
+  if (appPhase === 'start') {
     const totalTokenCost = Object.entries(startingCounts).reduce(
       (sum, [type, count]) => sum + (DEPLOY_COSTS[type] ?? 0) * count, 0
     );
@@ -269,7 +377,7 @@ export default function GameShell() {
             onClick={handleStartRun}
             className="w-full py-3.5 bg-green-900 hover:bg-green-800 text-green-200 font-mono font-bold uppercase tracking-widest border border-green-700 rounded-lg transition-colors text-sm cta-breathe"
           >
-            Begin Run →
+            {metaState.subRunIndex > 0 ? `Continue Lifetime (Run ${metaState.subRunIndex + 1}) →` : 'Begin Lifetime →'}
           </button>
 
         </div>
@@ -277,7 +385,7 @@ export default function GameShell() {
     );
   }
 
-  const isPlaying = state.phase === GAME_PHASES.PLAYING;
+  const isPlaying = state.phase === GAME_PHASES.PLAYING && appPhase === 'playing';
   const selectedNodeId = state.selectedNodeId;
   const stress = state.systemicStress ?? 0;
   const integrity = state.systemicIntegrity ?? 100;
@@ -369,6 +477,17 @@ export default function GameShell() {
           >
             {state.fever?.active ? '🌡 FEVER' : '🌡 fever'}
           </button>
+          <button
+            onClick={handleToggleGodMode}
+            className={`px-2.5 py-1 text-xs font-mono border rounded transition-colors ${
+              state.godMode
+                ? 'bg-cyan-950 border-cyan-600 text-cyan-300 hover:bg-cyan-900'
+                : 'bg-gray-900 border-gray-800 text-gray-700 hover:text-gray-500 hover:border-gray-700'
+            }`}
+            title="God mode — 1-tick training, 1000 tokens, 11× clearance"
+          >
+            {state.godMode ? '⚡ GOD' : '⚡ god'}
+          </button>
           <div className="flex flex-col items-center gap-0.5">
             <span className="text-xs text-gray-700 uppercase tracking-widest leading-none">Cleared</span>
             <span className={`text-base font-mono font-bold tabular-nums leading-none ${state.totalPathogensCleared >= WIN_PATHOGEN_TARGET ? 'text-green-400' : 'text-gray-400'}`}>
@@ -382,8 +501,13 @@ export default function GameShell() {
           </div>
         </div>
 
-        {/* Right: turn counter (mobile) + end turn (desktop only — mobile moves to roster bar) */}
+        {/* Right: MetaHUD + turn counter (mobile) + end turn */}
         <div className="flex items-center gap-1.5 shrink-0" onClick={e => e.stopPropagation()}>
+          <MetaHUD
+            metaState={metaState}
+            bonusObjectiveTracking={state.bonusObjectiveTracking}
+            activeBonusObjectives={state.activeBonusObjectives}
+          />
           {/* Turn — mobile only (desktop shows it on left) */}
           <div className="flex items-center gap-0.5 md:hidden">
             <span className="text-xs text-gray-700 font-mono">T</span>
@@ -414,11 +538,13 @@ export default function GameShell() {
             runConfig={state.runConfig}
             runModifiers={state.runModifiers}
             cellTypeState={state.cellTypeState}
+            globalAutoReturn={state.globalAutoReturn}
             onTrainCell={handleTrainCell}
             onSelectCell={handleSelectCell}
             onDecommission={handleDecommission}
             onRecall={handleRecall}
             onStartPatrol={handleStartPatrol}
+            onSetAutoReturn={handleSetAutoReturn}
           />
         </div>
 
@@ -473,6 +599,8 @@ export default function GameShell() {
               tooltipNode={tooltipNode}
               onStartPatrol={handleStartPatrol}
               onDeployDirect={handleDeployDirect}
+              globalAutoReturn={state.globalAutoReturn}
+              onSetAutoReturn={handleSetAutoReturn}
               nodeBarSlot={tooltipNode ? (
                 <NodeBar
                   nodeId={tooltipNode}
@@ -610,11 +738,11 @@ export default function GameShell() {
           dispatch={dispatch}
         />
       )}
-      {state.phase !== GAME_PHASES.PLAYING && state.postMortem && (
+      {appPhase === 'game_over' && state.phase === GAME_PHASES.LOST && state.postMortem && (
         <PostMortem
           postMortem={state.postMortem}
           phase={state.phase}
-          onRestart={handleRestart}
+          onRestart={handleNewLifetime}
         />
       )}
     </div>

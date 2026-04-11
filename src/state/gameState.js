@@ -6,7 +6,8 @@ import { makeReadyCell, computeTokensInUse } from '../engine/cells.js';
 import { INITIAL_TOKEN_CAPACITY, TICKS_PER_TURN } from '../data/gameConfig.js';
 import { DEFAULT_RUN_CONFIG } from '../data/runConfig.js';
 import { CELL_CONFIG } from '../data/cellConfig.js';
-import { makeRunModifiers } from '../data/runModifiers.js';
+import { makeRunModifiers, applyModifierPatch } from '../data/runModifiers.js';
+import { BONUS_OBJECTIVE_LIBRARY } from '../data/bonusObjectiveLibrary.js';
 
 /**
  * Per-type runtime cell state — behavioural state that emerges from gameplay
@@ -41,10 +42,17 @@ export const LOSS_REASONS = {
 };
 
 /**
- * Initialise fresh game state for an endless run.
- * @param {Object} runConfig  — optional override (default: DEFAULT_RUN_CONFIG)
+ * Initialise fresh game state for a sub-run.
+ * @param {Object} runConfig   — optional override (default: DEFAULT_RUN_CONFIG)
+ * @param {Object} metaContext — optional meta state context:
+ *   {
+ *     persistentModifiers:     runModifiers patch applied at init
+ *     pendingNextRunModifiers: one-off patch for this run only
+ *     persistentTokenCapBonus: permanent token capacity bonus
+ *     activeBonusObjectives:   string[] — objective ids active this run
+ *   }
  */
-export function initGameState(runConfig = DEFAULT_RUN_CONFIG) {
+export function initGameState(runConfig = DEFAULT_RUN_CONFIG, metaContext = null) {
   // Build starting roster: use runConfig.startingUnits if provided (e.g. from start screen),
   // otherwise fall back to CELL_CONFIG[type].startingCount defaults.
   const startingUnits = runConfig.startingUnits ??
@@ -60,11 +68,28 @@ export function initGameState(runConfig = DEFAULT_RUN_CONFIG) {
     }
   }
 
+  // Build runModifiers: start fresh, then layer in persistent meta modifiers
+  let runModifiers = makeRunModifiers();
+  if (metaContext?.persistentModifiers) {
+    runModifiers = applyModifierPatch(runModifiers, metaContext.persistentModifiers);
+  }
+  if (metaContext?.pendingNextRunModifiers) {
+    runModifiers = applyModifierPatch(runModifiers, metaContext.pendingNextRunModifiers);
+  }
+
+  // Token capacity: base + permanent meta bonus
+  const metaTokenBonus = metaContext?.persistentTokenCapBonus ?? 0;
+  const tokenCapacity = INITIAL_TOKEN_CAPACITY + metaTokenBonus;
+  const tokensInUse = computeTokensInUse(deployedCells);
+
+  // Bonus objectives for this run
+  const activeBonusObjectives = metaContext?.activeBonusObjectives ?? [];
+  const bonusObjectiveTracking = initBonusObjectiveTracking(activeBonusObjectives);
+
   return {
     runConfig,
 
     // Ground truth — the hidden simulation
-    // Detection state (detected_level, perceived_type) lives on pathogen instances here.
     groundTruth: initGroundTruth(),
 
     // Cell deployment
@@ -75,13 +100,13 @@ export function initGameState(runConfig = DEFAULT_RUN_CONFIG) {
     turn: 0,
 
     // Token capacity (cell manufacturing slots)
-    tokenCapacity: INITIAL_TOKEN_CAPACITY,
-    tokensInUse: computeTokensInUse(deployedCells),
-    attentionTokens: INITIAL_TOKEN_CAPACITY,
+    tokenCapacity,
+    tokensInUse,
+    attentionTokens: tokenCapacity - tokensInUse,
 
     // Systemic values — the new health model
-    systemicStress: 0,       // 0-100, pressure input (NOT the health bar)
-    systemicIntegrity: 100,  // 0-100, actual loss condition
+    systemicStress: 0,
+    systemicIntegrity: 100,
     systemicStressHistory: [{ turn: 0, stress: 0, integrity: 100 }],
 
     // Fever — binary player-controlled state
@@ -91,26 +116,31 @@ export function initGameState(runConfig = DEFAULT_RUN_CONFIG) {
     scars: [],
 
     // Runtime modifiers — accumulate upgrades, scars, decisions
-    // Dispatch APPLY_MODIFIER with a patch to modify cell/node/pathogen/detection/systemic/spawn behavior
-    runModifiers: makeRunModifiers(),
+    runModifiers,
 
     // Per-type runtime cell state — specialization scores and specialist lock-in.
-    // Updated each turn by the engine. Distinct from runModifiers (not upgrade/scar driven).
     cellTypeState: makeCellTypeState(),
 
-    // Win tracking — counts unique pathogen spawns (not spreads)
+    // Win tracking
     totalPathogensSpawned: 0,
-
-    // Upgrade trigger tracking — upgrades fire every 3rd pathogen cleared
     totalPathogensCleared: 0,
 
-    // Modifier choices awaiting player resolution.
-    // Each entry: { id, category, options: [...] }
-    // First entry must be resolved (CHOOSE_MODIFIER) before END_TURN is meaningful.
+    // Modifier choices awaiting player resolution (in-run: upgrades and scars)
     pendingModifierChoices: [],
 
-    // Record of all modifiers chosen during this run (for post-mortem / UI display)
+    // Record of all modifiers chosen during this run
     modifierHistory: [],
+
+    // Bonus objectives
+    activeBonusObjectives,
+    bonusObjectiveTracking,
+
+    // Player preferences
+    globalAutoReturn: true,
+
+    // Debug
+    godMode: false,
+    preGodModeTokenCapacity: tokenCapacity,
 
     // Phase
     phase: GAME_PHASES.PLAYING,
@@ -118,4 +148,13 @@ export function initGameState(runConfig = DEFAULT_RUN_CONFIG) {
     postMortem: null,
     selectedNodeId: null,
   };
+}
+
+function initBonusObjectiveTracking(objectiveIds) {
+  const tracking = {};
+  for (const id of objectiveIds) {
+    const obj = BONUS_OBJECTIVE_LIBRARY.find(o => o.id === id);
+    if (obj) tracking[id] = obj.initTracking();
+  }
+  return tracking;
 }

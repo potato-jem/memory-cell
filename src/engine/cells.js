@@ -77,12 +77,13 @@ export function makeReadyCell(type) {
     pathIndex: 0,
     destNodeId: null,
     stationaryTurns: 0,
+    autoReturn: true,
   };
 }
 
 // ── Manufacturing ─────────────────────────────────────────────────────────────
 
-export function trainCell(type, deployedCells, tokenCapacity, tick, modifiers = null) {
+export function trainCell(type, deployedCells, tokenCapacity, tick, modifiers = null, autoReturn = true) {
   const cost = getEffectiveDeployCost(type, modifiers);
   const available = getTokensAvailable(deployedCells, tokenCapacity, modifiers);
   if (available < cost) {
@@ -103,6 +104,7 @@ export function trainCell(type, deployedCells, tokenCapacity, tick, modifiers = 
     pathIndex: 0,
     destNodeId: null,
     stationaryTurns: 0,
+    autoReturn,
   };
   return { success: true, newDeployedCells: { ...deployedCells, [cell.id]: cell }, cost };
 }
@@ -413,6 +415,7 @@ export function startReturnForClearedNodes(deployedCells, nodeStates, tick, modi
   for (const [cellId, cell] of Object.entries(updated)) {
     const cfg = CELL_CONFIG[cell.type];
     if (!cfg?.autoReturn) continue;
+    if (cell.autoReturn === false) continue; // player disabled auto-return for this cell
     if (cell.phase !== 'arrived') continue;
     if (cell.isPatrolling) continue; // patrolling cells manage their own movement
     if (cfg.cellLifetime != null) continue; // lifetime cells fight to the end

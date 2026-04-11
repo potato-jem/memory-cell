@@ -215,8 +215,50 @@ function interpolateDescription(template, context) {
 
 import { MODIFIER_LIBRARY } from './modifierLibrary.js';
 
+// ── Meta selection ─────────────────────────────────────────────────────────────
+
+/**
+ * Build context for a meta modifier selection (between-run choices).
+ * @param {string} chosenAs   — 'miniReward' | 'majorReward' | 'bonusObjectiveReward'
+ * @param {Object} metaState  — current meta state
+ * @param {Object} runModifiers — the run's final runModifiers (for stacking)
+ */
+export function makeMetaContext(chosenAs, metaState, runModifiers) {
+  return {
+    chosenAs,
+    category:               chosenAs,
+    lifeStageIndex:         metaState?.lifeStageIndex ?? 0,
+    subRunIndex:            metaState?.subRunIndex ?? 0,
+    completedModifierIds:   metaState?.completedModifierIds ?? [],
+    runModifiers:           runModifiers ?? {},
+    // null out run-specific fields so eligibleFor predicates can check safely
+    clearingCellType:       null,
+    clearedPathogenType:    null,
+    nodeId:                 null,
+    scarType:               null,
+    threshold:              null,
+    isMinor:                false,
+    isCritical:             false,
+    cellConfig:             null,
+    pathogenConfig:         null,
+    nodeConfig:             null,
+  };
+}
+
+/**
+ * Select up to `count` modifier options for a meta context.
+ * Only draws from modifiers that have canBeChosenAs including `chosenAs`.
+ */
+export function selectMetaOptions(chosenAs, metaState, runModifiers, count = 3) {
+  const ctx = makeMetaContext(chosenAs, metaState, runModifiers);
+  const metaPool = MODIFIER_LIBRARY.filter(m => m.canBeChosenAs?.includes(chosenAs));
+  return selectOptions(metaPool, ctx, runModifiers, count);
+}
+
 /**
  * Recompute a modifier patch using the current runModifiers.
+ * Reconstructs the full context (including config references) from the stored
+ * primitive context before calling the modifier's getPatch function.
  * Reconstructs the full context (including config references) from the stored
  * primitive context before calling the modifier's getPatch function.
  */

@@ -33,10 +33,13 @@ import {
   computeOptionPatch,
   MODIFIER_CHOICE_COUNT,
 } from '../data/modifierSelector.js';
+import { BONUS_OBJECTIVE_LIBRARY } from '../data/bonusObjectiveLibrary.js';
 
 export const ACTION_TYPES = {
   END_TURN:           'END_TURN',
   TOGGLE_FEVER:       'TOGGLE_FEVER',
+  TOGGLE_GOD_MODE:    'TOGGLE_GOD_MODE',
+  SET_AUTO_RETURN:    'SET_AUTO_RETURN',
   TRAIN_CELL:         'TRAIN_CELL',
   DEPLOY_FROM_ROSTER: 'DEPLOY_FROM_ROSTER',
   DECOMMISSION_CELL:  'DECOMMISSION_CELL',
@@ -44,12 +47,26 @@ export const ACTION_TYPES = {
   START_PATROL:       'START_PATROL',
   RESTART:            'RESTART',
   SELECT_NODE:        'SELECT_NODE',
-  // Direct modifier patch (bypasses the choice system — for testing / direct application).
-  // See runModifiers.js for the modifier schema.
   APPLY_MODIFIER:     'APPLY_MODIFIER',
-  // Player resolves a pending modifier choice. action.optionIndex is the chosen option index.
   CHOOSE_MODIFIER:    'CHOOSE_MODIFIER',
 };
+
+// ── God mode ───────────────────────────────────────────────────────────────────
+// Applied on top of runModifiers each turn when active; never stored in runModifiers
+// so toggling off has no side effects.
+
+const GOD_MODE_TOKEN_CAPACITY = 1000;
+
+function buildGodModePatch() {
+  const patch = { cells: {} };
+  for (const [type, cfg] of Object.entries(CELL_CONFIG)) {
+    const entry = { trainingTicksDelta: -999 };           // 1-tick training (min)
+    if (cfg.isAttack) entry.clearanceRateMultiplier = 11; // 1000% increase
+    patch.cells[type] = entry;
+  }
+  return patch;
+}
+const GOD_MODE_PATCH = buildGodModePatch();
 
 export function gameReducer(state, action) {
   if (state.phase !== GAME_PHASES.PLAYING &&
@@ -60,6 +77,8 @@ export function gameReducer(state, action) {
   switch (action.type) {
     case ACTION_TYPES.END_TURN:           return handleEndTurn(state);
     case ACTION_TYPES.TOGGLE_FEVER:       return handleToggleFever(state);
+    case ACTION_TYPES.TOGGLE_GOD_MODE:    return handleToggleGodMode(state);
+    case ACTION_TYPES.SET_AUTO_RETURN:    return handleSetAutoReturn(state, action);
     case ACTION_TYPES.TRAIN_CELL:         return handleTrainCell(state, action.cellType);
     case ACTION_TYPES.DEPLOY_FROM_ROSTER: return handleDeployFromRoster(state, action.cellId, action.nodeId);
     case ACTION_TYPES.DECOMMISSION_CELL:  return handleDecommissionCell(state, action.cellId);
@@ -79,7 +98,9 @@ function handleEndTurn(state) {
   const prevTick = state.tick;
   const newTick = state.tick + TICKS_PER_TURN;
   const newTurn = state.turn + 1;
-  let mods = state.runModifiers;
+  let mods = state.godMode
+    ? applyModifierPatch(state.runModifiers, GOD_MODE_PATCH)
+    : state.runModifiers;
   let cellTypeState = state.cellTypeState;
 
   // 1. Token capacity regen
@@ -209,6 +230,20 @@ function handleEndTurn(state) {
     postMortem = buildPostMortem(state, finalGroundTruth, systemicStressHistory, scars, 'pathogens_cleared');
   }
 
+  // Update bonus objective tracking with this turn's state
+  const bonusObjectiveTracking = updateBonusObjectiveTracking(
+    state.bonusObjectiveTracking,
+    state.activeBonusObjectives,
+    {
+      phase,
+      deployedCells: updatedCells,
+      fever: state.fever,
+      scars,
+      turn: newTurn,
+      systemicIntegrity: newIntegrity,
+    }
+  );
+
   return {
     ...state,
     tick: newTick,
@@ -233,7 +268,22 @@ function handleEndTurn(state) {
     ],
     runModifiers: mods,
     cellTypeState,
+    activeBonusObjectives: state.activeBonusObjectives,
+    bonusObjectiveTracking,
   };
+}
+
+// ── Bonus objective tracking ───────────────────────────────────────────────────
+
+function updateBonusObjectiveTracking(tracking, objectiveIds, partialGameState) {
+  if (!objectiveIds?.length) return tracking ?? {};
+  const result = { ...(tracking ?? {}) };
+  for (const id of objectiveIds) {
+    const obj = BONUS_OBJECTIVE_LIBRARY.find(o => o.id === id);
+    if (!obj) continue;
+    result[id] = obj.updateTracking(result[id] ?? obj.initTracking(), partialGameState);
+  }
+  return result;
 }
 
 // ── Fever ──────────────────────────────────────────────────────────────────────
@@ -242,10 +292,47 @@ function handleToggleFever(state) {
   return { ...state, fever: { active: !state.fever.active } };
 }
 
+// ── God mode ───────────────────────────────────────────────────────────────────
+
+function handleToggleGodMode(state) {
+  if (!state.godMode) {
+    // Turning ON — save current capacity before overriding
+    return {
+      ...state,
+      godMode: true,
+      tokenCapacity: GOD_MODE_TOKEN_CAPACITY,
+      preGodModeTokenCapacity: state.tokenCapacity,
+    };
+  } else {
+    // Turning OFF — restore saved capacity; leave preGodModeTokenCapacity intact
+    return {
+      ...state,
+      godMode: false,
+      tokenCapacity: state.preGodModeTokenCapacity ?? state.tokenCapacity,
+    };
+  }
+}
+
+// ── Auto-return ────────────────────────────────────────────────────────────────
+
+function handleSetAutoReturn(state, { cellIds, value, global: isGlobal }) {
+  const updated = { ...state.deployedCells };
+  const idsToUpdate = isGlobal ? Object.keys(updated) : (cellIds ?? []);
+  for (const id of idsToUpdate) {
+    if (updated[id]) updated[id] = { ...updated[id], autoReturn: value };
+  }
+  return {
+    ...state,
+    deployedCells: updated,
+    ...(isGlobal ? { globalAutoReturn: value } : {}),
+  };
+}
+
 // ── Cell manufacturing ─────────────────────────────────────────────────────────
 
 function handleTrainCell(state, cellType) {
-  const result = trainCell(cellType, state.deployedCells, state.tokenCapacity, state.tick, state.runModifiers);
+  const mods = state.godMode ? applyModifierPatch(state.runModifiers, GOD_MODE_PATCH) : state.runModifiers;
+  const result = trainCell(cellType, state.deployedCells, state.tokenCapacity, state.tick, mods, state.globalAutoReturn ?? true);
   if (!result.success) return state;
   const tokensInUse = computeTokensInUse(result.newDeployedCells, state.runModifiers);
   return {

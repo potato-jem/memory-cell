@@ -154,11 +154,13 @@ export default function CellRoster({
   runConfig,
   runModifiers,
   cellTypeState,
+  globalAutoReturn,
   onTrainCell,
   onSelectCell,
   onDecommission,
   onRecall,
   onStartPatrol,
+  onSetAutoReturn,
 }) {
   const [groupBy, setGroupBy] = useState('none');
   const [tooltip, setTooltip] = useState(null); // { cellType, x, y }
@@ -303,16 +305,27 @@ export default function CellRoster({
       {/* Units list */}
       <div className="flex-1 overflow-y-auto">
 
-        {/* Units header + group toggle */}
+        {/* Units header + group toggle + global auto-return */}
         <div className="px-3 py-2 flex items-center justify-between border-b border-gray-800 sticky top-0 bg-gray-950">
           <span className="text-xs text-gray-600 uppercase tracking-widest">Units ({allCells.length})</span>
-          <button
-            onClick={cycleGroup}
-            className="text-xs text-gray-700 hover:text-gray-500 transition-colors truncate max-w-20 text-right"
-            title={`Grouping: ${GROUP_LABELS[groupBy]}`}
-          >
-            {GROUP_LABELS[groupBy]}
-          </button>
+          <div className="flex items-center gap-2">
+            {onSetAutoReturn && (
+              <button
+                onClick={() => onSetAutoReturn({ global: true, value: !globalAutoReturn })}
+                className={`text-xs font-mono transition-colors ${globalAutoReturn ? 'text-gray-500 hover:text-gray-300' : 'text-gray-700 hover:text-gray-500'}`}
+                title={globalAutoReturn ? 'Auto-return on — click to hold in place' : 'Hold in place — click to enable auto-return'}
+              >
+                {globalAutoReturn ? '⌂ auto' : '⌂ hold'}
+              </button>
+            )}
+            <button
+              onClick={cycleGroup}
+              className="text-xs text-gray-700 hover:text-gray-500 transition-colors truncate max-w-20 text-right"
+              title={`Grouping: ${GROUP_LABELS[groupBy]}`}
+            >
+              {GROUP_LABELS[groupBy]}
+            </button>
+          </div>
         </div>
 
         {allCells.length === 0 ? (
@@ -386,6 +399,19 @@ export default function CellRoster({
                       </div>
 
                       {/* Action buttons */}
+                      {onSetAutoReturn && cfg?.autoReturn && (
+                        <button
+                          onClick={e => {
+                            e.stopPropagation();
+                            const newVal = !cell.autoReturn;
+                            onSetAutoReturn({ cellIds: stack.map(c => c.id), value: newVal });
+                          }}
+                          className={`shrink-0 transition-colors text-sm leading-none px-0.5 ${cell.autoReturn ? 'text-gray-600 hover:text-gray-400' : 'text-gray-800 hover:text-gray-600'}`}
+                          title={cell.autoReturn ? 'Auto-return on — click to hold in place' : 'Holding in place — click to enable auto-return'}
+                        >
+                          ⌂
+                        </button>
+                      )}
                       {canRecall(cell.phase) && (
                         <button
                           onClick={e => { e.stopPropagation(); (e.shiftKey ? stack : [stack[0]]).forEach(c => onRecall(c.id)); }}

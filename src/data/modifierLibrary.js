@@ -704,6 +704,264 @@ export const SCAR_LIBRARY = [
   },
 ];
 
+// ── Meta Modifier Library ─────────────────────────────────────────────────────
+//
+// Modifiers offered between runs (miniReward, majorReward, bonusObjectiveReward).
+// These are selected by selectMetaOptions() in modifierSelector.js.
+//
+// New fields vs in-run modifiers:
+//   canBeChosenAs — string[] — which meta selection contexts this can appear in
+//   persistent    — boolean  — true: patch goes into metaState.persistentModifiers
+//                              false: patch goes into pendingNextRunModifiers (one run only)
+//
+// Existing UPGRADE_LIBRARY / SCAR_LIBRARY entries have no canBeChosenAs, so they never
+// appear in meta selections (selectMetaOptions filters by canBeChosenAs explicitly).
+// They default persistent: false (run-scoped), which matches existing behaviour.
+//
+// Meta modifier getPatch functions must not rely on clearingCellType / clearedPathogenType
+// (those are null in meta contexts). Use mods for stacking.
+
+export const META_MODIFIER_LIBRARY = [
+
+  // ── Mini rewards (offered after every won run) ─────────────────────────────
+
+  {
+    id: 'meta_accelerated_training',
+    category: 'upgrade',
+    canBeChosenAs: ['miniReward', 'bonusObjectiveReward'],
+    persistent: true,
+    name: 'Accelerated Development',
+    description: 'All cell types train 1 tick faster (permanent)',
+    effectLabel: () => '−1 tick training (all cells)',
+    effectColorKey: 'systemic',
+    baseProbability: 1.0,
+    eligibleFor: (ctx) => ['miniReward', 'bonusObjectiveReward'].includes(ctx.chosenAs),
+    rarityLevels: [{ rarity: 'common', probability: 1.0, value: -1 }],
+    getPatch: (_ctx, value, mods) => {
+      const patch = { cells: {} };
+      for (const type of Object.keys(CELL_CONFIG)) {
+        const current = mods?.cells?.[type]?.trainingTicksDelta ?? 0;
+        patch.cells[type] = { trainingTicksDelta: current + value };
+      }
+      return patch;
+    },
+  },
+
+  {
+    id: 'meta_stress_resilience',
+    category: 'upgrade',
+    canBeChosenAs: ['miniReward', 'bonusObjectiveReward'],
+    persistent: true,
+    name: 'Stress Resilience',
+    description: 'Systemic stress decays faster (permanent)',
+    effectLabel: (_ctx, value) => `+${value} stress decay/turn`,
+    effectColorKey: 'systemic',
+    baseProbability: 1.0,
+    eligibleFor: (ctx) => ['miniReward', 'bonusObjectiveReward'].includes(ctx.chosenAs),
+    rarityLevels: [
+      { rarity: 'common', probability: 0.60, value: 1 },
+      { rarity: 'rare',   probability: 0.40, value: 2 },
+    ],
+    getPatch: (_ctx, value, mods) => {
+      const current = mods?.systemic?.stressDecayBonus ?? 0;
+      return { systemic: { stressDecayBonus: current + value } };
+    },
+  },
+
+  {
+    id: 'meta_vigilance',
+    category: 'upgrade',
+    canBeChosenAs: ['miniReward', 'bonusObjectiveReward'],
+    persistent: true,
+    name: 'Heightened Vigilance',
+    description: 'All detector cells gain an extra detection roll per visit (permanent)',
+    effectLabel: () => '+1 detection roll (all detectors)',
+    effectColorKey: 'systemic',
+    baseProbability: 0.9,
+    eligibleFor: (ctx) => ['miniReward', 'bonusObjectiveReward'].includes(ctx.chosenAs),
+    rarityLevels: [{ rarity: 'common', probability: 1.0, value: 1 }],
+    getPatch: (_ctx, value, mods) => {
+      const patch = { cells: {} };
+      for (const [type, cfg] of Object.entries(CELL_CONFIG)) {
+        if (!cfg.isDetector && !cfg.isClassifier) continue;
+        const current = mods?.cells?.[type]?.detectionRollsBonus ?? 0;
+        patch.cells[type] = { detectionRollsBonus: current + value };
+      }
+      return patch;
+    },
+  },
+
+  {
+    id: 'meta_token_expansion',
+    category: 'upgrade',
+    canBeChosenAs: ['miniReward', 'bonusObjectiveReward'],
+    persistent: true,
+    name: 'Expanded Capacity',
+    description: '+1 permanent token capacity',
+    effectLabel: () => '+1 token capacity',
+    effectColorKey: 'systemic',
+    baseProbability: 0.7,
+    eligibleFor: (ctx) => ['miniReward', 'bonusObjectiveReward'].includes(ctx.chosenAs),
+    rarityLevels: [{ rarity: 'rare', probability: 1.0, value: 1 }],
+    getPatch: () => ({}),
+    immediateEffect: (_ctx, value) => ({ tokenCapacityBonus: value }),
+  },
+
+  {
+    id: 'meta_clearance_potency',
+    category: 'upgrade',
+    canBeChosenAs: ['miniReward', 'bonusObjectiveReward'],
+    persistent: true,
+    name: 'Clearance Potency',
+    description: 'All attack cells clear pathogens more effectively (permanent)',
+    effectLabel: (_ctx, value) => `+${Math.round((value - 1) * 100)}% clearance rate (all attackers)`,
+    effectColorKey: 'systemic',
+    baseProbability: 1.0,
+    eligibleFor: (ctx) => ['miniReward', 'bonusObjectiveReward'].includes(ctx.chosenAs),
+    rarityLevels: [
+      { rarity: 'common', probability: 0.60, value: 1.08 },
+      { rarity: 'rare',   probability: 0.40, value: 1.12 },
+    ],
+    getPatch: (_ctx, value, mods) => {
+      const patch = { cells: {} };
+      for (const [type, cfg] of Object.entries(CELL_CONFIG)) {
+        if (!cfg.isAttack) continue;
+        const current = mods?.cells?.[type]?.clearanceRateMultiplier ?? 1.0;
+        patch.cells[type] = { clearanceRateMultiplier: +(current * value).toFixed(4) };
+      }
+      return patch;
+    },
+  },
+
+  {
+    id: 'meta_next_run_surge',
+    category: 'upgrade',
+    canBeChosenAs: ['miniReward'],
+    persistent: false,
+    name: 'Immune Surge',
+    description: 'Next run only: +2 starting token capacity',
+    effectLabel: () => '+2 token capacity (next run)',
+    effectColorKey: 'systemic',
+    baseProbability: 0.8,
+    eligibleFor: (ctx) => ctx.chosenAs === 'miniReward',
+    rarityLevels: [{ rarity: 'common', probability: 1.0, value: 2 }],
+    getPatch: () => ({}),
+    immediateEffect: (_ctx, value) => ({ tokenCapacityBonus: value }),
+  },
+
+  // ── Major rewards (offered at stage transitions) ───────────────────────────
+
+  {
+    id: 'major_immune_maturation',
+    category: 'upgrade',
+    canBeChosenAs: ['majorReward'],
+    persistent: true,
+    name: 'Immune Maturation',
+    description: 'All attack cells gain significantly improved clearance (permanent)',
+    effectLabel: (_ctx, value) => `+${Math.round((value - 1) * 100)}% clearance rate (all attackers)`,
+    effectColorKey: 'systemic',
+    baseProbability: 1.0,
+    eligibleFor: (ctx) => ctx.chosenAs === 'majorReward',
+    rarityLevels: [
+      { rarity: 'rare', probability: 0.60, value: 1.18 },
+      { rarity: 'epic', probability: 0.40, value: 1.28 },
+    ],
+    getPatch: (_ctx, value, mods) => {
+      const patch = { cells: {} };
+      for (const [type, cfg] of Object.entries(CELL_CONFIG)) {
+        if (!cfg.isAttack) continue;
+        const current = mods?.cells?.[type]?.clearanceRateMultiplier ?? 1.0;
+        patch.cells[type] = { clearanceRateMultiplier: +(current * value).toFixed(4) };
+      }
+      return patch;
+    },
+  },
+
+  {
+    id: 'major_systemic_fortitude',
+    category: 'upgrade',
+    canBeChosenAs: ['majorReward'],
+    persistent: true,
+    name: 'Systemic Fortitude',
+    description: 'Tissue integrity recovers faster throughout the body (permanent)',
+    effectLabel: (_ctx, value) => `+${value} integrity recovery/turn`,
+    effectColorKey: 'systemic',
+    baseProbability: 1.0,
+    eligibleFor: (ctx) => ctx.chosenAs === 'majorReward',
+    rarityLevels: [
+      { rarity: 'rare', probability: 0.60, value: 1.5 },
+      { rarity: 'epic', probability: 0.40, value: 2.5 },
+    ],
+    getPatch: (_ctx, value, mods) => {
+      const current = mods?.systemic?.integrityRecoveryBonus ?? 0;
+      return { systemic: { integrityRecoveryBonus: +(current + value).toFixed(4) } };
+    },
+  },
+
+  {
+    id: 'major_rapid_mobilisation',
+    category: 'upgrade',
+    canBeChosenAs: ['majorReward'],
+    persistent: true,
+    name: 'Rapid Mobilisation',
+    description: 'All cell types train significantly faster (permanent)',
+    effectLabel: () => '−2 ticks training (all cells)',
+    effectColorKey: 'systemic',
+    baseProbability: 1.0,
+    eligibleFor: (ctx) => ctx.chosenAs === 'majorReward',
+    rarityLevels: [{ rarity: 'rare', probability: 1.0, value: -2 }],
+    getPatch: (_ctx, value, mods) => {
+      const patch = { cells: {} };
+      for (const type of Object.keys(CELL_CONFIG)) {
+        const current = mods?.cells?.[type]?.trainingTicksDelta ?? 0;
+        patch.cells[type] = { trainingTicksDelta: current + value };
+      }
+      return patch;
+    },
+  },
+
+  {
+    id: 'major_expanded_capacity',
+    category: 'upgrade',
+    canBeChosenAs: ['majorReward'],
+    persistent: true,
+    name: 'Expanded Reserves',
+    description: '+2 permanent token capacity',
+    effectLabel: () => '+2 token capacity',
+    effectColorKey: 'systemic',
+    baseProbability: 0.8,
+    eligibleFor: (ctx) => ctx.chosenAs === 'majorReward',
+    rarityLevels: [{ rarity: 'epic', probability: 1.0, value: 2 }],
+    getPatch: () => ({}),
+    immediateEffect: (_ctx, value) => ({ tokenCapacityBonus: value }),
+  },
+
+  {
+    id: 'major_stress_mastery',
+    category: 'upgrade',
+    canBeChosenAs: ['majorReward'],
+    persistent: true,
+    name: 'Stress Mastery',
+    description: 'Greatly improved stress decay and fever tolerance (permanent)',
+    effectLabel: (_ctx, value) => `+${value} stress decay, −20% fever stress`,
+    effectColorKey: 'systemic',
+    baseProbability: 0.9,
+    eligibleFor: (ctx) => ctx.chosenAs === 'majorReward',
+    rarityLevels: [{ rarity: 'rare', probability: 1.0, value: 3 }],
+    getPatch: (_ctx, value, mods) => {
+      const currentDecay = mods?.systemic?.stressDecayBonus ?? 0;
+      const currentFever = mods?.systemic?.feverStressMultiplier ?? 1.0;
+      return {
+        systemic: {
+          stressDecayBonus: currentDecay + value,
+          feverStressMultiplier: +(currentFever * 0.80).toFixed(4),
+        },
+      };
+    },
+  },
+
+];
+
 // ── Combined library ──────────────────────────────────────────────────────────
 
-export const MODIFIER_LIBRARY = [...UPGRADE_LIBRARY, ...SCAR_LIBRARY];
+export const MODIFIER_LIBRARY = [...UPGRADE_LIBRARY, ...SCAR_LIBRARY, ...META_MODIFIER_LIBRARY];
