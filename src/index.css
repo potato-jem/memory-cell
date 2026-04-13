@@ -28,6 +28,15 @@ body {
   animation: inflammation-pulse 2s ease-in-out infinite;
 }
 
+/* Forecast arc — shared pulse for both growing and shrinking projections */
+@keyframes forecast-pulse {
+  0%, 100% { opacity: 0.15; }
+  50%       { opacity: 0.4; }
+}
+.forecast-pulse {
+  animation: forecast-pulse 2s ease-in-out infinite;
+}
+
 /* Subtle pulse for the End Turn button idle state */
 @keyframes cta-breathe {
   0%, 100% { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0); }

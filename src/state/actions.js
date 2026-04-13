@@ -415,15 +415,20 @@ function handleChooseModifier(state, optionIndex) {
   const patch = computeOptionPatch(option, state.runModifiers);
   const runModifiers = applyModifierPatch(state.runModifiers, patch);
 
-  // Record the choice
+  // Record the choice (display fields included for ModifierScreen)
   const historyEntry = {
-    modifierId:   option.modifierId,
-    category:     option.category,
-    name:         option.name,
-    rarity:       option.rarity,
-    value:        option.value,
-    description:  option.description,
-    turn:         state.turn,
+    modifierId:     option.modifierId,
+    category:       option.category,
+    name:           option.name,
+    rarity:         option.rarity,
+    value:          option.value,
+    description:    option.description,
+    effectLabel:    option.effectLabel ?? null,
+    effectColor:    option.effectColor ?? null,
+    effectColorKey: option.effectColorKey ?? null,
+    effectScope:    option.effectScope ?? null,
+    context:        option.context ?? null,
+    turn:           state.turn,
   };
 
   let newState = {

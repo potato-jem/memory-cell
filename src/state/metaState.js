@@ -18,6 +18,7 @@
 //   pendingBetweenRunChoices— queue of { type, label, options } for BetweenRunScreen
 //   pendingNextRunModifiers — one-off modifier patch for next run only (cleared after use)
 //   activeBonusObjectives   — ids of objectives active for the current run
+//   metaModifierHistory     — record of between-run modifier picks (for modifier screen display)
 
 import { makeRunModifiers } from '../data/runModifiers.js';
 
@@ -43,5 +44,6 @@ export function initMetaState() {
     pendingBetweenRunChoices: [],
     pendingNextRunModifiers: null,
     activeBonusObjectives:   [],
+    metaModifierHistory:     [],
   };
 }

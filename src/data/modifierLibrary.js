@@ -120,6 +120,7 @@ export const UPGRADE_LIBRARY = [
     description: '{clearingCellType} more accurately identifies {clearedPathogenType}',
     effectLabel: (_ctx, value) => `+${Math.round(value * 100)}% classification accuracy`,
     effectColorKey: 'pathogen',
+    effectScope: 'cell_pathogen',  // affects this specific cell+pathogen detection pair
     baseProbability: 0.8,
     eligibleFor: (ctx) => !!ctx.clearingCellType && !!ctx.clearedPathogenType && (ctx.cellConfig?.isDetector === true || ctx.cellConfig?.isClassifier === true),
     rarityLevels: [
@@ -444,6 +445,7 @@ export const UPGRADE_LIBRARY = [
     description: 'Stress recovery is improved — {clearingCellType} has been battle-tested',
     effectLabel: (_ctx, value) => `+${value} stress decay/turn`,
     effectColorKey: 'cell',
+    effectScope: 'global',  // patch is systemic.stressDecayBonus — not cell-specific
     baseProbability: 0.65,
     eligibleFor: (ctx) => !!ctx.clearingCellType && ctx.cellConfig?.isAttack === true,
     rarityLevels: [

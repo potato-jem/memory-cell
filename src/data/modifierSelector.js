@@ -174,6 +174,11 @@ function buildOption(modifier, rarityEntry, context) {
     description:    interpolateDescription(modifier.description ?? '', context),
     effectLabel:    modifier.effectLabel ? modifier.effectLabel(context, rarityEntry.value) : null,
     effectColor:    modifier.effectColorKey ? resolveEffectColor(modifier.effectColorKey, context) : null,
+    // effectColorKey + effectScope drive impact chip display in ModifierCard.
+    // effectScope overrides the default derivation from effectColorKey when the two
+    // don't match (e.g. a cell-triggered modifier that patches systemic state).
+    effectColorKey: modifier.effectColorKey ?? null,
+    effectScope:    modifier.effectScope ?? null,
     // Serialisable context (primitive values only) — used to recompute patch at apply time
     context: {
       category:            context.category,

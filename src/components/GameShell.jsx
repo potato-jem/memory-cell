@@ -20,6 +20,8 @@ import MobileRoster from './MobileRoster.jsx';
 import CellIcon from './CellIcon.jsx';
 import BetweenRunScreen from './BetweenRunScreen.jsx';
 import MetaHUD from './MetaHUD.jsx';
+import ModifierScreen from './ModifierScreen.jsx';
+import BonusObjectivesPanel from './BonusObjectivesPanel.jsx';
 import { saveRun, loadRun, clearRun } from '../state/persistence.js';
 import { saveMeta, loadMeta, clearMeta } from '../state/metaPersistence.js';
 import { initMetaState } from '../state/metaState.js';
@@ -27,6 +29,7 @@ import { metaReducer, META_ACTION_TYPES } from '../state/metaActions.js';
 import { BONUS_OBJECTIVE_LIBRARY } from '../data/bonusObjectiveLibrary.js';
 import { isMetaComplete, isLastRunInStage, isLastLifeStage } from '../data/lifeStageConfig.js';
 import { computeProjectedChanges } from '../engine/projection.js';
+import { selectMetaOptions } from '../data/modifierSelector.js';
 
 
 // ── Bonus objective selection ──────────────────────────────────────────────────
@@ -34,6 +37,16 @@ import { computeProjectedChanges } from '../engine/projection.js';
 function selectBonusObjectives(metaState, count = 2) {
   const eligible = BONUS_OBJECTIVE_LIBRARY.filter(o => o.eligibleFor(metaState));
   return [...eligible].sort(() => Math.random() - 0.5).slice(0, count).map(o => o.id);
+}
+
+/** Pre-select one reward option per objective so it can be shown in-run. */
+function preSelectObjectiveRewards(objectiveIds, metaState) {
+  const rewards = {};
+  for (const id of objectiveIds) {
+    const opts = selectMetaOptions('bonusObjectiveReward', metaState, metaState.persistentModifiers, 1);
+    if (opts.length > 0) rewards[id] = opts[0];
+  }
+  return rewards;
 }
 
 // ── Main component ─────────────────────────────────────────────────────────────
@@ -108,11 +121,13 @@ export default function GameShell() {
 
   const handleStartRun = useCallback(() => {
     const objectiveIds = selectBonusObjectives(metaState);
+    const bonusObjectiveRewards = preSelectObjectiveRewards(objectiveIds, metaState);
     const metaContext = {
       persistentModifiers:     metaState.persistentModifiers,
       pendingNextRunModifiers: metaState.pendingNextRunModifiers,
       persistentTokenCapBonus: metaState.persistentTokenCapBonus ?? 0,
       activeBonusObjectives:   objectiveIds,
+      bonusObjectiveRewards,
     };
     metaDispatch({ type: META_ACTION_TYPES.SELECT_BONUS_OBJECTIVES, objectiveIds });
     const startingUnits = Object.entries(startingCounts)
@@ -126,11 +141,13 @@ export default function GameShell() {
   const handleStartNextRun = useCallback(() => {
     endRunDispatchedRef.current = false;
     const objectiveIds = selectBonusObjectives(metaState);
+    const bonusObjectiveRewards = preSelectObjectiveRewards(objectiveIds, metaState);
     const metaContext = {
       persistentModifiers:     metaState.persistentModifiers,
       pendingNextRunModifiers: metaState.pendingNextRunModifiers,
       persistentTokenCapBonus: metaState.persistentTokenCapBonus ?? 0,
       activeBonusObjectives:   objectiveIds,
+      bonusObjectiveRewards,
     };
     metaDispatch({ type: META_ACTION_TYPES.SELECT_BONUS_OBJECTIVES, objectiveIds });
     dispatch({ type: ACTION_TYPES.RESTART, initialState: initGameState(DEFAULT_RUN_CONFIG, metaContext) });
@@ -151,6 +168,8 @@ export default function GameShell() {
   const [openDrawer, setOpenDrawer] = useState(null);
   const [tooltipNode, setTooltipNode] = useState(null); // node shown in mini-tooltip / node drawer
   const [menuOpen, setMenuOpen] = useState(false);
+  const [modifierScreenOpen, setModifierScreenOpen] = useState(false);
+  const [objectivesPanelOpen, setObjectivesPanelOpen] = useState(false);
 
   const handleRestart = useCallback(() => {
     clearRun();
@@ -423,7 +442,20 @@ export default function GameShell() {
               >
                 ← Return to Menu
               </button>
-              {/* Future menu items */}
+              <button
+                onClick={() => { setModifierScreenOpen(true); setMenuOpen(false); }}
+                className="w-full text-left px-4 py-3 text-sm font-mono text-gray-400 hover:bg-gray-800 hover:text-gray-200 transition-colors border-b border-gray-800"
+              >
+                ≡ View Modifiers
+              </button>
+              {(state.activeBonusObjectives?.length ?? 0) > 0 && (
+                <button
+                  onClick={() => { setObjectivesPanelOpen(true); setMenuOpen(false); }}
+                  className="w-full text-left px-4 py-3 text-sm font-mono text-gray-400 hover:bg-gray-800 hover:text-gray-200 transition-colors border-b border-gray-800"
+                >
+                  ◈ Bonus Objectives
+                </button>
+              )}
             </div>
           )}
 
@@ -488,6 +520,13 @@ export default function GameShell() {
           >
             {state.godMode ? '⚡ GOD' : '⚡ god'}
           </button>
+          <button
+            onClick={() => setModifierScreenOpen(true)}
+            className="px-2.5 py-1 text-xs font-mono border rounded transition-colors bg-gray-900 border-gray-800 text-gray-600 hover:text-gray-400 hover:border-gray-600"
+            title="View all active modifiers"
+          >
+            ≡ Mods
+          </button>
           <div className="flex flex-col items-center gap-0.5">
             <span className="text-xs text-gray-700 uppercase tracking-widest leading-none">Cleared</span>
             <span className={`text-base font-mono font-bold tabular-nums leading-none ${state.totalPathogensCleared >= WIN_PATHOGEN_TARGET ? 'text-green-400' : 'text-gray-400'}`}>
@@ -507,6 +546,7 @@ export default function GameShell() {
             metaState={metaState}
             bonusObjectiveTracking={state.bonusObjectiveTracking}
             activeBonusObjectives={state.activeBonusObjectives}
+            onObjectivesClick={() => setObjectivesPanelOpen(true)}
           />
           {/* Turn — mobile only (desktop shows it on left) */}
           <div className="flex items-center gap-0.5 md:hidden">
@@ -743,6 +783,25 @@ export default function GameShell() {
           postMortem={state.postMortem}
           phase={state.phase}
           onRestart={handleNewLifetime}
+        />
+      )}
+
+      {/* Modifier screen — accessible anytime */}
+      {modifierScreenOpen && (
+        <ModifierScreen
+          modifierHistory={state.modifierHistory}
+          metaModifierHistory={metaState.metaModifierHistory}
+          onClose={() => setModifierScreenOpen(false)}
+        />
+      )}
+
+      {/* Bonus objectives panel — in-run progress */}
+      {objectivesPanelOpen && (
+        <BonusObjectivesPanel
+          activeBonusObjectives={state.activeBonusObjectives}
+          bonusObjectiveTracking={state.bonusObjectiveTracking}
+          bonusObjectiveRewards={state.bonusObjectiveRewards}
+          onClose={() => setObjectivesPanelOpen(false)}
         />
       )}
     </div>

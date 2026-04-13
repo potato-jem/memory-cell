@@ -1,10 +1,12 @@
 // MetaHUD — compact in-run overlay showing life stage, run progress, and bonus objectives.
 // Rendered in the game header area.
+//
+// The bonus objective pips are clickable — onObjectivesClick opens the BonusObjectivesPanel.
 
 import { LIFE_STAGES } from '../data/lifeStageConfig.js';
 import { BONUS_OBJECTIVE_LIBRARY } from '../data/bonusObjectiveLibrary.js';
 
-export default function MetaHUD({ metaState, bonusObjectiveTracking, activeBonusObjectives }) {
+export default function MetaHUD({ metaState, bonusObjectiveTracking, activeBonusObjectives, onObjectivesClick }) {
   if (!metaState) return null;
 
   const stage = LIFE_STAGES[metaState.lifeStageIndex];
@@ -13,6 +15,8 @@ export default function MetaHUD({ metaState, bonusObjectiveTracking, activeBonus
   const runInStage  = metaState.runIndexInStage + 1;   // 1-based for display
   const runsInStage = stage.runsInStage;
   const totalRuns   = LIFE_STAGES.reduce((s, l) => s + l.runsInStage, 0);
+
+  const hasObjectives = (activeBonusObjectives?.length ?? 0) > 0;
 
   return (
     <div className="flex items-center gap-3 shrink-0">
@@ -42,24 +46,26 @@ export default function MetaHUD({ metaState, bonusObjectiveTracking, activeBonus
         ))}
       </div>
 
-      {/* Bonus objective status pills */}
-      {activeBonusObjectives?.length > 0 && (
-        <div className="flex gap-1">
+      {/* Bonus objective pips — clickable to open objectives panel */}
+      {hasObjectives && (
+        <button
+          onClick={onObjectivesClick}
+          className="flex gap-1 items-center hover:opacity-80 transition-opacity"
+          title="View bonus objectives"
+        >
           {activeBonusObjectives.map(id => {
             const obj = BONUS_OBJECTIVE_LIBRARY.find(o => o.id === id);
             if (!obj) return null;
             const tracking = bonusObjectiveTracking?.[id] ?? {};
-            // Evaluate failedEarly with a minimal partial state
             const failed = obj.failedEarly(tracking, { phase: 'playing', ...tracking });
             return (
               <div
                 key={id}
-                title={obj.description}
                 className={`w-2 h-2 rounded-full ${failed ? 'bg-red-700' : 'bg-yellow-500'}`}
               />
             );
           })}
-        </div>
+        </button>
       )}
     </div>
   );

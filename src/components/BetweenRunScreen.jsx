@@ -1,28 +1,22 @@
 // BetweenRunScreen — shown after a won sub-run.
 //
-// Flow: run stats → bonus objective rewards (one choice per completed objective)
+// Flow: run stats → bonus objective results (with pre-selected reward cards)
 //       → mini or major reward choice → Start Next Run / Lifetime Complete
 //
 // Props:
-//   metaState      — current meta state (has pendingBetweenRunChoices)
-//   lastRunState   — final game state of the run just completed
-//   metaDispatch   — to dispatch CHOOSE_BETWEEN_RUN_MODIFIER
-//   onStartNextRun — callback when all choices resolved and player clicks Next Run
-//   isMetaComplete — true if this was the last run of the last stage
+//   metaState         — current meta state (has pendingBetweenRunChoices)
+//   lastRunState      — final game state of the run just completed
+//   metaDispatch      — to dispatch CHOOSE_BETWEEN_RUN_MODIFIER
+//   onStartNextRun    — callback when all choices resolved and player clicks Next Run
+//   isMetaComplete    — true if this was the last run of the last stage
+//   onViewModifiers   — optional callback to open modifier screen
 
+import { useState } from 'react';
 import { LIFE_STAGES } from '../data/lifeStageConfig.js';
 import { META_ACTION_TYPES } from '../state/metaActions.js';
 import { BONUS_OBJECTIVE_LIBRARY } from '../data/bonusObjectiveLibrary.js';
-
-const RARITY_STYLES = {
-  common: { badge: 'bg-gray-700 text-gray-300',     border: 'border-gray-600 hover:border-gray-400' },
-  rare:   { badge: 'bg-blue-900 text-blue-300',      border: 'border-blue-700 hover:border-blue-400' },
-  epic:   { badge: 'bg-purple-900 text-purple-300',  border: 'border-purple-700 hover:border-purple-400' },
-};
-
-function getRarityStyles(rarity) {
-  return RARITY_STYLES[rarity] ?? RARITY_STYLES.common;
-}
+import ModifierCard from './ModifierCard.jsx';
+import ModifierScreen from './ModifierScreen.jsx';
 
 // ── Stat display ───────────────────────────────────────────────────────────────
 
@@ -31,7 +25,6 @@ function RunStats({ lastRunState, metaState }) {
     ?? LIFE_STAGES[metaState.lifeStageIndex]               // fallback
     ?? LIFE_STAGES[0];
 
-  // The run that just completed — look back one in history
   const lastRecord = metaState.subRunHistory[metaState.subRunHistory.length - 1];
 
   return (
@@ -80,11 +73,11 @@ function RunStats({ lastRunState, metaState }) {
 
 function BonusObjectiveResults({ metaState, lastRunState }) {
   const active = metaState.activeBonusObjectives ?? [];
-  // Restore active objectives from the run that just ended — they're cleared in END_RUN
-  // so we get them from the lastRunState instead
   const objectiveIds = lastRunState?.activeBonusObjectives ?? active;
 
   if (!objectiveIds.length) return null;
+
+  const rewards = lastRunState?.bonusObjectiveRewards ?? {};
 
   return (
     <div className="border border-gray-800 rounded-lg bg-gray-900 overflow-hidden">
@@ -97,21 +90,27 @@ function BonusObjectiveResults({ metaState, lastRunState }) {
           if (!obj) return null;
           const tracking = lastRunState?.bonusObjectiveTracking?.[id] ?? {};
           const completed = obj.isComplete(tracking, lastRunState ?? {});
+          const reward = rewards[id];
           return (
-            <div key={id} className="flex items-center gap-3 px-4 py-2.5">
-              <span className={`text-sm ${completed ? 'text-green-400' : 'text-gray-600'}`}>
-                {completed ? '✓' : '✗'}
-              </span>
-              <div className="flex-1">
-                <div className={`text-sm font-medium ${completed ? 'text-gray-200' : 'text-gray-600'}`}>
-                  {obj.name}
-                </div>
-                <div className={`text-xs ${completed ? 'text-gray-500' : 'text-gray-700'}`}>
-                  {obj.description}
+            <div key={id} className="px-4 py-3 space-y-2">
+              <div className="flex items-center gap-3">
+                <span className={`text-sm ${completed ? 'text-green-400' : 'text-gray-600'}`}>
+                  {completed ? '✓' : '✗'}
+                </span>
+                <div className="flex-1">
+                  <div className={`text-sm font-medium ${completed ? 'text-gray-200' : 'text-gray-600'}`}>
+                    {obj.name}
+                  </div>
+                  <div className={`text-xs ${completed ? 'text-gray-500' : 'text-gray-700'}`}>
+                    {obj.description}
+                  </div>
                 </div>
               </div>
-              {completed && (
-                <span className="text-xs text-green-600 uppercase tracking-wide">reward ↓</span>
+              {/* Show pre-selected reward card inline when completed */}
+              {completed && reward && (
+                <div className="pl-6">
+                  <ModifierCard option={reward} />
+                </div>
               )}
             </div>
           );
@@ -126,42 +125,42 @@ function BonusObjectiveResults({ metaState, lastRunState }) {
 function ModifierChoicePanel({ choice, onChoose }) {
   const isBonus    = choice.type === 'bonusObjectiveReward';
   const isMajor    = choice.type === 'majorReward';
+  const autoApply  = choice.autoApply && choice.options?.length === 1;
 
   const headerColor = isBonus ? 'border-yellow-900' : isMajor ? 'border-purple-900' : 'border-blue-900';
   const labelColor  = isBonus ? 'text-yellow-400'   : isMajor ? 'text-purple-400'   : 'text-blue-400';
 
   return (
-    <div className={`border rounded-lg bg-gray-900 overflow-hidden ${headerColor.replace('border-', 'border ')}`}>
+    <div className={`border rounded-lg bg-gray-900 overflow-hidden ${headerColor}`}>
       <div className={`px-5 py-3 border-b ${headerColor}`}>
         <h3 className={`text-xs font-semibold uppercase tracking-widest ${labelColor}`}>
           {isBonus ? 'Bonus Reward' : isMajor ? 'Stage Reward' : 'Run Reward'}
         </h3>
-        <p className="text-gray-300 text-sm mt-0.5">{choice.label} — choose one</p>
+        <p className="text-gray-300 text-sm mt-0.5">
+          {autoApply ? choice.label : `${choice.label} — choose one`}
+        </p>
       </div>
       <div className="p-4 flex flex-col gap-3">
-        {choice.options.map((option, idx) => {
-          const styles = getRarityStyles(option.rarity);
-          return (
+        {autoApply ? (
+          // Single reward: big claim button showing the card
+          <div>
+            <ModifierCard option={choice.options[0]} />
             <button
-              key={option.modifierId + idx}
-              onClick={() => onChoose(idx)}
-              className={`w-full text-left border rounded p-3 transition-colors bg-gray-950 ${styles.border}`}
+              onClick={() => onChoose(0)}
+              className="mt-3 w-full py-2.5 bg-yellow-900 hover:bg-yellow-800 text-yellow-200 text-sm font-mono font-bold uppercase tracking-widest border border-yellow-700 rounded transition-colors"
             >
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-white text-sm font-medium">{option.name}</span>
-                <span className={`text-xs px-2 py-0.5 rounded ${styles.badge}`}>
-                  {option.rarity}
-                </span>
-              </div>
-              <p className="text-gray-400 text-xs leading-snug">{option.description}</p>
-              {option.effectLabel && (
-                <p className="text-xs font-bold mt-1" style={{ color: option.effectColor ?? '#94a3b8' }}>
-                  {option.effectLabel}
-                </p>
-              )}
+              Claim Reward →
             </button>
-          );
-        })}
+          </div>
+        ) : (
+          choice.options.map((option, idx) => (
+            <ModifierCard
+              key={option.modifierId + idx}
+              option={option}
+              onClick={() => onChoose(idx)}
+            />
+          ))
+        )}
       </div>
     </div>
   );
@@ -207,8 +206,9 @@ function StageProgress({ metaState }) {
 // ── Main component ─────────────────────────────────────────────────────────────
 
 export default function BetweenRunScreen({ metaState, lastRunState, metaDispatch, onStartNextRun, isMetaComplete }) {
-  const pending = metaState.pendingBetweenRunChoices ?? [];
+  const pending    = metaState.pendingBetweenRunChoices ?? [];
   const hasPending = pending.length > 0;
+  const [modifierScreenOpen, setModifierScreenOpen] = useState(false);
 
   const handleChoose = (optionIndex) => {
     metaDispatch({ type: META_ACTION_TYPES.CHOOSE_BETWEEN_RUN_MODIFIER, optionIndex });
@@ -224,7 +224,7 @@ export default function BetweenRunScreen({ metaState, lastRunState, metaDispatch
         {/* Run stats */}
         <RunStats lastRunState={lastRunState} metaState={metaState} />
 
-        {/* Bonus objective results */}
+        {/* Bonus objective results (with inline reward cards) */}
         <BonusObjectiveResults metaState={metaState} lastRunState={lastRunState} />
 
         {/* Pending choice or CTA */}
@@ -250,7 +250,25 @@ export default function BetweenRunScreen({ metaState, lastRunState, metaDispatch
           </p>
         )}
 
+        {/* View all modifiers link */}
+        {!hasPending && (
+          <button
+            onClick={() => setModifierScreenOpen(true)}
+            className="w-full text-center text-xs text-gray-700 hover:text-gray-500 py-1 transition-colors"
+          >
+            ≡ View all modifiers
+          </button>
+        )}
+
       </div>
+
+      {modifierScreenOpen && (
+        <ModifierScreen
+          modifierHistory={lastRunState?.modifierHistory}
+          metaModifierHistory={metaState.metaModifierHistory}
+          onClose={() => setModifierScreenOpen(false)}
+        />
+      )}
     </div>
   );
 }

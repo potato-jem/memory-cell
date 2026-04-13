@@ -44,9 +44,9 @@ export function metaReducer(metaState, action) {
 // ── END_RUN ────────────────────────────────────────────────────────────────────
 
 function handleEndRun(metaState, finalGameState) {
-  // 1. Evaluate bonus objectives
-  const bonusChoices = [];
+  // 1. Evaluate bonus objectives — use pre-selected rewards from game state
   const newlyCompletedObjIds = [];
+  const completedRewards = [];
 
   for (const objId of (metaState.activeBonusObjectives ?? [])) {
     const obj = BONUS_OBJECTIVE_LIBRARY.find(o => o.id === objId);
@@ -55,14 +55,34 @@ function handleEndRun(metaState, finalGameState) {
     if (!obj.isComplete(tracking, finalGameState)) continue;
 
     newlyCompletedObjIds.push(objId);
-    const options = selectMetaOptions('bonusObjectiveReward', metaState, finalGameState.runModifiers, 3);
-    if (options.length > 0) {
-      bonusChoices.push({
-        type:    'bonusObjectiveReward',
-        label:   obj.name,
-        options,
-      });
+    // Use the pre-selected reward stored at run start; fall back to live selection
+    const preSelected = finalGameState.bonusObjectiveRewards?.[objId];
+    if (preSelected) {
+      completedRewards.push({ obj, reward: preSelected });
+    } else {
+      const fallback = selectMetaOptions('bonusObjectiveReward', metaState, finalGameState.runModifiers, 1);
+      if (fallback.length > 0) completedRewards.push({ obj, reward: fallback[0] });
     }
+  }
+
+  // Build bonus choice(s):
+  //   0 completed → nothing
+  //   1 completed → single-option "claim reward" (auto-apply UX in BetweenRunScreen)
+  //   2 completed → 2-option choice (pick one reward)
+  const bonusChoices = [];
+  if (completedRewards.length === 1) {
+    bonusChoices.push({
+      type:      'bonusObjectiveReward',
+      label:     `${completedRewards[0].obj.name} — claim reward`,
+      options:   [completedRewards[0].reward],
+      autoApply: true,  // single reward: BetweenRunScreen shows as claim button
+    });
+  } else if (completedRewards.length >= 2) {
+    bonusChoices.push({
+      type:    'bonusObjectiveReward',
+      label:   'Both objectives achieved — choose your reward',
+      options: completedRewards.map(({ reward }) => reward),
+    });
   }
 
   // 2. Determine reward tier: major at end of stage, mini otherwise
@@ -81,7 +101,21 @@ function handleEndRun(metaState, finalGameState) {
     ? metaState.lifeStageIndex + 1
     : metaState.lifeStageIndex;
 
-  // 4. Record run
+  // 4. Carry over in-run upgrades and scars to persistentModifiers.
+  // Re-apply each modifierHistory entry against the current persistent state so that
+  // correct multiplicative stacking is preserved (same logic as CHOOSE_MODIFIER in actions.js).
+  let updatedPersistentModifiers = metaState.persistentModifiers;
+  for (const entry of (finalGameState.modifierHistory ?? [])) {
+    if (!entry.context) continue; // guard against legacy saves without context
+    try {
+      const patch = computeOptionPatch(entry, updatedPersistentModifiers);
+      updatedPersistentModifiers = applyModifierPatch(updatedPersistentModifiers, patch);
+    } catch (_) {
+      // skip if modifier id was removed or patch throws
+    }
+  }
+
+  // 5. Record run
   const runRecord = {
     subRunIndex:               metaState.subRunIndex,
     lifeStageIndex:            metaState.lifeStageIndex,
@@ -92,13 +126,14 @@ function handleEndRun(metaState, finalGameState) {
 
   return {
     ...metaState,
-    lifeStageIndex:          newLifeStageIndex,
-    runIndexInStage:         newRunIndexInStage,
-    subRunIndex:             metaState.subRunIndex + 1,
-    subRunHistory:           [...metaState.subRunHistory, runRecord],
-    completedBonusObjIds:    [...metaState.completedBonusObjIds, ...newlyCompletedObjIds],
+    persistentModifiers:      updatedPersistentModifiers,
+    lifeStageIndex:           newLifeStageIndex,
+    runIndexInStage:          newRunIndexInStage,
+    subRunIndex:              metaState.subRunIndex + 1,
+    subRunHistory:            [...metaState.subRunHistory, runRecord],
+    completedBonusObjIds:     [...metaState.completedBonusObjIds, ...newlyCompletedObjIds],
     pendingBetweenRunChoices: [...bonusChoices, rewardChoice],
-    activeBonusObjectives:   [],
+    activeBonusObjectives:    [],
   };
 }
 
@@ -152,6 +187,21 @@ function handleChooseBetweenRunModifier(metaState, optionIndex) {
     }
   }
 
+  const historyEntry = {
+    modifierId:     option.modifierId,
+    category:       option.category,
+    name:           option.name,
+    rarity:         option.rarity,
+    value:          option.value,
+    description:    option.description,
+    effectLabel:    option.effectLabel ?? null,
+    effectColor:    option.effectColor ?? null,
+    effectColorKey: option.effectColorKey ?? null,
+    effectScope:    option.effectScope ?? null,
+    context:        option.context ?? null,
+    persistent:     isPersistent,
+  };
+
   return {
     ...metaState,
     persistentModifiers:      newPersistentModifiers,
@@ -161,5 +211,6 @@ function handleChooseBetweenRunModifier(metaState, optionIndex) {
     unlockedPathogenTypes:    newUnlockedPathogenTypes,
     pendingBetweenRunChoices: pending.slice(1),
     completedModifierIds:     [...(metaState.completedModifierIds ?? []), option.modifierId],
+    metaModifierHistory:      [...(metaState.metaModifierHistory ?? []), historyEntry],
   };
 }

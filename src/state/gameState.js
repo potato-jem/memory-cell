@@ -85,6 +85,7 @@ export function initGameState(runConfig = DEFAULT_RUN_CONFIG, metaContext = null
   // Bonus objectives for this run
   const activeBonusObjectives = metaContext?.activeBonusObjectives ?? [];
   const bonusObjectiveTracking = initBonusObjectiveTracking(activeBonusObjectives);
+  const bonusObjectiveRewards = metaContext?.bonusObjectiveRewards ?? {};
 
   return {
     runConfig,
@@ -134,6 +135,7 @@ export function initGameState(runConfig = DEFAULT_RUN_CONFIG, metaContext = null
     // Bonus objectives
     activeBonusObjectives,
     bonusObjectiveTracking,
+    bonusObjectiveRewards,
 
     // Player preferences
     globalAutoReturn: true,

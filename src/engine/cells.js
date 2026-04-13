@@ -123,9 +123,32 @@ export function deployFromRoster(cellId, nodeId, deployedCells, tick, nodeStates
     return { success: false, error: `${CELL_CONFIG[cell.type].displayName} requires a classified pathogen at target`, requiresClassified: true };
   }
 
-  const fromNodeId = (cell.phase === 'arrived' || cell.phase === 'returning')
+  const fromNodeId = (cell.phase === 'arrived' || cell.phase === 'returning' || cell.phase === 'outbound')
     ? cell.nodeId
     : HQ_NODE_ID;
+
+  // If already at the destination, arrive immediately (handles cancel-by-reclick).
+  if (fromNodeId === nodeId) {
+    const extra = _deployExtra(cell.type);
+    return {
+      success: true,
+      newDeployedCells: {
+        ...deployedCells,
+        [cellId]: {
+          ...cell,
+          nodeId,
+          phase: 'arrived',
+          path: null,
+          pathIndex: 0,
+          destNodeId: null,
+          deployedAtTick: tick,
+          arrivalTick: tick,
+          returnTick: null,
+          ...extra,
+        },
+      },
+    };
+  }
 
   const path = computePathWithModifiers(fromNodeId, nodeId, modifiers);
   const extra = _deployExtra(cell.type);
@@ -189,14 +212,17 @@ export function recallUnit(cellId, deployedCells, tick, modifiers = null) {
   }
 
   if (cell.phase === 'outbound') {
+    // If moving from a body node (not HQ), restore the cell there as 'arrived'.
+    // If moving from HQ, restore to 'ready' at HQ (no nodeId).
+    const originIsBodyNode = cell.nodeId && cell.nodeId !== HQ_NODE_ID;
     return {
       success: true,
       newDeployedCells: {
         ...deployedCells,
         [cellId]: {
           ...cell,
-          phase: 'ready',
-          nodeId: null,
+          phase: originIsBodyNode ? 'arrived' : 'ready',
+          nodeId: originIsBodyNode ? cell.nodeId : null,
           path: null,
           pathIndex: 0,
           destNodeId: null,

@@ -22,6 +22,17 @@ const MAX_PIPS = 24;  // max surveillance-staleness pips to show
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
+function darkenColor(hex, factor = 0.65) {
+  // Normalise 3-char shorthand (#aaa → #aaaaaa) before parsing
+  const h = hex.length === 4
+    ? `#${hex[1]}${hex[1]}${hex[2]}${hex[2]}${hex[3]}${hex[3]}`
+    : hex;
+  const r = Math.round(parseInt(h.slice(1, 3), 16) * factor);
+  const g = Math.round(parseInt(h.slice(3, 5), 16) * factor);
+  const b = Math.round(parseInt(h.slice(5, 7), 16) * factor);
+  return `#${r.toString(16).padStart(2,'0')}${g.toString(16).padStart(2,'0')}${b.toString(16).padStart(2,'0')}`;
+}
+
 function inflammationStyle(pct) {
   // pct 0..1 — returns { fill, stroke } SVG colour strings
   if (pct < 0.10) return { fill: '#0a1628', stroke: '#1e3a5f' };   // deep navy
@@ -36,6 +47,46 @@ function arcPath(cx, cy, r, pct) {
   if (pct <= 0) return '';
   const p = Math.min(pct, 0.9999);
   const a0 = -Math.PI / 2;
+  const a1 = a0 + p * 2 * Math.PI;
+  const x0 = cx + r * Math.cos(a0);
+  const y0 = cy + r * Math.sin(a0);
+  const x1 = cx + r * Math.cos(a1);
+  const y1 = cy + r * Math.sin(a1);
+  const large = p > 0.5 ? 1 : 0;
+  return `M ${x0.toFixed(2)} ${y0.toFixed(2)} A ${r} ${r} 0 ${large} 1 ${x1.toFixed(2)} ${y1.toFixed(2)}`;
+}
+
+// Closed hollow arc band — outlines the shape a thick arc would fill.
+// End caps are semicircular arcs matching strokeLinecap="round" on the main arc.
+function hollowArcBand(cx, cy, r, startPct, endPct, halfWidth) {
+  const span = endPct - startPct;
+  if (span <= 0) return '';
+  const p = Math.min(span, 0.9999);
+  const a0 = -Math.PI / 2 + startPct * 2 * Math.PI;
+  const a1 = a0 + p * 2 * Math.PI;
+  const large = p > 0.5 ? 1 : 0;
+  const ro = r + halfWidth, ri = r - halfWidth;
+  const ox0 = cx + ro * Math.cos(a0), oy0 = cy + ro * Math.sin(a0);
+  const ox1 = cx + ro * Math.cos(a1), oy1 = cy + ro * Math.sin(a1);
+  const ix0 = cx + ri * Math.cos(a1), iy0 = cy + ri * Math.sin(a1);
+  const ix1 = cx + ri * Math.cos(a0), iy1 = cy + ri * Math.sin(a0);
+  const hw = halfWidth;
+  return [
+    `M ${ox0.toFixed(2)} ${oy0.toFixed(2)}`,
+    `A ${ro} ${ro} 0 ${large} 1 ${ox1.toFixed(2)} ${oy1.toFixed(2)}`,
+    `A ${hw} ${hw} 0 0 1 ${ix0.toFixed(2)} ${iy0.toFixed(2)}`,  // end cap (rounded)
+    `A ${ri} ${ri} 0 ${large} 0 ${ix1.toFixed(2)} ${iy1.toFixed(2)}`,
+    `A ${hw} ${hw} 0 0 1 ${ox0.toFixed(2)} ${oy0.toFixed(2)}`,  // start cap (rounded)
+    'Z',
+  ].join(' ');
+}
+
+// Arc segment from startPct to endPct (both 0..1, clockwise from 12 o'clock).
+function arcSegment(cx, cy, r, startPct, endPct) {
+  const span = endPct - startPct;
+  if (span <= 0) return '';
+  const p = Math.min(span, 0.9999);
+  const a0 = -Math.PI / 2 + startPct * 2 * Math.PI;
   const a1 = a0 + p * 2 * Math.PI;
   const x0 = cx + r * Math.cos(a0);
   const y0 = cy + r * Math.sin(a0);
@@ -324,57 +375,68 @@ export default function BodyMap({
               {/* Pathogen arc rings */}
               {rings.map((ring, i) => {
                 const r = ringBase + i * ringStep;
-                const d = arcPath(cx, cy, r, ring.loadPct);
-                if (!d) return null;
+                if (!arcPath(cx, cy, r, ring.loadPct)) return null;
 
-                // Projected load delta label at arc endpoint
-                let deltaLabel = null;
+                // Determine fill extent and growth segment based on projection
+                let fillPct = ring.loadPct;
+                let growthPct = null; // if set, extra flashing segment from loadPct to here
                 if (!ring.dashed) {
                   const pathProj = projections?.nodes?.[node.id]?.pathogenDeltas?.[ring.uid];
                   if (pathProj && Math.abs(pathProj.delta) >= 0.5) {
-                    const roundedDelta = Math.round(pathProj.delta);
-                    const angle = -Math.PI / 2 + ring.loadPct * 2 * Math.PI;
-                    const labelR = r + 7;
-                    deltaLabel = (
-                      <text
-                        key={`delta-${ring.uid}`}
-                        x={(cx + labelR * Math.cos(angle)).toFixed(1)}
-                        y={(cy + labelR * Math.sin(angle)).toFixed(1)}
-                        textAnchor="middle"
-                        dominantBaseline="middle"
-                        fontSize="6"
-                        fontFamily="monospace"
-                        fill={roundedDelta < 0 ? '#4ade80' : '#f87171'}
-                        className="pointer-events-none select-none"
-                      >
-                        {roundedDelta > 0 ? '+' : ''}{roundedDelta}
-                      </text>
-                    );
+                    const deltaPct = pathProj.delta / 100;
+                    if (deltaPct > 0) {
+                      growthPct = Math.min(0.999, ring.loadPct + deltaPct);
+                    } else {
+                      fillPct = Math.max(0.001, ring.loadPct + deltaPct);
+                    }
                   }
                 }
 
+                const fillD = arcPath(cx, cy, r, fillPct);
+                const growthD = growthPct !== null ? arcSegment(cx, cy, r, ring.loadPct, growthPct) : null;
+                // Hollow band always at current loadPct — the "this turn" border
+                const bandD = !ring.dashed ? hollowArcBand(cx, cy, r, 0, ring.loadPct, 1.5) : null;
+
                 return (
                   <g key={ring.uid ?? i}>
-                    <path
-                      d={d}
-                      fill="none"
-                      stroke={ring.color}
-                      strokeWidth={ring.dashed ? 1.5 : 3}
-                      strokeLinecap="round"
-                      strokeDasharray={ring.dashArray}
-                      opacity={ring.dashed ? 0.55 : 0.9}
-                      filter={ring.dashed ? undefined : `url(#glow-${ring.color.slice(1)})`}
-                    />
-                    {deltaLabel}
+                    {/* Stable fill arc */}
+                    {fillD && (
+                      <path
+                        d={fillD}
+                        fill="none"
+                        stroke={ring.color}
+                        strokeWidth={ring.dashed ? 1.5 : 3}
+                        strokeLinecap="round"
+                        strokeDasharray={ring.dashArray}
+                        opacity={ring.dashed ? 0.55 : 0.9}
+                        filter={ring.dashed ? undefined : `url(#glow-${ring.color.slice(1)})`}
+                      />
+                    )}
+                    {/* Growth segment — flashing, beneath the border band */}
+                    {growthD && (
+                      <path
+                        d={growthD}
+                        fill="none"
+                        stroke={ring.color}
+                        strokeWidth={3}
+                        strokeLinecap="round"
+                        className="forecast-pulse"
+                        filter={`url(#glow-${ring.color.slice(1)})`}
+                      />
+                    )}
+                    {/* Hollow border band — current-turn boundary, drawn on top */}
+                    {!ring.dashed && ring.loadPct >= 0.999 ? (
+                      <>
+                        <circle cx={cx} cy={cy} r={r + 1.5} fill="none" stroke={darkenColor(ring.color)} strokeWidth={1} opacity={0.9} />
+                        <circle cx={cx} cy={cy} r={r - 1.5} fill="none" stroke={darkenColor(ring.color)} strokeWidth={1} opacity={0.9} />
+                      </>
+                    ) : bandD && (
+                      <path d={bandD} fill="none" stroke={darkenColor(ring.color)} strokeWidth={1} opacity={0.9} />
+                    )}
                   </g>
                 );
               })}
 
-              {/* HQ outer ring */}
-              {node.isHQ && (
-                <circle cx={cx} cy={cy} r={NODE_R + 3}
-                  fill="none" stroke="#7c3aed" strokeWidth="1.5" opacity="0.6" />
-              )}
 
               {/* Dark background circle */}
               <circle cx={cx} cy={cy} r={NODE_R} fill="#050d18" />
