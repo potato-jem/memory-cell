@@ -334,7 +334,8 @@ export default function BodyMap({
 
           const ringBase = NODE_R + 5;
           const ringStep = 6;
-          const selectR = ringBase + rings.length * ringStep + 7;
+          const outerRingR = rings.length > 0 ? ringBase + (rings.length - 1) * ringStep : NODE_R;
+          const selectR = outerRingR + 6;
 
           const words = node.label.split(' ');
 
@@ -348,17 +349,18 @@ export default function BodyMap({
               onMouseMove={e => setHoveredNode(h => h?.nodeId === node.id ? { ...h, x: e.clientX, y: e.clientY } : h)}
               className="cursor-pointer"
             >
-              {/* Selection ring */}
-              {isSelected && (
-                <circle
-                  cx={cx} cy={cy} r={selectR}
-                  fill="none"
-                  stroke="#60a5fa"
-                  strokeWidth="2"
-                  strokeDasharray="5 3"
-                  opacity="0.9"
-                />
-              )}
+              {/* Selection brackets */}
+              {isSelected && (() => {
+                const bR = selectR;
+                const arm = 7;
+                const d = [
+                  `M ${(cx - bR + arm).toFixed(1)} ${(cy - bR).toFixed(1)} L ${(cx - bR).toFixed(1)} ${(cy - bR).toFixed(1)} L ${(cx - bR).toFixed(1)} ${(cy - bR + arm).toFixed(1)}`,
+                  `M ${(cx + bR - arm).toFixed(1)} ${(cy - bR).toFixed(1)} L ${(cx + bR).toFixed(1)} ${(cy - bR).toFixed(1)} L ${(cx + bR).toFixed(1)} ${(cy - bR + arm).toFixed(1)}`,
+                  `M ${(cx + bR - arm).toFixed(1)} ${(cy + bR).toFixed(1)} L ${(cx + bR).toFixed(1)} ${(cy + bR).toFixed(1)} L ${(cx + bR).toFixed(1)} ${(cy + bR - arm).toFixed(1)}`,
+                  `M ${(cx - bR + arm).toFixed(1)} ${(cy + bR).toFixed(1)} L ${(cx - bR).toFixed(1)} ${(cy + bR).toFixed(1)} L ${(cx - bR).toFixed(1)} ${(cy + bR - arm).toFixed(1)}`,
+                ].join(' ');
+                return <path d={d} fill="none" stroke="#60a5fa" strokeWidth="2" strokeLinecap="round" opacity="0.95" />;
+              })()}
 
               {/* High-inflammation outer glow ring (pulsing via CSS animation) */}
               {isHighInflamm && (

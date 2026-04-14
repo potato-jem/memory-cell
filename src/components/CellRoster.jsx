@@ -166,9 +166,11 @@ export default function CellRoster({
   const [tooltip, setTooltip] = useState(null); // { cellType, x, y }
 
   const tokensAvailable = tokenCapacity - tokensInUse;
-  const ticksUntilRegen = TOKEN_CAPACITY_REGEN_INTERVAL - (currentTick % TOKEN_CAPACITY_REGEN_INTERVAL);
-  const turnsUntilRegen = Math.max(1, Math.ceil(ticksUntilRegen / TICKS_PER_TURN));
-  const atCap = tokenCapacity >= TOKEN_CAPACITY_MAX;
+  const ticksUntilRegen = TOKEN_CAPACITY_REGEN_INTERVAL > 0
+    ? TOKEN_CAPACITY_REGEN_INTERVAL - (currentTick % TOKEN_CAPACITY_REGEN_INTERVAL)
+    : null;
+  const turnsUntilRegen = ticksUntilRegen != null ? Math.max(1, Math.ceil(ticksUntilRegen / TICKS_PER_TURN)) : null;
+  const atCap = tokenCapacity >= TOKEN_CAPACITY_MAX || TOKEN_CAPACITY_REGEN_INTERVAL === 0;
 
   // const availableAttack = runConfig?.availableResponders ?? [];
   const allTrainable = [...ALL_CELL_TYPES];

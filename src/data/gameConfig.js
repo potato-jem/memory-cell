@@ -12,7 +12,7 @@ export const PATROL_DWELL_TICKS = 5;       // how long a patrol cell stays at a 
 
 export const INITIAL_TOKEN_CAPACITY = 12;
 export const TOKEN_CAPACITY_MAX = 30;
-export const TOKEN_CAPACITY_REGEN_INTERVAL = 60; // ticks between +1 capacity (~1 per minute)
+export const TOKEN_CAPACITY_REGEN_INTERVAL = 0; // 0 = disabled; set to e.g. 60 for +1 cap per minute
 
 // ── Tissue integrity ───────────────────────────────────────────────────────────
 export const TISSUE_RECOVERY_RATE = 4;              // base integrity restored/turn

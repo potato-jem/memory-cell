@@ -10,26 +10,81 @@ import CellIcon from './CellIcon.jsx';
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
-function BreakdownTooltip({ breakdown, x, y }) {
+function BreakdownTooltip({ breakdown, x, y, expanded }) {
   // Position left of cursor when near right edge of viewport
   const toLeft = x > window.innerWidth * 0.55;
   const style = {
     position: 'fixed',
-    top: Math.min(y - 10, window.innerHeight - 200),
+    top: Math.min(y - 10, window.innerHeight - 240),
     zIndex: 60,
     pointerEvents: 'none',
     ...(toLeft ? { right: window.innerWidth - x + 8 } : { left: x + 14 }),
   };
+  const fmtAmt = (n) => `${n > 0 ? '+' : ''}${n.toFixed(1)}`;
+  const fmtPct = (n) => `${n >= 0 ? '+' : ''}${n}%`;
+
   return (
-    <div style={style} className="bg-gray-900 border border-gray-600 rounded px-3 py-2 shadow-xl text-xs min-w-44 space-y-0.5">
+    <div
+      style={style}
+      className="bg-gray-900 border border-gray-600 rounded px-3 py-2 shadow-xl text-xs min-w-56 space-y-1.5 select-none"
+    >
       {breakdown.map((item, i) => (
-        <div key={i} className="flex justify-between gap-4">
-          <span className="text-gray-500">{item.label}</span>
-          <span className={`font-mono ${item.amount < 0 ? 'text-green-400' : item.amount > 0 ? 'text-red-400' : 'text-gray-500'}`}>
-            {item.amount > 0 ? '+' : ''}{item.amount.toFixed(1)}
-          </span>
+        <div key={i}>
+          {/* Top line: label + final delta amount */}
+          <div className="flex justify-between gap-4">
+            <span className={item.strengthValue != null ? 'text-gray-300 font-medium' : 'text-gray-500'}>
+              {item.label}
+            </span>
+            <span className={`font-mono ${item.amount < 0 ? 'text-green-400' : item.amount > 0 ? 'text-red-400' : 'text-gray-500'}`}>
+              {fmtAmt(item.amount)}
+            </span>
+          </div>
+
+          {/* Summary row: strength + modifiers (always shown when item has them) */}
+          {item.strengthValue != null && (
+            <div className="pl-2 mt-0.5 space-y-0.5">
+              {/* Strength summary */}
+              <div className="flex justify-between gap-4">
+                <span className="text-gray-500">strength</span>
+                <span className="font-mono text-gray-400">{item.strengthValue.toFixed(1)}</span>
+              </div>
+              {/* Strength sub-factors (expanded only) */}
+              {expanded && item.strengthFactors?.map((f, j) => (
+                <div key={j} className="flex justify-between gap-4 pl-3">
+                  <span className="text-gray-700">{f.label}</span>
+                  <span className="font-mono text-gray-600">{f.text}</span>
+                </div>
+              ))}
+
+              {/* Modifiers summary */}
+              <div className="flex justify-between gap-4">
+                <span className="text-gray-500">modifiers</span>
+                <span className={`font-mono ${item.modifierPct < 0 ? 'text-orange-500' : item.modifierPct > 0 ? 'text-green-500' : 'text-gray-600'}`}>
+                  {fmtPct(item.modifierPct)}
+                </span>
+              </div>
+              {/* Modifier sub-factors (expanded only) */}
+              {expanded && item.modifierFactors?.map((f, j) => (
+                <div key={j} className="flex justify-between gap-4 pl-3">
+                  <span className="text-gray-700">{f.label}</span>
+                  <span className="font-mono text-gray-600">{f.text}</span>
+                </div>
+              ))}
+
+              {/* Attention (only when split across pathogens) */}
+              {item.attentionPct != null && (
+                <div className="flex justify-between gap-4">
+                  <span className="text-gray-500">attention</span>
+                  <span className="font-mono text-blue-400">{item.attentionPct}%</span>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       ))}
+      <div className="text-gray-700 text-center pt-0.5" style={{ fontSize: '10px' }}>
+        {expanded ? 'click row to collapse' : 'click row to expand'}
+      </div>
     </div>
   );
 }
@@ -52,7 +107,7 @@ function DeltaBadge({ delta, invert = false }) {
 /**
  * Wraps one pathogen row; hovering anywhere on the row shows the breakdown tooltip.
  */
-function PathogenRow({ inst, projEntry, label, labelColor, ringColor }) {
+function PathogenRow({ inst, projEntry, label, labelColor, ringColor, expanded, onToggleExpanded }) {
   const [hovered, setHovered] = useState(false);
   const [pos, setPos] = useState({ x: 0, y: 0 });
   const isKnown = inst.detected_level === 'classified';
@@ -61,10 +116,11 @@ function PathogenRow({ inst, projEntry, label, labelColor, ringColor }) {
 
   return (
     <div
-      className="space-y-1.5"
+      className="space-y-1.5 cursor-pointer"
       onMouseEnter={e => { setHovered(true); setPos({ x: e.clientX, y: e.clientY }); }}
       onMouseLeave={() => setHovered(false)}
       onMouseMove={e => setPos({ x: e.clientX, y: e.clientY })}
+      onClick={hasBreakdown ? onToggleExpanded : undefined}
     >
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5 min-w-0">
@@ -89,7 +145,7 @@ function PathogenRow({ inst, projEntry, label, labelColor, ringColor }) {
         </div>
       )}
       {hovered && hasBreakdown && (
-        <BreakdownTooltip breakdown={projEntry.breakdown} x={pos.x} y={pos.y} />
+        <BreakdownTooltip breakdown={projEntry.breakdown} x={pos.x} y={pos.y} expanded={expanded} />
       )}
     </div>
   );
@@ -189,6 +245,7 @@ function SiteStatusPanel({ gt, liveIntegrity = null, nodeProjection = null }) {
 // ── Pathogen threat section ───────────────────────────────────────────────────
 
 function PathogenPanel({ groundTruthNodeState, nodeProjection = null }) {
+  const [expanded, setExpanded] = useState(false);
   const pathogens = (groundTruthNodeState?.pathogens ?? [])
     .filter(inst => inst.detected_level !== 'none');
 
@@ -224,6 +281,8 @@ function PathogenPanel({ groundTruthNodeState, nodeProjection = null }) {
             label={label}
             labelColor={labelColor}
             ringColor={ringColor}
+            expanded={expanded}
+            onToggleExpanded={() => setExpanded(v => !v)}
           />
         );
       })}

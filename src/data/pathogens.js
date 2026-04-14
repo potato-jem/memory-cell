@@ -27,7 +27,7 @@ export const PATHOGEN_DISPLAY_NAMES = {
   toxin_producer:         'Toxin Producer',
   // prion:                  'Prion',
   cancer:                 'Cancer',
-  benign:                 'Benign variation',
+  benign:                 'Benign',
 };
 
 /**
@@ -42,11 +42,10 @@ export const PATHOGEN_REGISTRY = {
   extracellular_bacteria: {
     ringColor:         '#4ade80',     // green
     actualLoad:              0,
-    growthModel:       'logistic',
-    replicationRate:   0.30,          // moderate logistic growth
-    detectionModifier: 1.0,           // standard detectability
-    spreadThreshold:   80,            // spreads when infectionLoad > 80
-    spreadStrength:    10,            // new site starts at this load
+    growthModel:       'linear',
+    replicationRate:   10,          
+    spreadThreshold:   100,            
+    spreadStrength:    5,            // new site starts at this load
     // Damage per turn (at full load 100; scaled linearly by load/100)
     tissueDamageRate:  8,             // integrity lost/turn at load 100
     inflammationRate:  5,             // small baseline; dominant inflation comes from responding cells
@@ -57,10 +56,9 @@ export const PATHOGEN_REGISTRY = {
     ringColor:         '#f43f5e',     // rose/crimson
     actualLoad:              0,
     growthModel:       'exponential',
-    replicationRate:   0.30,          // compromise × rate per turn 
-    detectionModifier: 0.8,           // hides inside cells
-    spreadThreshold:   60,            // spreads when > 60
-    spreadStrength:    8,
+    replicationRate:   0.25,          // compromise × rate per turn 
+    spreadThreshold:   100,            
+    spreadStrength:    15,
     // Viruses don't damage tissue directly — clearing does (handled in groundTruth)
     tissueDamageRate:  0,
     clearanceTissueCost: 0.2,         // integrity lost per unit of compromise cleared
@@ -73,7 +71,6 @@ export const PATHOGEN_REGISTRY = {
     actualLoad:              0,
     growthModel:       'logistic',
     replicationRate:   0.12,          // slow
-    detectionModifier: 1.0,           // visible structures
     spreadThreshold:   null,          // does not spread between sites
     granulomaThreshold: 60,           // above this: site becomes Walled Off
     tissueDamageRate:  2,
@@ -87,7 +84,6 @@ export const PATHOGEN_REGISTRY = {
     actualLoad:              0,
     growthModel:       'logistic',
     replicationRate:   0.15,
-    detectionModifier: 0.9,           // somewhat hidden
     spreadThreshold:   null,
     tissueDamageRate:  4,             // slow direct damage
     inflammationRate:  0,
@@ -102,7 +98,6 @@ export const PATHOGEN_REGISTRY = {
     actualLoad:              0,
     growthModel:       'logistic',
     replicationRate:   0.08,          // very slow growth
-    detectionModifier: 0.9,           // detected via indirect toxin evidence
     spreadThreshold:   null,
     tissueDamageRate:  2,
     inflammationRate:  0,
@@ -114,8 +109,7 @@ export const PATHOGEN_REGISTRY = {
   //   ringColor:         '#e879f9',     // fuchsia/magenta
   //   actualLoad:              0,
   //   growthModel:       'linear',
-  //   replicationRate:   8,             // flat +8 corruption per turn
-  //   detectionModifier: 0.5,           // very hard to detect — protein misfolding
+  //   replicationRate:   8,             // flat +8 corruption per tur
   //   spreadThreshold:   null,
   //   hiddenUntil:       50,            // invisible to player below this
   //   tissueDamageRate:  0,
@@ -130,7 +124,6 @@ export const PATHOGEN_REGISTRY = {
     actualLoad:              0,
     growthModel:       'logistic',
     replicationRate:   0.10,
-    detectionModifier: 0.8,           // hides inside host cells
     spreadThreshold:   null,
     tissueDamageRate:  6,
     inflammationRate:  0,
@@ -142,8 +135,7 @@ export const PATHOGEN_REGISTRY = {
     actualLoad:              0,
     growthModel:       'linear',
     replicationRate:   4,             // flat +4 per turn
-    detectionModifier: 0.6,           // mimics normal cells
-    spreadThreshold:   null,
+    spreadThreshold:   100,
     tissueDamageRate:  3,
     inflammationRate:  0,
     collateralModifier: 1.0,          // cytotoxic killing in tissue causes bystander damage
@@ -152,11 +144,10 @@ export const PATHOGEN_REGISTRY = {
   // Benign: starts at 100, decays naturally. No tissue damage. Slight inflammation.
   // Cleared by any attack cell. Creates false-positive signals for the player.
   benign: {
-    ringColor:         null,          // never classified — no arc ring colour
+    ringColor:         '#9ca3af',     // muted gray — non-threatening
     actualLoad:              0,
     growthModel:       'linear',
-    replicationRate:   -4,            // decays 4/turn naturally (gone in ~25T without cells)
-    detectionModifier: 0.7,           // looks like normal cell activity
+    replicationRate:   -2,            // decays 4/turn naturally (gone in ~25T without cells)
     spreadThreshold:   null,
     tissueDamageRate:  0,
     inflammationRate:  5,             // just enough to look suspicious

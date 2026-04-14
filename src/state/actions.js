@@ -19,7 +19,7 @@ import {
   computeTokensInUse,
   updateCellSpecializations,
 } from '../engine/cells.js';
-import { CELL_CONFIG, RECON_CELL_TYPES, getEffectiveClearanceRate, getCellClearablePathogens } from '../data/cellConfig.js';
+import { CELL_CONFIG, RECON_CELL_TYPES, getEffectiveClearanceRate, getCellClearablePathogens, getEffectiveTrainingTicks } from '../data/cellConfig.js';
 import { NODES } from '../data/nodes.js';
 import { TICKS_PER_TURN, GAME_PHASES, LOSS_REASONS } from './gameState.js';
 import { TOKEN_CAPACITY_MAX, TOKEN_CAPACITY_REGEN_INTERVAL, WIN_PATHOGEN_TARGET,WIN_PATHOGEN_TARGET_EXTRA } from '../data/gameConfig.js';
@@ -105,7 +105,8 @@ function handleEndTurn(state) {
 
   // 1. Token capacity regen
   let tokenCapacity = state.tokenCapacity;
-  if (Math.floor(newTick / TOKEN_CAPACITY_REGEN_INTERVAL) > Math.floor(prevTick / TOKEN_CAPACITY_REGEN_INTERVAL)
+  if (TOKEN_CAPACITY_REGEN_INTERVAL > 0
+      && Math.floor(newTick / TOKEN_CAPACITY_REGEN_INTERVAL) > Math.floor(prevTick / TOKEN_CAPACITY_REGEN_INTERVAL)
       && tokenCapacity < TOKEN_CAPACITY_MAX) {
     tokenCapacity = Math.min(TOKEN_CAPACITY_MAX, tokenCapacity + 1);
   }
@@ -266,7 +267,7 @@ function handleEndTurn(state) {
       ...(state.pendingModifierChoices ?? []),
       ...newPendingChoices,
     ],
-    runModifiers: mods,
+    runModifiers: state.runModifiers,
     cellTypeState,
     activeBonusObjectives: state.activeBonusObjectives,
     bonusObjectiveTracking,
@@ -304,11 +305,20 @@ function handleToggleGodMode(state) {
       preGodModeTokenCapacity: state.tokenCapacity,
     };
   } else {
-    // Turning OFF — restore saved capacity; leave preGodModeTokenCapacity intact
+    // Turning OFF — restore saved capacity; recalculate trainingCompleteTick for
+    // cells currently in training so they don't complete in 1 tick from god mode.
+    const updatedCells = { ...state.deployedCells };
+    for (const [id, cell] of Object.entries(updatedCells)) {
+      if (cell.phase === 'training') {
+        const normalTime = getEffectiveTrainingTicks(cell.type, state.runModifiers);
+        updatedCells[id] = { ...cell, trainingCompleteTick: cell.trainedAtTick + normalTime };
+      }
+    }
     return {
       ...state,
       godMode: false,
       tokenCapacity: state.preGodModeTokenCapacity ?? state.tokenCapacity,
+      deployedCells: updatedCells,
     };
   }
 }

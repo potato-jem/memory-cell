@@ -68,8 +68,8 @@ export function advanceNodeSite(ns, nodeId, deployedCells, systemicStress, modif
   let immuneSuppressedThisTurn = false;
   const pathogenBreakdowns = {};
 
-  // Pre-compute equalized clearance allocations across all pathogens at this node.
-  const clearanceAllocations = computeNodeClearanceAllocations(
+  // Pre-compute clearance allocations across all pathogens at this node.
+  const { allocations: clearanceAllocations, cellAllocations } = computeNodeClearanceAllocations(
     ns.pathogens ?? [], nodeId, deployedCells, ns, modifiers, cellTypeState
   );
 
@@ -79,7 +79,8 @@ export function advanceNodeSite(ns, nodeId, deployedCells, systemicStress, modif
       advanceInstance(instance, nodeId, deployedCells, ns, systemicStress, modifiers, clearanceOverride, cellTypeState);
 
     pathogenBreakdowns[instance.uid] = computePathogenBreakdown(
-      instance, nodeId, deployedCells, ns, systemicStress, modifiers, clearanceOverride, cellTypeState
+      instance, nodeId, deployedCells, ns, systemicStress, modifiers, clearanceOverride, cellTypeState,
+      cellAllocations, ns.pathogens
     );
 
     if (newInstance) {
